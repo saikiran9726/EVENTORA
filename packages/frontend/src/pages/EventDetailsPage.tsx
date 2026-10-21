@@ -5,6 +5,7 @@ import {
   MapPin,
   Users,
   Share2,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -12,8 +13,9 @@ import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { useToast } from '@/components/ui/Toast';
-import { MOCK_EVENTS } from '@/mock/data';
+import { PROTOTYPE_EVENTS } from '@/prototype/data';
 import { formatINR } from '@/lib/utils';
 
 interface EventDetailsPageProps {
@@ -23,12 +25,14 @@ interface EventDetailsPageProps {
 
 export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onBack }) => {
   const { toast } = useToast();
-  const event = MOCK_EVENTS.find((e) => e.id === eventId) || MOCK_EVENTS[0];
-  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const event = PROTOTYPE_EVENTS.find((e) => e.id === eventId) || PROTOTYPE_EVENTS[0];
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [selectedTicketType, setSelectedTicketType] = useState('regular');
   const [attendeeName, setAttendeeName] = useState('');
   const [attendeeRoll, setAttendeeRoll] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   const isSoldOut = event.registeredCount >= event.capacity;
 
@@ -43,10 +47,19 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
       return;
     }
 
+    if (!agreedToTerms) {
+      toast({
+        type: 'error',
+        title: 'Terms Required',
+        message: 'Please agree to campus event rules.',
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     setTimeout(() => {
       setIsSubmitting(false);
-      setIsRegisterModalOpen(false);
+      setIsRegisterOpen(false);
       toast({
         type: 'success',
         title: event.isPaid ? 'Seat Hold Created (Test Mode)' : 'Registration Confirmed!',
@@ -57,8 +70,66 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
     }, 600);
   };
 
+  const RegistrationFormContent = (
+    <form onSubmit={handleRegisterSubmit} className="space-y-4">
+      {event.isPaid && (
+        <div className="p-3 bg-warning/10 border border-warning/20 rounded-md text-xs text-warning font-medium">
+          TEST MODE – simulated money. Server calculates exact totals from stored integer paise; no real money moves.
+        </div>
+      )}
+
+      <Input
+        label="Full Name"
+        required
+        placeholder="e.g. Aarav Sharma"
+        value={attendeeName}
+        onChange={(e) => setAttendeeName(e.target.value)}
+      />
+
+      <Input
+        label="College Roll / ID Number"
+        required
+        placeholder="e.g. CS22B1042"
+        value={attendeeRoll}
+        onChange={(e) => setAttendeeRoll(e.target.value)}
+      />
+
+      <Select
+        label="Ticket Category"
+        options={[
+          {
+            value: 'regular',
+            label: `Student Standard Pass (${event.isPaid ? formatINR(event.pricePaise) : 'Free'})`,
+          },
+        ]}
+        value={selectedTicketType}
+        onChange={(e) => setSelectedTicketType(e.target.value)}
+      />
+
+      <Checkbox
+        label="I agree to campus attendance code and check-in policy"
+        checked={agreedToTerms}
+        onChange={(e) => setAgreedToTerms(e.target.checked)}
+      />
+
+      <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+        <Button
+          type="button"
+          variant="outline"
+          size="md"
+          onClick={() => setIsRegisterOpen(false)}
+        >
+          Cancel
+        </Button>
+        <Button type="submit" variant="primary" size="md" isLoading={isSubmitting}>
+          {isSoldOut ? 'Join Waitlist' : event.isPaid ? 'Proceed to Test Pay' : 'Confirm Registration'}
+        </Button>
+      </div>
+    </form>
+  );
+
   return (
-    <div className="space-y-6 pb-24 md:pb-6">
+    <div className="space-y-6 pb-28 md:pb-6">
       {/* Top Navigation */}
       <div className="flex items-center justify-between">
         <button
@@ -84,14 +155,23 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
         </button>
       </div>
 
-      {/* Hero Event Banner */}
-      <div className="relative rounded-lg overflow-hidden border border-border bg-surface-2 h-64 sm:h-80 w-full">
-        <img
-          src={event.imageUrl}
-          alt={event.title}
-          className="w-full h-full object-cover"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex flex-col justify-end p-5 sm:p-8">
+      {/* Hero Event Banner (Fixed 16:9 Aspect Box with Gradient Fallback) */}
+      <div className="relative rounded-lg overflow-hidden border border-border bg-gradient-to-br from-surface-2 via-border to-surface aspect-16/9 max-h-[380px] w-full">
+        {!imageError ? (
+          <img
+            src={event.imageUrl}
+            alt={event.title}
+            onError={() => setImageError(true)}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center text-text-muted p-6">
+            <ImageIcon className="w-12 h-12 text-brand/30 mb-2" />
+            <span className="text-sm font-semibold">{event.category} Event Showcase</span>
+          </div>
+        )}
+
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent flex flex-col justify-end p-5 sm:p-8">
           <div className="flex flex-wrap gap-2 mb-2">
             <Badge variant="brand" size="sm" className="bg-brand text-white border-none">
               {event.category}
@@ -120,7 +200,6 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
 
       {/* Main Grid: Details + Registration Card */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column (8 cols): Description, Schedule, Venue, FAQ */}
         <div className="lg:col-span-8 space-y-6">
           <Card>
             <h2 className="text-base font-bold text-text mb-3">About the Event</h2>
@@ -173,9 +252,9 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-base font-bold text-text">Ticket Tiers & Seat Capacity</h2>
               {event.isPaid && (
-                <span className="text-[11px] font-semibold text-warning bg-warning/10 px-2 py-0.5 rounded-sm border border-warning/20">
+                <Badge variant="warning" size="sm">
                   TEST MODE – simulated money
-                </span>
+                </Badge>
               )}
             </div>
 
@@ -213,7 +292,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
           </Card>
         </div>
 
-        {/* Right Column (4 cols): Booking Status Box */}
+        {/* Right Column: Booking Status Box on Desktop */}
         <div className="lg:col-span-4 space-y-4">
           <Card className="sticky top-20">
             <h2 className="text-sm font-bold text-text mb-4">Registration Status</h2>
@@ -252,7 +331,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
                 variant={isSoldOut ? 'secondary' : 'primary'}
                 size="lg"
                 className="w-full"
-                onClick={() => setIsRegisterModalOpen(true)}
+                onClick={() => setIsRegisterOpen(true)}
               >
                 {isSoldOut ? 'Join Seat Waitlist' : event.isPaid ? 'Proceed to Test Checkout' : 'Claim Free Pass'}
               </Button>
@@ -267,10 +346,12 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
         </div>
       </div>
 
-      {/* Sticky Bottom Action Bar on Phones (<768px) */}
+      {/* Sticky Bottom Action Bar on Phones (<768px) with Price and Availability */}
       <div className="md:hidden fixed bottom-16 left-0 right-0 z-30 bg-surface border-t border-border p-3 flex items-center justify-between shadow-md">
         <div>
-          <span className="text-[11px] text-text-muted block">Fee</span>
+          <span className="text-[11px] text-text-muted block">
+            {isSoldOut ? 'Waitlist Only' : `${event.capacity - event.registeredCount} Seats Left`}
+          </span>
           <span className="text-sm font-bold text-text">
             {event.isPaid ? formatINR(event.pricePaise) : 'Free'}
           </span>
@@ -278,16 +359,16 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
         <Button
           variant="primary"
           size="md"
-          onClick={() => setIsRegisterModalOpen(true)}
+          onClick={() => setIsRegisterOpen(true)}
         >
           {isSoldOut ? 'Join Waitlist' : 'Register Now'}
         </Button>
       </div>
 
-      {/* Registration Bottom Sheet / Modal */}
+      {/* Responsive Registration Modal (Bottom Sheet on Mobile, Dialog on Desktop) */}
       <Modal
-        isOpen={isRegisterModalOpen}
-        onClose={() => setIsRegisterModalOpen(false)}
+        isOpen={isRegisterOpen}
+        onClose={() => setIsRegisterOpen(false)}
         title={isSoldOut ? 'Join Waitlist Queue' : 'Campus Event Registration'}
         description={
           isSoldOut
@@ -295,55 +376,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
             : 'Enter attendee credentials for your digital QR ticket.'
         }
       >
-        <form onSubmit={handleRegisterSubmit} className="space-y-4">
-          {event.isPaid && (
-            <div className="p-3 bg-warning/10 border border-warning/20 rounded-md text-xs text-warning font-medium">
-              TEST MODE – simulated money. This booking will create a pending hold and test-mode simulator receipt.
-            </div>
-          )}
-
-          <Input
-            label="Full Name"
-            required
-            placeholder="e.g. Aarav Sharma"
-            value={attendeeName}
-            onChange={(e) => setAttendeeName(e.target.value)}
-          />
-
-          <Input
-            label="College Roll / ID Number"
-            required
-            placeholder="e.g. CS22B1042"
-            value={attendeeRoll}
-            onChange={(e) => setAttendeeRoll(e.target.value)}
-          />
-
-          <Select
-            label="Ticket Category"
-            options={[
-              {
-                value: 'regular',
-                label: `Student Standard Pass (${event.isPaid ? formatINR(event.pricePaise) : 'Free'})`,
-              },
-            ]}
-            value={selectedTicketType}
-            onChange={(e) => setSelectedTicketType(e.target.value)}
-          />
-
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
-            <Button
-              type="button"
-              variant="outline"
-              size="md"
-              onClick={() => setIsRegisterModalOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" size="md" isLoading={isSubmitting}>
-              {isSoldOut ? 'Join Waitlist' : event.isPaid ? 'Proceed to Test Pay' : 'Confirm Registration'}
-            </Button>
-          </div>
-        </form>
+        {RegistrationFormContent}
       </Modal>
     </div>
   );

@@ -1,7 +1,7 @@
 import type { Config } from 'tailwindcss';
 
 export default {
-  darkMode: ['class'],
+  darkMode: ['class', '[data-theme="dark"]'],
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     screens: {
@@ -12,6 +12,14 @@ export default {
       xl: '1280px',
     },
     extend: {
+      aspectRatio: {
+        '16/9': '16 / 9',
+        '4/3': '4 / 3',
+      },
+      backgroundImage: {
+        'indigo-radial': 'radial-gradient(circle at top center, rgba(79, 70, 229, 0.12) 0%, transparent 70%)',
+        'indigo-radial-dark': 'radial-gradient(circle at top center, rgba(129, 140, 248, 0.12) 0%, transparent 70%)',
+      },
       maxWidth: {
         content: '1200px',
       },
@@ -37,6 +45,7 @@ export default {
         success: 'var(--success)',
         warning: 'var(--warning)',
         error: 'var(--error)',
+        destructive: 'var(--error)',
         info: 'var(--info)',
       },
       borderRadius: {

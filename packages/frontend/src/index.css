@@ -19,6 +19,7 @@
   --focus-ring: #4F46E5;
 }
 
+[data-theme="dark"],
 .dark {
   --brand: #818CF8;
   --brand-hover: #A5B4FC;

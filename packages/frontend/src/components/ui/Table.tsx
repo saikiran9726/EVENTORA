@@ -1,4 +1,5 @@
 import React from 'react';
+import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const Table: React.FC<React.TableHTMLAttributes<HTMLTableElement>> = ({
@@ -14,7 +15,13 @@ export const TableHeader: React.FC<React.HTMLAttributes<HTMLTableSectionElement>
   className,
   ...props
 }) => (
-  <thead className={cn('bg-surface-2 border-b border-border text-xs text-text-muted font-semibold uppercase tracking-wider', className)} {...props} />
+  <thead
+    className={cn(
+      'sticky top-0 z-10 bg-surface-2 border-b border-border text-xs text-text-muted font-semibold uppercase tracking-wider',
+      className
+    )}
+    {...props}
+  />
 );
 
 export const TableBody: React.FC<React.HTMLAttributes<HTMLTableSectionElement>> = ({
@@ -31,12 +38,41 @@ export const TableRow: React.FC<React.HTMLAttributes<HTMLTableRowElement>> = ({
   <tr className={cn('hover:bg-surface-2/50 transition-colors duration-fast', className)} {...props} />
 );
 
-export const TableHead: React.FC<React.ThHTMLAttributes<HTMLTableCellElement>> = ({
+export interface SortableTableHeadProps extends React.ThHTMLAttributes<HTMLTableCellElement> {
+  sortDirection?: 'asc' | 'desc' | null;
+  onSort?: () => void;
+}
+
+export const TableHead: React.FC<SortableTableHeadProps> = ({
   className,
+  children,
+  sortDirection,
+  onSort,
   ...props
-}) => (
-  <th className={cn('py-3 px-4 font-semibold text-text', className)} {...props} />
-);
+}) => {
+  return (
+    <th
+      className={cn('py-3 px-4 font-semibold text-text align-middle', onSort && 'cursor-pointer select-none', className)}
+      onClick={onSort}
+      {...props}
+    >
+      <div className="flex items-center gap-1.5">
+        <span>{children}</span>
+        {onSort && (
+          <span className="text-text-muted">
+            {sortDirection === 'asc' ? (
+              <ArrowUp className="w-3.5 h-3.5 text-brand" />
+            ) : sortDirection === 'desc' ? (
+              <ArrowDown className="w-3.5 h-3.5 text-brand" />
+            ) : (
+              <ArrowUpDown className="w-3.5 h-3.5 opacity-40 hover:opacity-100" />
+            )}
+          </span>
+        )}
+      </div>
+    </th>
+  );
+};
 
 export const TableCell: React.FC<React.TdHTMLAttributes<HTMLTableCellElement>> = ({
   className,

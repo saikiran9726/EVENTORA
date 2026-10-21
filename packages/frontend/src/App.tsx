@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { AppShell, CurrentRole } from '@/components/layout/AppShell';
+import { StudentShell } from '@/components/shells/StudentShell';
+import { OrganizerShell } from '@/components/shells/OrganizerShell';
+import { ReviewerShell } from '@/components/shells/ReviewerShell';
+import { AdminShell } from '@/components/shells/AdminShell';
+import { CheckinShell } from '@/components/shells/CheckinShell';
 import { DiscoveryPage } from '@/pages/DiscoveryPage';
 import { EventDetailsPage } from '@/pages/EventDetailsPage';
 import { OrganizerDashboardPage } from '@/pages/OrganizerDashboardPage';
@@ -8,19 +12,36 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { QRDisplay } from '@/components/ui/QRDisplay';
 import { QrCode } from 'lucide-react';
+
+export type CurrentRole = 'student' | 'organizer' | 'reviewer' | 'admin' | 'checkin_staff';
 
 export const App: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<CurrentRole>('student');
   const [activeRoute, setActiveRoute] = useState<string>('discover');
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
+
+  // Theme state: respects prefers-color-scheme, persisted choice in localStorage
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('eventora_theme');
+      if (saved) return saved === 'dark';
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
 
   useEffect(() => {
+    const root = document.documentElement;
     if (isDarkMode) {
-      document.documentElement.classList.add('dark');
+      root.classList.add('dark');
+      root.setAttribute('data-theme', 'dark');
+      localStorage.setItem('eventora_theme', 'dark');
     } else {
-      document.documentElement.classList.remove('dark');
+      root.classList.remove('dark');
+      root.removeAttribute('data-theme');
+      localStorage.setItem('eventora_theme', 'light');
     }
   }, [isDarkMode]);
 
@@ -58,12 +79,82 @@ export const App: React.FC = () => {
       return <ComponentGalleryPage />;
     }
 
-    if (currentRole === 'organizer' && activeRoute === 'dashboard') {
+    if (currentRole === 'organizer' && (activeRoute === 'dashboard' || activeRoute === 'roster' || activeRoute === 'insights')) {
       return <OrganizerDashboardPage />;
     }
 
     if (activeRoute === 'discover') {
       return <DiscoveryPage onSelectEvent={handleSelectEvent} />;
+    }
+
+    if (activeRoute === 'calendar') {
+      return (
+        <div className="space-y-6">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text">Campus Event Calendar</h1>
+          <Card>
+            <CardHeader>
+              <CardTitle>Upcoming Sessions & Workshops</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="p-3 bg-surface-2 rounded-md border border-border flex justify-between items-center text-xs">
+                <div>
+                  <p className="font-semibold text-text">Smart Campus AI Symposium 2026</p>
+                  <p className="text-text-muted text-[11px]">28 October 2026 • 09:30 AM • Sir MV Auditorium</p>
+                </div>
+                <Badge variant="brand" size="sm">Confirmed</Badge>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+
+    if (activeRoute === 'tickets') {
+      return (
+        <div className="space-y-6">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text">My Event Tickets</h1>
+          <QRDisplay
+            ticketId="TCK-88219-01"
+            qrPayloadPreview="dGVzdF9xcl90b2tlbl8zMl9ieXRlc19yYW5kb21fc2VjdXJlX2hhc2g"
+            status="VALID"
+            eventName="Smart Campus AI & Robotics Symposium"
+            attendeeName="Aarav Sharma (CS22B1042)"
+          />
+        </div>
+      );
+    }
+
+    if (activeRoute === 'passport') {
+      return (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text">
+                Student Event Passport
+              </h1>
+              <p className="text-xs sm:text-sm text-text-muted mt-1">
+                Verified attendance, volunteer shifts, and cryptographic certificates.
+              </p>
+            </div>
+            <Badge variant="brand" size="sm">Verified Portfolio</Badge>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Verified Achievements (CS22B1042)</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="p-3 bg-surface-2 rounded-md border border-border flex justify-between items-center text-xs">
+                <div>
+                  <p className="font-semibold text-text">Smart Campus AI Symposium 2026</p>
+                  <p className="text-text-muted text-[11px]">Attendance verified via QR scan • Issued Certificate #CERT-RAS-9912</p>
+                </div>
+                <Badge variant="success" size="sm">Verified</Badge>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      );
     }
 
     if (activeRoute === 'review-queue') {
@@ -121,7 +212,7 @@ export const App: React.FC = () => {
             <Badge variant="success" size="sm">Policy: attendance:checkin:assigned</Badge>
           </div>
 
-          <Card className="text-center p-8">
+          <Card className="text-center p-8 max-w-md mx-auto">
             <div className="w-16 h-16 rounded-full bg-brand/10 text-brand flex items-center justify-center mx-auto mb-4 border border-brand/20">
               <QrCode className="w-8 h-8" />
             </div>
@@ -137,35 +228,38 @@ export const App: React.FC = () => {
       );
     }
 
-    if (activeRoute === 'passport') {
+    if (activeRoute === 'admin-overview') {
       return (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text">
-                Student Event Passport
+                Campus System Administration
               </h1>
               <p className="text-xs sm:text-sm text-text-muted mt-1">
-                Verified attendance, volunteer shifts, and cryptographic certificates.
+                Platform health, role governance, and security audit log.
               </p>
             </div>
-            <Badge variant="brand" size="sm">Verified Portfolio</Badge>
+            <Badge variant="error" size="sm">Policy: user:manage</Badge>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Verified Achievements (CS22B1042)</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="p-3 bg-surface-2 rounded-md border border-border flex justify-between items-center text-xs">
-                <div>
-                  <p className="font-semibold text-text">Smart Campus AI Symposium 2026</p>
-                  <p className="text-text-muted text-[11px]">Attendance verified via QR scan • Issued Certificate #CERT-RAS-9912</p>
-                </div>
-                <Badge variant="success" size="sm">Verified</Badge>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Card>
+              <span className="text-xs text-text-muted font-medium">Database Node</span>
+              <p className="text-xl font-bold text-text mt-1">PostgreSQL 16</p>
+              <Badge variant="success" size="sm" className="mt-2">Healthy</Badge>
+            </Card>
+            <Card>
+              <span className="text-xs text-text-muted font-medium">Task Outbox Dispatcher</span>
+              <p className="text-xl font-bold text-text mt-1">BullMQ Worker</p>
+              <Badge variant="success" size="sm" className="mt-2">0 Lag</Badge>
+            </Card>
+            <Card>
+              <span className="text-xs text-text-muted font-medium">Security Boundary</span>
+              <p className="text-xl font-bold text-text mt-1">Deny By Default</p>
+              <Badge variant="brand" size="sm" className="mt-2">Active</Badge>
+            </Card>
+          </div>
         </div>
       );
     }
@@ -174,22 +268,37 @@ export const App: React.FC = () => {
     return <DiscoveryPage onSelectEvent={handleSelectEvent} />;
   };
 
-  return (
-    <ToastProvider>
-      <AppShell
-        currentRole={currentRole}
-        onRoleChange={handleRoleChange}
-        activeRoute={activeRoute}
-        onRouteChange={(route) => {
-          setSelectedEventId(null);
-          setActiveRoute(route);
-        }}
-        isDarkMode={isDarkMode}
-        onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
-      >
-        {renderContent()}
-      </AppShell>
-    </ToastProvider>
-  );
+  const shellProps = {
+    currentRole,
+    onRoleChange: handleRoleChange,
+    activeRoute,
+    onRouteChange: (route: string) => {
+      setSelectedEventId(null);
+      setActiveRoute(route);
+    },
+    isDarkMode,
+    onToggleDarkMode: () => setIsDarkMode(!isDarkMode),
+    children: renderContent(),
+  };
+
+  // Render role-specific shell
+  const renderShell = () => {
+    switch (currentRole) {
+      case 'organizer':
+        return <OrganizerShell {...shellProps} />;
+      case 'reviewer':
+        return <ReviewerShell {...shellProps} />;
+      case 'admin':
+        return <AdminShell {...shellProps} />;
+      case 'checkin_staff':
+        return <CheckinShell {...shellProps} />;
+      case 'student':
+      default:
+        return <StudentShell {...shellProps} />;
+    }
+  };
+
+  return <ToastProvider>{renderShell()}</ToastProvider>;
 };
+
 export default App;
