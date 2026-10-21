@@ -1,0 +1,21 @@
+{
+  "name": "eventora",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "dev:frontend": "pnpm --filter @eventora/frontend dev",
+    "build:frontend": "pnpm --filter @eventora/frontend build",
+    "preview:frontend": "pnpm --filter @eventora/frontend preview"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "@playwright/test": "^1.47.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.1"
+  }
+}
