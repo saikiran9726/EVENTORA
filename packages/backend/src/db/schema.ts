@@ -179,6 +179,30 @@ export const exportJobKindEnum = pgEnum('export_job_kind', [
   'analytics',
 ]);
 
+export const volunteerApplicationStatusEnum = pgEnum('volunteer_application_status', [
+  'APPLIED',
+  'APPROVED',
+  'ASSIGNED',
+  'CHECKED_IN',
+  'COMPLETED',
+  'CANCELLED',
+  'REJECTED',
+]);
+
+export const equipmentRequestStatusEnum = pgEnum('equipment_request_status', [
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'RETURNED',
+]);
+
+export const supportIssueStatusEnum = pgEnum('support_issue_status', [
+  'OPEN',
+  'IN_PROGRESS',
+  'RESOLVED',
+  'CLOSED',
+]);
+
 // 1. Colleges
 export const colleges = pgTable('colleges', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -321,6 +345,7 @@ export const venues = pgTable('venues', {
   mapUrl: text('map_url'),
   lat: numeric('lat', { precision: 9, scale: 6 }),
   lng: numeric('lng', { precision: 9, scale: 6 }),
+  entryInstructions: text('entry_instructions'),
   status: varchar('status', { length: 50 }).default('active').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -354,6 +379,7 @@ export const events = pgTable('events', {
   teamMin: integer('team_min'),
   teamMax: integer('team_max'),
   contactEmail: varchar('contact_email', { length: 255 }).notNull(),
+  allowGuests: boolean('allow_guests').default(false).notNull(),
   version: integer('version').default(1).notNull(),
   createdBy: uuid('created_by')
     .references(() => users.id, { onDelete: 'restrict' })
@@ -985,6 +1011,153 @@ export const eventMetrics = pgTable('event_metrics', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ==========================================
+// PHASE 8 TABLES: VOLUNTEERS, EQUIPMENT, ISSUES, GUESTS
+// ==========================================
+
+// 49. Volunteer Roles
+export const volunteerRoles = pgTable('volunteer_roles', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  title: varchar('title', { length: 255 }).notNull(),
+  requirements: text('requirements'),
+  capacity: integer('capacity').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 50. Volunteer Shifts
+export const volunteerShifts = pgTable('volunteer_shifts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  roleId: uuid('role_id')
+    .references(() => volunteerRoles.id, { onDelete: 'cascade' })
+    .notNull(),
+  startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+  endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+  capacity: integer('capacity').notNull(),
+  assigned: integer('assigned').default(0).notNull(),
+  venueId: uuid('venue_id').references(() => venues.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 51. Volunteer Applications
+export const volunteerApplications = pgTable(
+  'volunteer_applications',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    shiftId: uuid('shift_id')
+      .references(() => volunteerShifts.id, { onDelete: 'cascade' })
+      .notNull(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    status: volunteerApplicationStatusEnum('status').default('APPLIED').notNull(),
+    reviewedBy: uuid('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+    checkinTokenHash: bytea('checkin_token_hash').unique(),
+    checkedInAt: timestamp('checked_in_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    uqShiftUser: unique('uq_volunteer_shift_user').on(table.shiftId, table.userId),
+  })
+);
+
+// 52. Volunteer Records (Feeds Passport)
+export const volunteerRecords = pgTable('volunteer_records', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  shiftId: uuid('shift_id')
+    .references(() => volunteerShifts.id, { onDelete: 'cascade' })
+    .notNull(),
+  hours: numeric('hours', { precision: 5, scale: 2 }).notNull(),
+  verifiedBy: uuid('verified_by')
+    .references(() => users.id, { onDelete: 'restrict' })
+    .notNull(),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 53. Equipment Items
+export const equipmentItems = pgTable('equipment_items', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  collegeId: uuid('college_id')
+    .references(() => colleges.id, { onDelete: 'restrict' })
+    .notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  qtyTotal: integer('qty_total').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 54. Equipment Requests
+export const equipmentRequests = pgTable('equipment_requests', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  itemId: uuid('item_id')
+    .references(() => equipmentItems.id, { onDelete: 'cascade' })
+    .notNull(),
+  qty: integer('qty').notNull(),
+  startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+  endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+  status: equipmentRequestStatusEnum('status').default('PENDING').notNull(),
+  reviewedBy: uuid('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 55. Support Issues (Issue Desk)
+export const supportIssues = pgTable('support_issues', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  reporterId: uuid('reporter_id')
+    .references(() => users.id, { onDelete: 'restrict' })
+    .notNull(),
+  ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
+  category: varchar('category', { length: 100 }).notNull(),
+  title: varchar('title', { length: 255 }).notNull(),
+  description: text('description').notNull(),
+  status: supportIssueStatusEnum('status').default('OPEN').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 56. Support Issue Events (Audit Timeline)
+export const supportIssueEvents = pgTable('support_issue_events', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  issueId: uuid('issue_id')
+    .references(() => supportIssues.id, { onDelete: 'cascade' })
+    .notNull(),
+  actorId: uuid('actor_id')
+    .references(() => users.id, { onDelete: 'restrict' })
+    .notNull(),
+  fromStatus: supportIssueStatusEnum('from_status'),
+  toStatus: supportIssueStatusEnum('to_status'),
+  note: text('note').notNull(),
+  at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 57. Guest Registrations
+export const guestRegistrations = pgTable('guest_registrations', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  contactHash: varchar('contact_hash', { length: 64 }).notNull(),
+  accessCodeHash: bytea('access_code_hash').notNull(),
+  status: varchar('status', { length: 50 }).default('VALID').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ one, many }) => ({
   college: one(colleges, {
@@ -1120,3 +1293,18 @@ export type ExportJob = typeof exportJobs.$inferSelect;
 export type ExportJobStatus = typeof exportJobStatusEnum.enumValues[number];
 export type ExportJobKind = typeof exportJobKindEnum.enumValues[number];
 export type EventMetrics = typeof eventMetrics.$inferSelect;
+
+export type VolunteerRole = typeof volunteerRoles.$inferSelect;
+export type NewVolunteerRole = typeof volunteerRoles.$inferInsert;
+export type VolunteerShift = typeof volunteerShifts.$inferSelect;
+export type NewVolunteerShift = typeof volunteerShifts.$inferInsert;
+export type VolunteerApplication = typeof volunteerApplications.$inferSelect;
+export type VolunteerApplicationStatus = typeof volunteerApplicationStatusEnum.enumValues[number];
+export type VolunteerRecord = typeof volunteerRecords.$inferSelect;
+export type EquipmentItem = typeof equipmentItems.$inferSelect;
+export type EquipmentRequest = typeof equipmentRequests.$inferSelect;
+export type EquipmentRequestStatus = typeof equipmentRequestStatusEnum.enumValues[number];
+export type SupportIssue = typeof supportIssues.$inferSelect;
+export type SupportIssueStatus = typeof supportIssueStatusEnum.enumValues[number];
+export type SupportIssueEvent = typeof supportIssueEvents.$inferSelect;
+export type GuestRegistration = typeof guestRegistrations.$inferSelect;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, Calendar, Ticket, Award, User, Bell, Sun, Moon, Users } from 'lucide-react';
+import { Compass, Calendar, Ticket, Award, User, Bell, Sun, Moon, Users, HeartHandshake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PROTOTYPE_BADGE_TEXT } from '@/prototype/data';
 
@@ -86,6 +86,15 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
           >
             <Users className="w-3.5 h-3.5" />
             <span>Teams</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onRouteChange('volunteers')}
+            className="px-2 py-1 rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
+          >
+            <HeartHandshake className="w-3.5 h-3.5" />
+            <span>Volunteers</span>
           </button>
 
           <button

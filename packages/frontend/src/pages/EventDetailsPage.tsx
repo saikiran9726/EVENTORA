@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft,
-  MapPin,
   Share2,
   Download,
   HelpCircle,
@@ -21,6 +20,7 @@ import { useToast } from '@/components/ui/Toast';
 import { PROTOTYPE_EVENTS } from '@/prototype/data';
 import { formatINR } from '@/lib/utils';
 import { TicketSelector } from '@/components/booking/TicketSelector';
+import { VenueCard } from '@/components/venue/VenueCard';
 
 interface EventDetailsPageProps {
   eventId: string;
@@ -342,33 +342,15 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
             )}
           </Card>
 
-          {/* Campus Venue Navigator Card */}
-          <Card>
-            <div className="flex items-center gap-2 mb-3">
-              <MapPin className="w-4 h-4 text-brand" />
-              <h2 className="text-base font-bold text-text">Campus Venue Navigator</h2>
-            </div>
-            <p className="text-sm font-semibold text-text">{event.venue}</p>
-            <p className="text-xs text-text-muted mt-1 leading-relaxed">
-              Entry via North Gate elevator to Floor 2. Wheelchair ramp accessible from Campus Courtyard East.
-              Please arrive 15 minutes before the session starts with your digital QR ticket ready.
-            </p>
-            <div className="mt-3 flex items-center gap-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  toast({
-                    type: 'info',
-                    title: 'Campus Map',
-                    message: 'Interactive building map directions will open.',
-                  })
-                }
-              >
-                View Directions
-              </Button>
-            </div>
-          </Card>
+          {/* Campus Venue Navigator Card (FR-VENUE) */}
+          <VenueCard
+            name={event.venue}
+            building="Sir MV Academic Complex, East Wing"
+            capacity={event.capacity}
+            accessibilityNotes="Step-free wheelchair ramp at Gate 2 entrance, elevator access to 2nd Floor, designated priority seating rows 1-2."
+            directions="From the Central Quadrangle, follow the paved North Walkway for 150m. Enter via the double glass doors."
+            entryInstructions="Staff turnstile check-in opens 15 minutes before the scheduled start time. Have your high-contrast QR pass ready."
+          />
 
           {/* Ticket Information & Server Pricing Policy */}
           <Card>

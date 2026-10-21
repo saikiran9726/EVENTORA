@@ -891,6 +891,156 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_export_jobs_event ON export_jobs(event_id);
     `);
 
+    // Phase 8: Volunteers, Venue Navigator, Equipment & Issue Desk
+    await client.query(`
+      DO $$ BEGIN
+        CREATE TYPE volunteer_application_status AS ENUM (
+          'APPLIED',
+          'APPROVED',
+          'ASSIGNED',
+          'CHECKED_IN',
+          'COMPLETED',
+          'CANCELLED',
+          'REJECTED'
+        );
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE equipment_request_status AS ENUM (
+          'PENDING',
+          'APPROVED',
+          'REJECTED',
+          'RETURNED'
+        );
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE support_issue_status AS ENUM (
+          'OPEN',
+          'IN_PROGRESS',
+          'RESOLVED',
+          'CLOSED'
+        );
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      -- Venue & Event Enrichments
+      ALTER TABLE venues ADD COLUMN IF NOT EXISTS entry_instructions TEXT;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS allow_guests BOOLEAN DEFAULT false NOT NULL;
+
+      -- Volunteer Roles
+      CREATE TABLE IF NOT EXISTS volunteer_roles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        requirements TEXT,
+        capacity INT NOT NULL CHECK (capacity > 0),
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Volunteer Shifts
+      CREATE TABLE IF NOT EXISTS volunteer_shifts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        role_id UUID NOT NULL REFERENCES volunteer_roles(id) ON DELETE CASCADE,
+        starts_at TIMESTAMPTZ NOT NULL,
+        ends_at TIMESTAMPTZ NOT NULL CHECK (ends_at > starts_at),
+        capacity INT NOT NULL CHECK (capacity > 0),
+        assigned INT DEFAULT 0 NOT NULL CHECK (assigned >= 0 AND assigned <= capacity),
+        venue_id UUID REFERENCES venues(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Volunteer Applications
+      CREATE TABLE IF NOT EXISTS volunteer_applications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        shift_id UUID NOT NULL REFERENCES volunteer_shifts(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status volunteer_application_status DEFAULT 'APPLIED' NOT NULL,
+        reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        checkin_token_hash BYTEA UNIQUE,
+        checked_in_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        CONSTRAINT uq_volunteer_shift_user UNIQUE (shift_id, user_id)
+      );
+
+      -- Volunteer Records (Feeds Passport)
+      CREATE TABLE IF NOT EXISTS volunteer_records (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        shift_id UUID NOT NULL REFERENCES volunteer_shifts(id) ON DELETE CASCADE,
+        hours NUMERIC(5, 2) NOT NULL,
+        verified_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        verified_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Equipment Items
+      CREATE TABLE IF NOT EXISTS equipment_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        college_id UUID NOT NULL REFERENCES colleges(id) ON DELETE RESTRICT,
+        name VARCHAR(255) NOT NULL,
+        qty_total INT NOT NULL CHECK (qty_total >= 0),
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Equipment Requests
+      CREATE TABLE IF NOT EXISTS equipment_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        item_id UUID NOT NULL REFERENCES equipment_items(id) ON DELETE CASCADE,
+        qty INT NOT NULL CHECK (qty > 0),
+        starts_at TIMESTAMPTZ NOT NULL,
+        ends_at TIMESTAMPTZ NOT NULL CHECK (ends_at > starts_at),
+        status equipment_request_status DEFAULT 'PENDING' NOT NULL,
+        reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Support Issues
+      CREATE TABLE IF NOT EXISTS support_issues (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        reporter_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        category VARCHAR(100) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        status support_issue_status DEFAULT 'OPEN' NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Support Issue Events (Audit Timeline)
+      CREATE TABLE IF NOT EXISTS support_issue_events (
+        id BIGSERIAL PRIMARY KEY,
+        issue_id UUID NOT NULL REFERENCES support_issues(id) ON DELETE CASCADE,
+        actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        from_status support_issue_status,
+        to_status support_issue_status,
+        note TEXT NOT NULL,
+        at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Guest Registrations
+      CREATE TABLE IF NOT EXISTS guest_registrations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        contact_hash VARCHAR(64) NOT NULL,
+        access_code_hash BYTEA NOT NULL,
+        status VARCHAR(50) DEFAULT 'VALID' NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_volunteer_shifts_role ON volunteer_shifts(role_id);
+      CREATE INDEX IF NOT EXISTS idx_volunteer_apps_user ON volunteer_applications(user_id, status);
+      CREATE INDEX IF NOT EXISTS idx_volunteer_records_user ON volunteer_records(user_id);
+      CREATE INDEX IF NOT EXISTS idx_equipment_requests_item ON equipment_requests(item_id, starts_at, ends_at);
+      CREATE INDEX IF NOT EXISTS idx_support_issues_event ON support_issues(event_id, status);
+      CREATE INDEX IF NOT EXISTS idx_support_issue_events_issue ON support_issue_events(issue_id);
+    `);
+
     // DB Roles & Grants
     await client.query(`
       DO $$ BEGIN

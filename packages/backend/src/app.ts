@@ -14,6 +14,7 @@ import { teamRoutes } from './routes/api/v1/teams.js';
 import { paymentRoutes } from './routes/api/v1/payments.js';
 import { ticketRoutes } from './routes/api/v1/tickets.js';
 import { feedbackRoutes } from './routes/api/v1/feedback.js';
+import { volunteerRoutes } from './routes/api/v1/volunteers.js';
 import { verifyPaymentStartupGuard } from './services/startup-guard.js';
 
 export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
@@ -83,6 +84,7 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.register(paymentRoutes, { prefix: '/api/v1' });
   app.register(ticketRoutes, { prefix: '/api/v1' });
   app.register(feedbackRoutes, { prefix: '/api/v1' });
+  app.register(volunteerRoutes, { prefix: '/api/v1' });
 
   // 404 Handler - Strict Error Envelope
   app.setNotFoundHandler((req, reply) => {

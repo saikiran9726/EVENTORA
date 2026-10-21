@@ -251,6 +251,49 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
           if (targetTicket) {
             eventId = targetTicket.eventId;
           }
+        } else if (req.url.includes('/volunteer-roles/')) {
+          const { volunteerRoles } = await import('../db/schema.js');
+          const targetRole = await db.query.volunteerRoles.findFirst({
+            where: eq(volunteerRoles.id, eventId),
+          });
+          if (targetRole) {
+            eventId = targetRole.eventId;
+          }
+        } else if (req.url.includes('/shifts/')) {
+          const { volunteerShifts, volunteerRoles } = await import('../db/schema.js');
+          const targetShift = await db.query.volunteerShifts.findFirst({
+            where: eq(volunteerShifts.id, eventId),
+          });
+          if (targetShift) {
+            const role = await db.query.volunteerRoles.findFirst({
+              where: eq(volunteerRoles.id, targetShift.roleId),
+            });
+            if (role) eventId = role.eventId;
+          }
+        } else if (req.url.includes('/applications/')) {
+          const { volunteerApplications, volunteerShifts, volunteerRoles } = await import('../db/schema.js');
+          const targetApp = await db.query.volunteerApplications.findFirst({
+            where: eq(volunteerApplications.id, eventId),
+          });
+          if (targetApp) {
+            const shift = await db.query.volunteerShifts.findFirst({
+              where: eq(volunteerShifts.id, targetApp.shiftId),
+            });
+            if (shift) {
+              const role = await db.query.volunteerRoles.findFirst({
+                where: eq(volunteerRoles.id, shift.roleId),
+              });
+              if (role) eventId = role.eventId;
+            }
+          }
+        } else if (req.url.includes('/issues/')) {
+          const { supportIssues } = await import('../db/schema.js');
+          const targetIssue = await db.query.supportIssues.findFirst({
+            where: eq(supportIssues.id, eventId),
+          });
+          if (targetIssue) {
+            eventId = targetIssue.eventId;
+          }
         }
 
         const targetEvent = await db.query.events.findFirst({

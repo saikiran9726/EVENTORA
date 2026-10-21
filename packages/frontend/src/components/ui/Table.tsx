@@ -4,9 +4,15 @@ import { cn } from '@/lib/utils';
 
 export const Table: React.FC<React.TableHTMLAttributes<HTMLTableElement>> = ({
   className,
+  'aria-label': ariaLabel,
   ...props
 }) => (
-  <div className="w-full overflow-x-auto">
+  <div
+    className="w-full overflow-x-auto focus:outline-none focus:ring-1 focus:ring-brand rounded-md"
+    tabIndex={0}
+    role="region"
+    aria-label={ariaLabel || 'Data table scrollable region'}
+  >
     <table className={cn('w-full text-left border-collapse text-sm', className)} {...props} />
   </div>
 );

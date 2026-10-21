@@ -22,6 +22,7 @@ import { CheckoutPage } from '@/pages/CheckoutPage';
 import { ScannerPage } from '@/pages/ScannerPage';
 import { PassportPage } from '@/pages/PassportPage';
 import { PublicVerifyPage } from '@/pages/PublicVerifyPage';
+import { VolunteerHubPage } from '@/pages/VolunteerHubPage';
 import { ExpiredSessionModal } from '@/components/auth/ExpiredSessionModal';
 import { ToastProvider } from '@/components/ui/Toast';
 import { Card } from '@/components/ui/Card';
@@ -208,7 +209,7 @@ const AppInner: React.FC = () => {
       );
     }
 
-    if (currentRole === 'organizer' && (activeRoute === 'dashboard' || activeRoute === 'roster' || activeRoute === 'insights')) {
+    if (currentRole === 'organizer' && (activeRoute === 'dashboard' || activeRoute === 'roster' || activeRoute === 'insights' || activeRoute === 'volunteers')) {
       return (
         <OrganizerDashboardPage
           onProposeEvent={() => setActiveRoute('create-event')}
@@ -230,6 +231,10 @@ const AppInner: React.FC = () => {
 
     if (activeRoute === 'teams') {
       return <TeamsPage />;
+    }
+
+    if (activeRoute === 'volunteers') {
+      return <VolunteerHubPage />;
     }
 
     if (activeRoute === 'verify') {

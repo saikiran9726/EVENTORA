@@ -11,6 +11,11 @@ import {
   EyeOff,
   Eye,
   CheckCircle,
+  HeartHandshake,
+  Wrench,
+  LifeBuoy,
+  CheckSquare,
+  UserCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -74,18 +79,127 @@ interface FeedbackItem {
   editedAt: string | null;
 }
 
+interface VolunteerApplicant {
+  id: string;
+  candidateName: string;
+  email: string;
+  roleTitle: string;
+  shiftTime: string;
+  status: 'APPLIED' | 'APPROVED' | 'ASSIGNED' | 'CHECKED_IN' | 'COMPLETED' | 'REJECTED';
+}
+
+interface SupportIssueItem {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  reporterName: string;
+  status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+  createdAt: string;
+}
+
+interface EquipmentItemRequest {
+  id: string;
+  itemName: string;
+  qty: number;
+  timeWindow: string;
+  status: 'PENDING' | 'APPROVED';
+}
+
 export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
   organizerId = 'org-profile-1',
   onProposeEvent,
 }) => {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights'>('roster');
+  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights' | 'volunteers'>('roster');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'studentName' | 'rollNumber' | 'checkInStatus'>('studentName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState('mock-evt-1');
   const [selectedEventTitle, setSelectedEventTitle] = useState('Smart Campus AI & Robotics Symposium');
+
+  // Volunteers & Operations State (Phase 8 FR-VOL, FR-OPS)
+  const [applicants, setApplicants] = useState<VolunteerApplicant[]>([
+    {
+      id: 'app-1',
+      candidateName: 'Aditya Varma',
+      email: 'aditya.v@campus.edu',
+      roleTitle: 'Stage & Track Usher',
+      shiftTime: '10:00 AM – 02:00 PM',
+      status: 'APPLIED',
+    },
+    {
+      id: 'app-2',
+      candidateName: 'Pooja Nair',
+      email: 'pooja.n@campus.edu',
+      roleTitle: 'Turnstile Scanner Assistant',
+      shiftTime: '09:30 AM – 01:30 PM',
+      status: 'APPLIED',
+    },
+    {
+      id: 'app-3',
+      candidateName: 'Vikram Singh',
+      email: 'vikram.s@campus.edu',
+      roleTitle: 'Lead Event Ambassador',
+      shiftTime: '08:45 AM – 01:00 PM',
+      status: 'APPROVED',
+    },
+  ]);
+
+  const [supportIssues, setSupportIssues] = useState<SupportIssueItem[]>([
+    {
+      id: 'iss-1',
+      title: 'Microphone feedback in Room 204',
+      category: 'Audio/AV',
+      description: 'Audio screeching on primary wireless mic during keynote speech',
+      reporterName: 'Prof. Evelyn Roy',
+      status: 'OPEN',
+      createdAt: '10 mins ago',
+    },
+    {
+      id: 'iss-2',
+      title: 'Wheelchair ramp sign obstructed',
+      category: 'Accessibility',
+      description: 'Banners at Gate 2 blocking directional ramp signage',
+      reporterName: 'Ananya Rao',
+      status: 'IN_PROGRESS',
+      createdAt: '45 mins ago',
+    },
+    {
+      id: 'iss-3',
+      title: 'Turnstile Scanner #2 Battery Depleted',
+      category: 'Equipment',
+      description: 'Replaced with backup lithium pack, fully operational',
+      reporterName: 'Staff Check-in Lead',
+      status: 'RESOLVED',
+      createdAt: '2 hours ago',
+    },
+  ]);
+
+  const [equipmentList, setEquipmentList] = useState<EquipmentItemRequest[]>([
+    {
+      id: 'eq-1',
+      itemName: 'Wireless PA Microphone Kit (x4)',
+      qty: 4,
+      timeWindow: 'Nov 20, 08:00 – 18:00',
+      status: 'APPROVED',
+    },
+    {
+      id: 'eq-2',
+      itemName: 'High-Lumen HDMI Projector',
+      qty: 1,
+      timeWindow: 'Nov 20, 09:00 – 17:00',
+      status: 'APPROVED',
+    },
+    {
+      id: 'eq-3',
+      itemName: 'Mobile Turnstile Optical QR Scanner',
+      qty: 2,
+      timeWindow: 'Nov 20, 08:30 – 13:00',
+      status: 'PENDING',
+    },
+  ]);
 
   // Insights State
   const [analytics, setAnalytics] = useState<EventAnalytics>({
@@ -311,6 +425,81 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
     }
   };
 
+  const handleApproveApplicant = (appId: string) => {
+    setApplicants((prev) =>
+      prev.map((a) => (a.id === appId ? { ...a, status: 'APPROVED' } : a))
+    );
+    toast({
+      type: 'success',
+      title: 'Application Approved',
+      message: 'Candidate moved to APPROVED state and notified.',
+    });
+  };
+
+  const handleAssignApplicant = (appId: string) => {
+    setApplicants((prev) =>
+      prev.map((a) => (a.id === appId ? { ...a, status: 'ASSIGNED' } : a))
+    );
+    toast({
+      type: 'success',
+      title: 'Shift Assigned',
+      message: 'Candidate assigned to shift. Check-in token generated.',
+    });
+  };
+
+  const handleRejectApplicant = (appId: string) => {
+    setApplicants((prev) =>
+      prev.map((a) => (a.id === appId ? { ...a, status: 'REJECTED' } : a))
+    );
+    toast({
+      type: 'info',
+      title: 'Application Rejected',
+      message: 'Applicant status updated to REJECTED.',
+    });
+  };
+
+  const handleBulkApprove = () => {
+    const pendingCount = applicants.filter((a) => a.status === 'APPLIED').length;
+    if (pendingCount === 0) {
+      toast({
+        type: 'info',
+        title: 'Review Queue Clear',
+        message: 'No pending applicants to approve.',
+      });
+      return;
+    }
+    setApplicants((prev) =>
+      prev.map((a) => (a.status === 'APPLIED' ? { ...a, status: 'APPROVED' } : a))
+    );
+    toast({
+      type: 'success',
+      title: 'Bulk Approval Complete',
+      message: `Approved ${pendingCount} volunteer applicants.`,
+    });
+  };
+
+  const handleUpdateIssueStatus = (issueId: string, nextStatus: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED') => {
+    setSupportIssues((prev) =>
+      prev.map((iss) => (iss.id === issueId ? { ...iss, status: nextStatus } : iss))
+    );
+    toast({
+      type: 'success',
+      title: 'Issue Status Updated',
+      message: `Support issue transitioned to ${nextStatus}.`,
+    });
+  };
+
+  const handleApproveEquipment = (reqId: string) => {
+    setEquipmentList((prev) =>
+      prev.map((eq) => (eq.id === reqId ? { ...eq, status: 'APPROVED' } : eq))
+    );
+    toast({
+      type: 'success',
+      title: 'Equipment Allocated',
+      message: 'Equipment request approved and locked against college inventory.',
+    });
+  };
+
   const handleSort = (field: 'studentName' | 'rollNumber' | 'checkInStatus') => {
     if (sortField === field) {
       setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
@@ -394,6 +583,16 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
               }`}
             >
               Sales & Ledger (FR-PAY)
+            </button>
+            <button
+              onClick={() => setActiveTab('volunteers')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                activeTab === 'volunteers'
+                  ? 'bg-surface text-text shadow-sm'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Volunteers & Ops (FR-VOL, FR-OPS)
             </button>
           </div>
 
@@ -903,7 +1102,7 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
           </CardHeader>
 
           <CardContent>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Organizer financial ledger table">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -955,6 +1154,429 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Tab 4: Volunteers & Operations Control Section (FR-VOL, FR-OPS) */}
+      {activeTab === 'volunteers' && (
+        <div className="space-y-6">
+          {/* Header & Policy */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-surface p-4 rounded-xl border border-border">
+            <div>
+              <h2 className="text-lg font-semibold text-text flex items-center gap-2">
+                <HeartHandshake className="w-5 h-5 text-brand" />
+                Volunteer Management & Operations Control (FR-VOL, FR-OPS)
+              </h2>
+              <p className="text-xs text-text-muted mt-1">
+                Role capacity planner, applicant assignment queue, inventory locks, and real-time support issue desk.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="brand" size="sm">
+                POLICY: event:manage:owned
+              </Badge>
+              <Badge variant="neutral" size="sm">
+                Live Ops Console
+              </Badge>
+            </div>
+          </div>
+
+          {/* Shift Capacity & Roster Planner */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardContent className="p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-text">Turnstile Scanner Lead</span>
+                  <Badge variant="brand" size="sm">2 / 5 Filled</Badge>
+                </div>
+                <p className="text-[11px] text-text-muted">10:00 AM – 02:00 PM • Main Gate Entry</p>
+                <div className="w-full bg-surface-2 rounded-full h-2 overflow-hidden border border-border">
+                  <div className="bg-brand h-full rounded-full transition-all" style={{ width: '40%' }} />
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-text-muted pt-1">
+                  <span>3 slots remaining</span>
+                  <span>40% Allocated</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-text">Stage & Track Usher</span>
+                  <Badge variant="warning" size="sm">4 / 4 Filled</Badge>
+                </div>
+                <p className="text-[11px] text-text-muted">09:00 AM – 01:00 PM • Auditorium A</p>
+                <div className="w-full bg-surface-2 rounded-full h-2 overflow-hidden border border-border">
+                  <div className="bg-amber-500 h-full rounded-full transition-all" style={{ width: '100%' }} />
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-amber-500 font-medium pt-1">
+                  <span>Capacity Reached</span>
+                  <span>100% Allocated</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-text">Ambassador & VIP Host</span>
+                  <Badge variant="brand" size="sm">1 / 3 Filled</Badge>
+                </div>
+                <p className="text-[11px] text-text-muted">11:00 AM – 04:00 PM • Reception Hall</p>
+                <div className="w-full bg-surface-2 rounded-full h-2 overflow-hidden border border-border">
+                  <div className="bg-brand h-full rounded-full transition-all" style={{ width: '33.3%' }} />
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-text-muted pt-1">
+                  <span>2 slots remaining</span>
+                  <span>33% Allocated</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Applicant Review Queue */}
+          <Card>
+            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <UserCheck className="w-4 h-4 text-brand" />
+                  Volunteer Application Review Queue
+                </CardTitle>
+                <p className="text-xs text-text-muted mt-1">
+                  Approve and assign student candidates. Assignments require explicit shift tokens and enforce overlap guards.
+                </p>
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBulkApprove}
+                className="flex items-center gap-1.5"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                <span>Bulk Approve Pending</span>
+              </Button>
+            </CardHeader>
+
+            <CardContent>
+              <Table aria-label="Volunteer applications review table">
+                <TableHeader>
+                    <TableRow>
+                      <TableHead>Candidate</TableHead>
+                      <TableHead>Applied Role</TableHead>
+                      <TableHead>Shift Time</TableHead>
+                      <TableHead>Application Status</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {applicants.map((app) => (
+                      <TableRow key={app.id}>
+                        <TableCell>
+                          <div className="font-medium text-xs text-text">{app.candidateName}</div>
+                          <div className="text-[11px] text-text-muted">{app.email}</div>
+                        </TableCell>
+                        <TableCell className="text-xs font-medium text-text">
+                          {app.roleTitle}
+                        </TableCell>
+                        <TableCell className="text-xs text-text-muted">
+                          {app.shiftTime}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              app.status === 'ASSIGNED'
+                                ? 'success'
+                                : app.status === 'APPROVED'
+                                ? 'brand'
+                                : app.status === 'APPLIED'
+                                ? 'warning'
+                                : app.status === 'CHECKED_IN'
+                                ? 'info'
+                                : app.status === 'REJECTED'
+                                ? 'error'
+                                : 'neutral'
+                            }
+                            size="sm"
+                          >
+                            {app.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {app.status === 'APPLIED' && (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => handleApproveApplicant(app.id)}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-error hover:text-error"
+                                  onClick={() => handleRejectApplicant(app.id)}
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                            {app.status === 'APPROVED' && (
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => handleAssignApplicant(app.id)}
+                              >
+                                Assign Shift
+                              </Button>
+                            )}
+                            {app.status === 'ASSIGNED' && (
+                              <span className="text-[11px] text-success font-medium flex items-center gap-1">
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                Token Issued
+                              </span>
+                            )}
+                            {app.status === 'REJECTED' && (
+                              <span className="text-[11px] text-text-muted">Dismissed</span>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+            </CardContent>
+          </Card>
+
+          {/* Support Issue Desk (FR-OPS live kanban) */}
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <LifeBuoy className="w-4 h-4 text-brand" />
+                    Live Operations Issue Desk (FR-OPS Support Kanban)
+                  </CardTitle>
+                  <p className="text-xs text-text-muted mt-1">
+                    Event day incident response, escalation routing, and immutable audit timeline events.
+                  </p>
+                </div>
+                <Badge variant="neutral" size="sm">
+                  {supportIssues.filter((i) => i.status !== 'CLOSED').length} Active Tickets
+                </Badge>
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {/* Column: OPEN */}
+                <div className="bg-surface-2 p-3 rounded-lg border border-border flex flex-col gap-2">
+                  <div className="flex items-center justify-between pb-1 border-b border-border">
+                    <span className="text-xs font-bold text-text uppercase tracking-wider">Open</span>
+                    <Badge variant="warning" size="sm">
+                      {supportIssues.filter((i) => i.status === 'OPEN').length}
+                    </Badge>
+                  </div>
+                  {supportIssues
+                    .filter((i) => i.status === 'OPEN')
+                    .map((issue) => (
+                      <div key={issue.id} className="bg-surface p-3 rounded-md border border-border space-y-2 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <Badge variant="neutral" size="sm">{issue.category}</Badge>
+                          <span className="text-[10px] text-text-muted">{issue.createdAt}</span>
+                        </div>
+                        <h4 className="text-xs font-semibold text-text">{issue.title}</h4>
+                        <p className="text-[11px] text-text-muted">{issue.description}</p>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[10px] text-text-muted">By {issue.reporterName}</span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 text-[11px] px-2"
+                            onClick={() => handleUpdateIssueStatus(issue.id, 'IN_PROGRESS')}
+                          >
+                            Investigate
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+
+                {/* Column: IN_PROGRESS */}
+                <div className="bg-surface-2 p-3 rounded-lg border border-border flex flex-col gap-2">
+                  <div className="flex items-center justify-between pb-1 border-b border-border">
+                    <span className="text-xs font-bold text-text uppercase tracking-wider">In Progress</span>
+                    <Badge variant="brand" size="sm">
+                      {supportIssues.filter((i) => i.status === 'IN_PROGRESS').length}
+                    </Badge>
+                  </div>
+                  {supportIssues
+                    .filter((i) => i.status === 'IN_PROGRESS')
+                    .map((issue) => (
+                      <div key={issue.id} className="bg-surface p-3 rounded-md border border-border space-y-2 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <Badge variant="brand" size="sm">{issue.category}</Badge>
+                          <span className="text-[10px] text-text-muted">{issue.createdAt}</span>
+                        </div>
+                        <h4 className="text-xs font-semibold text-text">{issue.title}</h4>
+                        <p className="text-[11px] text-text-muted">{issue.description}</p>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[10px] text-text-muted">By {issue.reporterName}</span>
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            className="h-6 text-[11px] px-2"
+                            onClick={() => handleUpdateIssueStatus(issue.id, 'RESOLVED')}
+                          >
+                            Resolve
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+
+                {/* Column: RESOLVED */}
+                <div className="bg-surface-2 p-3 rounded-lg border border-border flex flex-col gap-2">
+                  <div className="flex items-center justify-between pb-1 border-b border-border">
+                    <span className="text-xs font-bold text-text uppercase tracking-wider">Resolved</span>
+                    <Badge variant="success" size="sm">
+                      {supportIssues.filter((i) => i.status === 'RESOLVED').length}
+                    </Badge>
+                  </div>
+                  {supportIssues
+                    .filter((i) => i.status === 'RESOLVED')
+                    .map((issue) => (
+                      <div key={issue.id} className="bg-surface p-3 rounded-md border border-border space-y-2 shadow-sm opacity-90">
+                        <div className="flex items-center justify-between">
+                          <Badge variant="success" size="sm">{issue.category}</Badge>
+                          <span className="text-[10px] text-text-muted">{issue.createdAt}</span>
+                        </div>
+                        <h4 className="text-xs font-semibold text-text">{issue.title}</h4>
+                        <p className="text-[11px] text-text-muted">{issue.description}</p>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[10px] text-text-muted">By {issue.reporterName}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-[11px] px-2"
+                            onClick={() => handleUpdateIssueStatus(issue.id, 'CLOSED')}
+                          >
+                            Close
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+
+                {/* Column: CLOSED */}
+                <div className="bg-surface-2 p-3 rounded-lg border border-border flex flex-col gap-2">
+                  <div className="flex items-center justify-between pb-1 border-b border-border">
+                    <span className="text-xs font-bold text-text uppercase tracking-wider">Closed</span>
+                    <Badge variant="neutral" size="sm">
+                      {supportIssues.filter((i) => i.status === 'CLOSED').length}
+                    </Badge>
+                  </div>
+                  {supportIssues.filter((i) => i.status === 'CLOSED').length === 0 ? (
+                    <div className="p-4 text-center text-text-muted text-xs">
+                      No archived tickets
+                    </div>
+                  ) : (
+                    supportIssues
+                      .filter((i) => i.status === 'CLOSED')
+                      .map((issue) => (
+                        <div key={issue.id} className="bg-surface p-3 rounded-md border border-border space-y-2 shadow-sm opacity-60">
+                          <div className="flex items-center justify-between">
+                            <Badge variant="neutral" size="sm">{issue.category}</Badge>
+                            <span className="text-[10px] text-text-muted">{issue.createdAt}</span>
+                          </div>
+                          <h4 className="text-xs font-semibold text-text">{issue.title}</h4>
+                          <p className="text-[11px] text-text-muted">{issue.description}</p>
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Equipment Inventory & Allocation Tracker */}
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Wrench className="w-4 h-4 text-brand" />
+                    College Equipment Allocation & Row Locks (FR-OPS)
+                  </CardTitle>
+                  <p className="text-xs text-text-muted mt-1">
+                    Serialised asset inventory reservations with concurrency bounds against campus pools.
+                  </p>
+                </div>
+                <Badge variant="brand" size="sm">
+                  Inventory Pool Active
+                </Badge>
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              <Table aria-label="Equipment requests inventory table">
+                <TableHeader>
+                    <TableRow>
+                      <TableHead>Requested Equipment Item</TableHead>
+                      <TableHead>Quantity</TableHead>
+                      <TableHead>Reservation Window</TableHead>
+                      <TableHead>Approval Status</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {equipmentList.map((eq) => (
+                      <TableRow key={eq.id}>
+                        <TableCell className="text-xs font-medium text-text">
+                          {eq.itemName}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono text-text">
+                          {eq.qty} Units
+                        </TableCell>
+                        <TableCell className="text-xs text-text-muted">
+                          {eq.timeWindow}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={eq.status === 'APPROVED' ? 'success' : 'warning'}
+                            size="sm"
+                          >
+                            {eq.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {eq.status === 'PENDING' ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => handleApproveEquipment(eq.id)}
+                            >
+                              Approve Request
+                            </Button>
+                          ) : (
+                            <span className="text-[11px] text-success font-medium flex items-center justify-end gap-1">
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              Allocated
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Export Dialog Modal */}
