@@ -310,8 +310,8 @@ export async function executePaymentConfirmationTransaction(params: {
 
         const tRes = await client.query(
           `INSERT INTO tickets (
-             booking_id, ticket_type_id, user_id, event_id, ticket_code, qr_payload_hash, status
-           ) VALUES ($1, $2, $3, $4, $5, $6, 'VALID')
+             booking_id, ticket_type_id, user_id, owner_user_id, event_id, ticket_code, qr_payload_hash, qr_token_hash, status
+           ) VALUES ($1, $2, $3, $3, $4, $5, $6, $6, 'VALID')
            RETURNING id, ticket_code;`,
           [payment.booking_id, item.ticket_type_id, payment.user_id, payment.event_id, ticketCode, tokenHash]
         );

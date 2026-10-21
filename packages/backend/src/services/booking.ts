@@ -273,8 +273,8 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
 
           const ticketRes = await client.query(
             `INSERT INTO tickets (
-               booking_id, ticket_type_id, user_id, event_id, ticket_code, qr_payload_hash, status
-             ) VALUES ($1, $2, $3, $4, $5, $6, 'VALID')
+               booking_id, ticket_type_id, user_id, owner_user_id, event_id, ticket_code, qr_payload_hash, qr_token_hash, status
+             ) VALUES ($1, $2, $3, $3, $4, $5, $6, $6, 'VALID')
              RETURNING id, ticket_code, status, created_at;`,
             [booking.id, item.ticketTypeId, userId, eventId, ticketCode, tokenHash]
           );

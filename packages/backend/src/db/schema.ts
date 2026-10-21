@@ -123,6 +123,28 @@ export const refundStatusEnum = pgEnum('refund_status', [
 
 export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', ['SALE', 'REFUND']);
 
+export const ticketStatusEnum = pgEnum('ticket_status', [
+  'VALID',
+  'CHECKED_IN',
+  'CANCELLED',
+  'REVOKED',
+]);
+
+export const checkinSourceEnum = pgEnum('checkin_source', [
+  'online',
+  'offline_sync',
+]);
+
+export const scanOutcomeEnum = pgEnum('scan_outcome', [
+  'ACCEPTED',
+  'DUPLICATE',
+  'INVALID',
+  'WRONG_EVENT',
+  'REVOKED',
+  'OUTSIDE_WINDOW',
+  'NOT_ASSIGNED',
+]);
+
 // 1. Colleges
 export const colleges = pgTable('colleges', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -547,25 +569,36 @@ export const bookingItems = pgTable('booking_items', {
   unitPricePaise: integer('unit_price_paise').default(0).notNull(),
 });
 
-// 27. Tickets (Phase 6 hook / tickets issued on confirmed booking)
+// 27. Tickets
 export const tickets = pgTable('tickets', {
   id: uuid('id').defaultRandom().primaryKey(),
   bookingId: uuid('booking_id')
     .references(() => bookings.id, { onDelete: 'cascade' })
     .notNull(),
+  bookingItemId: uuid('booking_item_id')
+    .references(() => bookingItems.id, { onDelete: 'set null' }),
   ticketTypeId: uuid('ticket_type_id')
     .references(() => ticketTypes.id, { onDelete: 'restrict' })
     .notNull(),
   userId: uuid('user_id')
     .references(() => users.id, { onDelete: 'restrict' })
     .notNull(),
+  ownerUserId: uuid('owner_user_id')
+    .references(() => users.id, { onDelete: 'restrict' }),
   eventId: uuid('event_id')
     .references(() => events.id, { onDelete: 'cascade' })
     .notNull(),
   ticketCode: varchar('ticket_code', { length: 100 }).notNull().unique(),
   qrPayloadHash: bytea('qr_payload_hash').notNull().unique(),
-  status: varchar('status', { length: 50 }).default('VALID').notNull(),
+  qrTokenHash: bytea('qr_token_hash').unique(),
+  status: ticketStatusEnum('status').default('VALID').notNull(),
+  issuedAt: timestamp('issued_at', { withTimezone: true }).defaultNow().notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  revokeReason: text('revoke_reason'),
   checkedInAt: timestamp('checked_in_at', { withTimezone: true }),
+  checkedInBy: uuid('checked_in_by')
+    .references(() => users.id, { onDelete: 'set null' }),
+  version: integer('version').default(1).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -718,6 +751,91 @@ export const receipts = pgTable('receipts', {
   issuedAt: timestamp('issued_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// 38. Attendance Sessions
+export const attendanceSessions = pgTable('attendance_sessions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+  endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+  checkinOpensAt: timestamp('checkin_opens_at', { withTimezone: true }).notNull(),
+  checkinClosesAt: timestamp('checkin_closes_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 39. Checkins
+export const checkins = pgTable(
+  'checkins',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ticketId: uuid('ticket_id')
+      .references(() => tickets.id, { onDelete: 'cascade' })
+      .notNull(),
+    eventId: uuid('event_id')
+      .references(() => events.id, { onDelete: 'cascade' })
+      .notNull(),
+    sessionId: uuid('session_id')
+      .references(() => attendanceSessions.id, { onDelete: 'set null' }),
+    staffId: uuid('staff_id')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    source: checkinSourceEnum('source').default('online').notNull(),
+    deviceId: varchar('device_id', { length: 100 }),
+    scannedAt: timestamp('scanned_at', { withTimezone: true }).notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+  }
+);
+
+// 40. Certificate Policies
+export const certificatePolicies = pgTable('certificate_policies', {
+  eventId: uuid('event_id')
+    .primaryKey()
+    .references(() => events.id, { onDelete: 'cascade' }),
+  minSessions: integer('min_sessions').default(1).notNull(),
+  requiresCheckin: boolean('requires_checkin').default(true).notNull(),
+  template: jsonb('template'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 41. Certificates
+export const certificates = pgTable(
+  'certificates',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    eventId: uuid('event_id')
+      .references(() => events.id, { onDelete: 'cascade' })
+      .notNull(),
+    verificationCode: varchar('verification_code', { length: 50 }).notNull().unique(),
+    issuedAt: timestamp('issued_at', { withTimezone: true }).defaultNow().notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokeReason: text('revoke_reason'),
+    hash: bytea('hash').notNull(),
+  },
+  (table) => ({
+    uqUserEvent: unique('uq_certificates_user_event').on(table.userId, table.eventId),
+  })
+);
+
+// 42. Scan Log
+export const scanLog = pgTable('scan_log', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  ticketId: uuid('ticket_id')
+    .references(() => tickets.id, { onDelete: 'set null' }),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  staffId: uuid('staff_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  outcome: scanOutcomeEnum('outcome').notNull(),
+  at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ one, many }) => ({
   college: one(colleges, {
@@ -832,3 +950,12 @@ export type TeamInvitation = typeof teamInvitations.$inferSelect;
 export type TeamJoinRequest = typeof teamJoinRequests.$inferSelect;
 export type TeamEventRegistration = typeof teamEventRegistrations.$inferSelect;
 export type TeamSubmission = typeof teamSubmissions.$inferSelect;
+
+export type TicketStatus = typeof ticketStatusEnum.enumValues[number];
+export type CheckinSource = typeof checkinSourceEnum.enumValues[number];
+export type ScanOutcome = typeof scanOutcomeEnum.enumValues[number];
+export type AttendanceSession = typeof attendanceSessions.$inferSelect;
+export type Checkin = typeof checkins.$inferSelect;
+export type CertificatePolicy = typeof certificatePolicies.$inferSelect;
+export type Certificate = typeof certificates.$inferSelect;
+export type ScanLogEntry = typeof scanLog.$inferSelect;

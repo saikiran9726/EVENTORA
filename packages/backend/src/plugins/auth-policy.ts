@@ -237,12 +237,21 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
 
       case 'event:manage:owned': {
         if (userRole === 'admin') break;
-        const eventId = (req.params as any)?.id;
+        let eventId = (req.params as any)?.eventId || (req.params as any)?.id;
         if (!eventId) break;
 
         const { db } = await import('../db/index.js');
-        const { events, organizerMembers } = await import('../db/schema.js');
+        const { events, tickets, organizerMembers } = await import('../db/schema.js');
         const { eq, and } = await import('drizzle-orm');
+
+        if (req.url.includes('/tickets/')) {
+          const targetTicket = await db.query.tickets.findFirst({
+            where: eq(tickets.id, eventId),
+          });
+          if (targetTicket) {
+            eventId = targetTicket.eventId;
+          }
+        }
 
         const targetEvent = await db.query.events.findFirst({
           where: eq(events.id, eventId),
@@ -308,6 +317,57 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
           });
         }
         break;
+      }
+
+      case 'attendance:checkin:assigned': {
+        if (userRole === 'admin') break;
+        const eventId = (req.params as any)?.id || (req.params as any)?.eventId || (req.body as any)?.eventId;
+        if (!eventId) break;
+
+        const { db } = await import('../db/index.js');
+        const { events, eventStaffAssignments, organizerMembers } = await import('../db/schema.js');
+        const { eq, and } = await import('drizzle-orm');
+
+        // 1. Check direct staff assignment
+        const assignment = await db.query.eventStaffAssignments.findFirst({
+          where: and(
+            eq(eventStaffAssignments.eventId, eventId),
+            eq(eventStaffAssignments.userId, req.user!.id),
+            eq(eventStaffAssignments.capability, 'checkin')
+          ),
+        });
+
+        if (assignment && (!assignment.expiresAt || new Date(assignment.expiresAt) > new Date())) {
+          break;
+        }
+
+        // 2. Check if user is organizer owner/manager for this event
+        const targetEvent = await db.query.events.findFirst({
+          where: eq(events.id, eventId),
+        });
+
+        if (targetEvent) {
+          const orgMembership = await db.query.organizerMembers.findFirst({
+            where: and(
+              eq(organizerMembers.organizerId, targetEvent.organizerId),
+              eq(organizerMembers.userId, req.user!.id),
+              eq(organizerMembers.status, 'active')
+            ),
+          });
+
+          if (orgMembership && (orgMembership.role === 'owner' || orgMembership.role === 'manager')) {
+            break;
+          }
+        }
+
+        return reply.code(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'You are not assigned as check-in staff for this event',
+            details: { requiredPolicy: 'attendance:checkin:assigned', eventId },
+            requestId: req.id,
+          },
+        });
       }
 
       default:

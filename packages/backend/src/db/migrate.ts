@@ -106,6 +106,18 @@ export async function runMigrations() {
         CREATE TYPE ledger_entry_type AS ENUM ('SALE', 'REFUND');
       EXCEPTION WHEN duplicate_object THEN null; END $$;
 
+      DO $$ BEGIN
+        CREATE TYPE ticket_status AS ENUM ('VALID', 'CHECKED_IN', 'CANCELLED', 'REVOKED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE checkin_source AS ENUM ('online', 'offline_sync');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE scan_outcome AS ENUM ('ACCEPTED', 'DUPLICATE', 'INVALID', 'WRONG_EVENT', 'REVOKED', 'OUTSIDE_WINDOW', 'NOT_ASSIGNED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
       ALTER TYPE booking_status ADD VALUE IF NOT EXISTS 'PAYMENT_FAILED';
     `);
 
@@ -642,6 +654,106 @@ export async function runMigrations() {
         number VARCHAR(100) NOT NULL UNIQUE,
         issued_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
       );
+    `);
+
+    // Phase 6 Schema updates for tickets table
+    await client.query(`
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS booking_item_id UUID REFERENCES booking_items(id) ON DELETE SET NULL;
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES users(id) ON DELETE RESTRICT;
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS qr_token_hash BYTEA UNIQUE;
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS issued_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS revoke_reason TEXT;
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS checked_in_by UUID REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS version INT DEFAULT 1;
+
+      UPDATE tickets SET owner_user_id = user_id WHERE owner_user_id IS NULL;
+      UPDATE tickets SET qr_token_hash = qr_payload_hash WHERE qr_token_hash IS NULL;
+      UPDATE tickets SET issued_at = created_at WHERE issued_at IS NULL;
+    `);
+
+    // 38. Attendance Sessions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS attendance_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        starts_at TIMESTAMPTZ NOT NULL,
+        ends_at TIMESTAMPTZ NOT NULL,
+        checkin_opens_at TIMESTAMPTZ NOT NULL,
+        checkin_closes_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 39. Checkins
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS checkins (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        session_id UUID REFERENCES attendance_sessions(id) ON DELETE SET NULL,
+        staff_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        source VARCHAR(50) DEFAULT 'online' NOT NULL,
+        device_id VARCHAR(100),
+        scanned_at TIMESTAMPTZ NOT NULL,
+        recorded_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_checkins_ticket_session ON checkins (ticket_id, session_id) WHERE session_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_checkins_ticket_nosession ON checkins (ticket_id) WHERE session_id IS NULL;
+    `);
+
+    // 40. Certificate Policies
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS certificate_policies (
+        event_id UUID PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+        min_sessions INT DEFAULT 1 NOT NULL,
+        requires_checkin BOOLEAN DEFAULT true NOT NULL,
+        template JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 41. Certificates
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS certificates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        verification_code VARCHAR(50) NOT NULL UNIQUE,
+        issued_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        revoked_at TIMESTAMPTZ,
+        revoke_reason TEXT,
+        hash BYTEA NOT NULL,
+        CONSTRAINT uq_certificates_user_event UNIQUE (user_id, event_id)
+      );
+    `);
+
+    // 42. Scan Log
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS scan_log (
+        id BIGSERIAL PRIMARY KEY,
+        ticket_id UUID REFERENCES tickets(id) ON DELETE SET NULL,
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        staff_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        outcome VARCHAR(50) NOT NULL,
+        at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // Indexes on Phase 6 Checkin & Certs
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_attendance_sessions_event_id ON attendance_sessions(event_id);
+      CREATE INDEX IF NOT EXISTS idx_checkins_event_id ON checkins(event_id);
+      CREATE INDEX IF NOT EXISTS idx_checkins_staff_id ON checkins(staff_id);
+      CREATE INDEX IF NOT EXISTS idx_checkins_scanned_at ON checkins(scanned_at);
+      CREATE INDEX IF NOT EXISTS idx_certificates_user_id ON certificates(user_id);
+      CREATE INDEX IF NOT EXISTS idx_certificates_event_id ON certificates(event_id);
+      CREATE INDEX IF NOT EXISTS idx_certificates_code ON certificates(verification_code);
+      CREATE INDEX IF NOT EXISTS idx_scan_log_event_id ON scan_log(event_id);
+      CREATE INDEX IF NOT EXISTS idx_scan_log_ticket_id ON scan_log(ticket_id);
+      CREATE INDEX IF NOT EXISTS idx_tickets_qr_token_hash ON tickets(qr_token_hash);
+      CREATE INDEX IF NOT EXISTS idx_tickets_owner_user ON tickets(owner_user_id);
     `);
 
     // Indexes on Payments, Ledger & Bookings
