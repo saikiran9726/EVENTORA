@@ -2,4 +2,18 @@ packages:
   - 'packages/*'
 
 allowBuilds:
+  argon2: true
   esbuild: true
+
+overrides:
+  '@vitest/mocker@>=2.1.0 <4.1.11': ^4.1.11
+  esbuild@<=0.24.2: ^0.25.0
+  find-my-way@<=9.6.0: ^9.7.0
+  postcss-selector-parser@<7.1.6: ^7.1.6
+  tinypool@<2.1.2: ^2.1.2
+  tinypool@<=2.1.0: ^2.1.1
+  vite@<=6.4.1: ^6.4.2
+  vite@<=6.4.2: ^6.4.3
+  vite@<=6.4.3: ^6.4.4
+  vitest@<3.2.6: ^3.2.6
+  vitest@>=2.1.0 <4.1.11: ^4.1.11

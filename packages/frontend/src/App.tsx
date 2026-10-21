@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { StudentShell } from '@/components/shells/StudentShell';
 import { OrganizerShell } from '@/components/shells/OrganizerShell';
 import { ReviewerShell } from '@/components/shells/ReviewerShell';
@@ -8,6 +9,11 @@ import { DiscoveryPage } from '@/pages/DiscoveryPage';
 import { EventDetailsPage } from '@/pages/EventDetailsPage';
 import { OrganizerDashboardPage } from '@/pages/OrganizerDashboardPage';
 import { ComponentGalleryPage } from '@/pages/ComponentGalleryPage';
+import { LoginPage } from '@/pages/auth/LoginPage';
+import { RegisterPage } from '@/pages/auth/RegisterPage';
+import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
+import { ProfilePreferencesPage } from '@/pages/ProfilePreferencesPage';
+import { ExpiredSessionModal } from '@/components/auth/ExpiredSessionModal';
 import { ToastProvider } from '@/components/ui/Toast';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -17,10 +23,37 @@ import { QrCode } from 'lucide-react';
 
 export type CurrentRole = 'student' | 'organizer' | 'reviewer' | 'admin' | 'checkin_staff';
 
-export const App: React.FC = () => {
+const AppInner: React.FC = () => {
+  const {
+    user,
+    isAuthenticated,
+    isSessionExpiredModalOpen,
+    setIsSessionExpiredModalOpen,
+    returnPath,
+    setReturnPath,
+    logout,
+  } = useAuth();
+
   const [currentRole, setCurrentRole] = useState<CurrentRole>('student');
   const [activeRoute, setActiveRoute] = useState<string>('discover');
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+
+  // Sync currentRole when user authenticates
+  useEffect(() => {
+    if (user) {
+      if (user.globalRole === 'admin') {
+        setCurrentRole('admin');
+      } else if (user.globalRole === 'reviewer') {
+        setCurrentRole('reviewer');
+      } else if (user.organizerMemberships && user.organizerMemberships.length > 0) {
+        setCurrentRole('organizer');
+      } else if (user.staffAssignments && user.staffAssignments.some((s) => s.capability === 'checkin')) {
+        setCurrentRole('checkin_staff');
+      } else {
+        setCurrentRole('student');
+      }
+    }
+  }, [user]);
 
   // Theme state: respects prefers-color-scheme, persisted choice in localStorage
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -65,7 +98,69 @@ export const App: React.FC = () => {
     setActiveRoute('details');
   };
 
+  const handleRequireAuth = (targetRoute: string) => {
+    if (!isAuthenticated) {
+      setReturnPath(targetRoute);
+      setActiveRoute('auth-login');
+      return false;
+    }
+    return true;
+  };
+
+  const handleLoginSuccess = () => {
+    if (returnPath) {
+      setActiveRoute(returnPath);
+      setReturnPath(null);
+    } else {
+      setActiveRoute('discover');
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setActiveRoute('discover');
+  };
+
   const renderContent = () => {
+    // Auth Routes
+    if (activeRoute === 'auth-login') {
+      return (
+        <LoginPage
+          onSuccess={handleLoginSuccess}
+          onNavigateRegister={() => setActiveRoute('auth-register')}
+          onNavigateForgot={() => setActiveRoute('auth-forgot')}
+        />
+      );
+    }
+
+    if (activeRoute === 'auth-register') {
+      return (
+        <RegisterPage
+          onSuccess={() => setActiveRoute('auth-login')}
+          onNavigateLogin={() => setActiveRoute('auth-login')}
+        />
+      );
+    }
+
+    if (activeRoute === 'auth-forgot') {
+      return (
+        <ForgotPasswordPage
+          onNavigateLogin={() => setActiveRoute('auth-login')}
+        />
+      );
+    }
+
+    if (activeRoute === 'profile') {
+      if (!handleRequireAuth('profile')) return null;
+      return (
+        <ProfilePreferencesPage
+          onLogout={handleLogout}
+          isDarkMode={isDarkMode}
+          onToggleTheme={() => setIsDarkMode(!isDarkMode)}
+        />
+      );
+    }
+
     if (activeRoute === 'details' && selectedEventId) {
       return (
         <EventDetailsPage
@@ -274,6 +369,9 @@ export const App: React.FC = () => {
     activeRoute,
     onRouteChange: (route: string) => {
       setSelectedEventId(null);
+      if (route === 'profile') {
+        if (!handleRequireAuth('profile')) return;
+      }
       setActiveRoute(route);
     },
     isDarkMode,
@@ -298,7 +396,28 @@ export const App: React.FC = () => {
     }
   };
 
-  return <ToastProvider>{renderShell()}</ToastProvider>;
+  return (
+    <>
+      {renderShell()}
+      <ExpiredSessionModal
+        isOpen={isSessionExpiredModalOpen}
+        onSignIn={() => {
+          setIsSessionExpiredModalOpen(false);
+          setActiveRoute('auth-login');
+        }}
+      />
+    </>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <ToastProvider>
+        <AppInner />
+      </ToastProvider>
+    </AuthProvider>
+  );
 };
 
 export default App;

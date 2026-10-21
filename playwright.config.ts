@@ -9,12 +9,20 @@ export default defineConfig({
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
   },
-  webServer: {
-    command: 'pnpm --filter @eventora/frontend dev --port 5173 --strictPort',
-    port: 5173,
-    reuseExistingServer: !process.env.CI,
-    timeout: 30000,
-  },
+  webServer: [
+    {
+      command: 'pnpm --filter @eventora/backend dev',
+      port: 4000,
+      reuseExistingServer: true,
+      timeout: 30000,
+    },
+    {
+      command: 'pnpm --filter @eventora/frontend dev --port 5173 --strictPort',
+      port: 5173,
+      reuseExistingServer: true,
+      timeout: 30000,
+    },
+  ],
   projects: [
     {
       name: 'Mobile-375',

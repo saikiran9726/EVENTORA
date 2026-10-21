@@ -9,6 +9,12 @@ export class ApiError extends Error {
   public readonly details: Record<string, any>;
   public readonly requestId: string;
   public readonly status: number;
+  public readonly error: {
+    code: string;
+    message: string;
+    details: Record<string, any>;
+    requestId: string;
+  };
 
   constructor(code: string, message: string, requestId: string, details: Record<string, any> = {}, status = 500) {
     super(message);
@@ -17,13 +23,26 @@ export class ApiError extends Error {
     this.details = details;
     this.requestId = requestId;
     this.status = status;
+    this.error = { code, message, details, requestId };
   }
 }
 
+let inMemoryCsrfToken: string | null = null;
+let inMemorySessionToken: string | null = null;
+
+export function setCsrfToken(token: string | null) {
+  inMemoryCsrfToken = token;
+}
+
+export function setSessionToken(token: string | null) {
+  inMemorySessionToken = token;
+}
+
 /**
- * Returns active CSRF token from document.cookie (double-submit cookie pattern)
+ * Returns active CSRF token from document.cookie or memory
  */
 export function getCsrfToken(): string | null {
+  if (inMemoryCsrfToken) return inMemoryCsrfToken;
   if (typeof document === 'undefined') return null;
   const match = document.cookie.match(/(^|;)\s*eventora_csrf=([^;]+)/);
   return match ? decodeURIComponent(match[2]) : null;
@@ -57,6 +76,10 @@ export async function apiClient<T>(
   headers.set('X-Request-ID', requestId);
   headers.set('Accept', 'application/json');
 
+  if (inMemorySessionToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${inMemorySessionToken}`);
+  }
+
   // Inject double-submit CSRF token on non-GET / non-HEAD requests
   const method = (fetchOptions.method || 'GET').toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -74,7 +97,7 @@ export async function apiClient<T>(
       ...fetchOptions,
       headers,
       signal: controller.signal,
-      credentials: 'same-origin',
+      credentials: 'include',
     });
 
     clearTimeout(timeoutId);
@@ -127,3 +150,31 @@ export async function apiClient<T>(
     );
   }
 }
+
+// Convenience methods
+apiClient.get = function <T>(endpoint: string, options?: ApiClientOptions) {
+  return apiClient<T>(endpoint, { ...options, method: 'GET' });
+};
+
+apiClient.post = function <T>(endpoint: string, body?: any, options?: ApiClientOptions) {
+  return apiClient<T>(endpoint, {
+    ...options,
+    method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+};
+
+apiClient.patch = function <T>(endpoint: string, body?: any, options?: ApiClientOptions) {
+  return apiClient<T>(endpoint, {
+    ...options,
+    method: 'PATCH',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+};
+
+apiClient.delete = function <T>(endpoint: string, options?: ApiClientOptions) {
+  return apiClient<T>(endpoint, { ...options, method: 'DELETE' });
+};
+
+apiClient.setCsrfToken = setCsrfToken;
+apiClient.setSessionToken = setSessionToken;

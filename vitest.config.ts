@@ -11,6 +11,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@eventora/shared': path.resolve(__dirname, './packages/shared/src/index.ts'),
+      '@eventora/backend': path.resolve(__dirname, './packages/backend/src'),
       '@': path.resolve(__dirname, './packages/frontend/src'),
     },
   },
