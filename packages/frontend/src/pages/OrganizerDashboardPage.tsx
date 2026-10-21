@@ -26,6 +26,7 @@ import { useToast } from '@/components/ui/Toast';
 import { PROTOTYPE_ORGANIZER_STATS, PROTOTYPE_ATTENDEES } from '@/prototype/data';
 import { formatPaise } from '@/lib/utils';
 import { ExportDialog } from '@/components/analytics/ExportDialog';
+import { AlertComposer } from '@/components/organizer/AlertComposer';
 
 interface OrganizerDashboardPageProps {
   organizerId?: string;
@@ -111,7 +112,7 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
   onProposeEvent,
 }) => {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights' | 'volunteers'>('roster');
+  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights' | 'volunteers' | 'alerts'>('roster');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'studentName' | 'rollNumber' | 'checkInStatus'>('studentName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -593,6 +594,16 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
               }`}
             >
               Volunteers & Ops (FR-VOL, FR-OPS)
+            </button>
+            <button
+              onClick={() => setActiveTab('alerts')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                activeTab === 'alerts'
+                  ? 'bg-surface text-text shadow-sm'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Alerts & Broadcasts (FR-ALERT)
             </button>
           </div>
 
@@ -1577,6 +1588,14 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* Tab 5: Alerts & Broadcasts Section (FR-ALERT, NFR-NOTIFY) */}
+      {activeTab === 'alerts' && (
+        <AlertComposer
+          eventId={selectedEventId}
+          eventTitle={selectedEventTitle}
+        />
       )}
 
       {/* Export Dialog Modal */}

@@ -203,6 +203,52 @@ export const supportIssueStatusEnum = pgEnum('support_issue_status', [
   'CLOSED',
 ]);
 
+export const notificationSeverityEnum = pgEnum('notification_severity', [
+  'info',
+  'important',
+  'urgent',
+]);
+
+export const notificationChannelEnum = pgEnum('notification_channel', [
+  'inapp',
+  'email',
+]);
+
+export const deliveryStatusEnum = pgEnum('delivery_status', [
+  'QUEUED',
+  'ACCEPTED',
+  'DELIVERED',
+  'FAILED',
+  'UNKNOWN',
+]);
+
+export const eventAlertKindEnum = pgEnum('event_alert_kind', [
+  'venue',
+  'time',
+  'speaker',
+  'cancellation',
+  'safety',
+]);
+
+export const offlineOpOutcomeEnum = pgEnum('offline_op_outcome', [
+  'SYNCED',
+  'DUPLICATE',
+  'REJECTED',
+  'CONFLICT',
+]);
+
+export const scanConflictStatusEnum = pgEnum('scan_conflict_status', [
+  'OPEN',
+  'RESOLVED',
+]);
+
+export const outboxStatusEnum = pgEnum('outbox_status', [
+  'PENDING',
+  'PROCESSING',
+  'DONE',
+  'DEAD',
+]);
+
 // 1. Colleges
 export const colleges = pgTable('colleges', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -460,9 +506,13 @@ export const eventAnnouncements = pgTable('event_announcements', {
 export const outbox = pgTable('outbox', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   eventType: varchar('event_type', { length: 100 }).notNull(),
+  topic: varchar('topic', { length: 100 }),
+  aggregateId: varchar('aggregate_id', { length: 255 }),
   payload: jsonb('payload').notNull(),
   status: varchar('status', { length: 50 }).default('pending').notNull(),
   retries: integer('retries').default(0).notNull(),
+  attempts: smallint('attempts').default(0).notNull(),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
   dedupeKey: varchar('dedupe_key', { length: 255 }).unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   processedAt: timestamp('processed_at', { withTimezone: true }),
@@ -1308,3 +1358,151 @@ export type SupportIssue = typeof supportIssues.$inferSelect;
 export type SupportIssueStatus = typeof supportIssueStatusEnum.enumValues[number];
 export type SupportIssueEvent = typeof supportIssueEvents.$inferSelect;
 export type GuestRegistration = typeof guestRegistrations.$inferSelect;
+
+// ==========================================
+// PHASE 9: ALERTS, NOTIFICATION PIPELINE, OFFLINE CHECK-IN
+// ==========================================
+
+// 46. Notifications
+export const notifications = pgTable('notifications', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  type: varchar('type', { length: 100 }).notNull(),
+  eventId: uuid('event_id').references(() => events.id, { onDelete: 'set null' }),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  severity: notificationSeverityEnum('severity').default('info').notNull(),
+  payload: jsonb('payload'),
+  readAt: timestamp('read_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 47. Notification Deliveries
+export const notificationDeliveries = pgTable(
+  'notification_deliveries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    notificationId: uuid('notification_id')
+      .references(() => notifications.id, { onDelete: 'cascade' })
+      .notNull(),
+    channel: notificationChannelEnum('channel').notNull(),
+    status: deliveryStatusEnum('status').default('QUEUED').notNull(),
+    provider: varchar('provider', { length: 50 }),
+    providerMsgId: varchar('provider_msg_id', { length: 255 }),
+    attempts: smallint('attempts').default(0).notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    errorCode: varchar('error_code', { length: 100 }),
+  },
+  (table) => ({
+    notifChannelUnique: unique().on(table.notificationId, table.channel),
+  })
+);
+
+// 48. Event Alerts
+export const eventAlerts = pgTable('event_alerts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  kind: eventAlertKindEnum('kind').notNull(),
+  message: text('message').notNull(),
+  severity: notificationSeverityEnum('severity').default('info').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 49. Notification Metrics (Latency boundary samples)
+export const notificationMetrics = pgTable('notification_metrics', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  notificationId: uuid('notification_id'),
+  tTrigger: timestamp('t_trigger', { withTimezone: true }).notNull(),
+  tEnqueued: timestamp('t_enqueued', { withTimezone: true }).notNull(),
+  tDequeued: timestamp('t_dequeued', { withTimezone: true }).notNull(),
+  tProviderAccepted: timestamp('t_provider_accepted', { withTimezone: true }),
+});
+
+// 50. Offline Manifests
+export const offlineManifests = pgTable('offline_manifests', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  staffId: uuid('staff_id').references(() => users.id, { onDelete: 'set null' }),
+  deviceId: varchar('device_id', { length: 100 }).notNull(),
+  issuedAt: timestamp('issued_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  ticketCount: integer('ticket_count').default(0).notNull(),
+  keyId: varchar('key_id', { length: 64 }).notNull(),
+});
+
+// 51. Offline Checkin Batches
+export const offlineCheckinBatches = pgTable('offline_checkin_batches', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  deviceId: varchar('device_id', { length: 100 }).notNull(),
+  staffId: uuid('staff_id').references(() => users.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 50 }).default('RECEIVED').notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+  opCount: integer('op_count').default(0).notNull(),
+});
+
+// 52. Offline Ops
+export const offlineOps = pgTable('offline_ops', {
+  opId: uuid('op_id').primaryKey(),
+  batchId: uuid('batch_id')
+    .references(() => offlineCheckinBatches.id, { onDelete: 'cascade' })
+    .notNull(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  ticketRef: varchar('ticket_ref', { length: 64 }).notNull(),
+  deviceId: varchar('device_id', { length: 100 }).notNull(),
+  scannedAtLocal: timestamp('scanned_at_local', { withTimezone: true }).notNull(),
+  outcome: offlineOpOutcomeEnum('outcome').notNull(),
+  reason: text('reason'),
+  reviewedBy: uuid('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+  resolution: text('resolution'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 53. Scan Conflicts
+export const scanConflicts = pgTable('scan_conflicts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  ticketId: uuid('ticket_id')
+    .references(() => tickets.id, { onDelete: 'cascade' })
+    .notNull(),
+  opIds: customType<{ data: string[]; driverData: string[] }>({
+    dataType() {
+      return 'uuid[]';
+    },
+  })('op_ids').notNull(),
+  status: scanConflictStatusEnum('status').default('OPEN').notNull(),
+  resolvedBy: uuid('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+  resolutionNote: text('resolution_note'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type Notification = typeof notifications.$inferSelect;
+export type NewNotification = typeof notifications.$inferInsert;
+export type NotificationSeverity = typeof notificationSeverityEnum.enumValues[number];
+export type NotificationChannel = typeof notificationChannelEnum.enumValues[number];
+export type DeliveryStatus = typeof deliveryStatusEnum.enumValues[number];
+export type NotificationDelivery = typeof notificationDeliveries.$inferSelect;
+export type EventAlert = typeof eventAlerts.$inferSelect;
+export type EventAlertKind = typeof eventAlertKindEnum.enumValues[number];
+export type NotificationMetric = typeof notificationMetrics.$inferSelect;
+export type OfflineManifest = typeof offlineManifests.$inferSelect;
+export type OfflineCheckinBatch = typeof offlineCheckinBatches.$inferSelect;
+export type OfflineOp = typeof offlineOps.$inferSelect;
+export type OfflineOpOutcome = typeof offlineOpOutcomeEnum.enumValues[number];
+export type ScanConflict = typeof scanConflicts.$inferSelect;
+export type ScanConflictStatus = typeof scanConflictStatusEnum.enumValues[number];
+export type OutboxStatus = typeof outboxStatusEnum.enumValues[number];

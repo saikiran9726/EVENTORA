@@ -23,6 +23,7 @@ import { ScannerPage } from '@/pages/ScannerPage';
 import { PassportPage } from '@/pages/PassportPage';
 import { PublicVerifyPage } from '@/pages/PublicVerifyPage';
 import { VolunteerHubPage } from '@/pages/VolunteerHubPage';
+import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 import { ExpiredSessionModal } from '@/components/auth/ExpiredSessionModal';
 import { ToastProvider } from '@/components/ui/Toast';
 import { Card } from '@/components/ui/Card';
@@ -235,6 +236,15 @@ const AppInner: React.FC = () => {
 
     if (activeRoute === 'volunteers') {
       return <VolunteerHubPage />;
+    }
+
+    if (activeRoute === 'notifications') {
+      return (
+        <NotificationCenter
+          isOpen={true}
+          onClose={() => setActiveRoute('discover')}
+        />
+      );
     }
 
     if (activeRoute === 'verify') {

@@ -11,6 +11,7 @@ export type PolicyName =
   | 'event:review'
   | 'event:manage:owned'
   | 'attendance:checkin:assigned'
+  | 'attendance:resolve_conflict'
   | 'analytics:view:owned'
   | 'export:owned';
 
@@ -466,6 +467,64 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
             code: 'FORBIDDEN',
             message: 'You are not assigned as check-in staff for this event',
             details: { requiredPolicy: 'attendance:checkin:assigned', eventId },
+            requestId: req.id,
+          },
+        });
+      }
+
+      case 'attendance:resolve_conflict': {
+        if (userRole === 'admin') break;
+        let eventId = (req.params as any)?.eventId || (req.body as any)?.eventId;
+        const conflictId = (req.params as any)?.id;
+
+        const { db } = await import('../db/index.js');
+        const { events, eventStaffAssignments, organizerMembers, scanConflicts } = await import('../db/schema.js');
+        const { eq, and } = await import('drizzle-orm');
+
+        if (!eventId && conflictId) {
+          const conflict = await db.query.scanConflicts.findFirst({
+            where: eq(scanConflicts.id, conflictId),
+          });
+          if (conflict) {
+            eventId = conflict.eventId;
+          }
+        }
+
+        if (eventId) {
+          // 1. Staff assignment with checkin or volunteer_lead capability
+          const assignment = await db.query.eventStaffAssignments.findFirst({
+            where: and(
+              eq(eventStaffAssignments.eventId, eventId),
+              eq(eventStaffAssignments.userId, req.user!.id)
+            ),
+          });
+          if (assignment && (!assignment.expiresAt || new Date(assignment.expiresAt) > new Date())) {
+            break;
+          }
+
+          // 2. Organizer owner/manager
+          const targetEvent = await db.query.events.findFirst({
+            where: eq(events.id, eventId),
+          });
+          if (targetEvent) {
+            const orgMembership = await db.query.organizerMembers.findFirst({
+              where: and(
+                eq(organizerMembers.organizerId, targetEvent.organizerId),
+                eq(organizerMembers.userId, req.user!.id),
+                eq(organizerMembers.status, 'active')
+              ),
+            });
+            if (orgMembership && (orgMembership.role === 'owner' || orgMembership.role === 'manager')) {
+              break;
+            }
+          }
+        }
+
+        return reply.code(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'You do not have permission to resolve attendance scan conflicts',
+            details: { requiredPolicy: 'attendance:resolve_conflict', eventId },
             requestId: req.id,
           },
         });

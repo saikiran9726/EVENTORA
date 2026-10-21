@@ -1041,6 +1041,154 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_support_issue_events_issue ON support_issue_events(issue_id);
     `);
 
+    // ==========================================
+    // PHASE 9: ALERTS, NOTIFICATIONS, OFFLINE CHECK-IN
+    // ==========================================
+    await client.query(`
+      DO $$ BEGIN
+        CREATE TYPE notification_severity AS ENUM ('info', 'important', 'urgent');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE notification_channel AS ENUM ('inapp', 'email');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE delivery_status AS ENUM ('QUEUED', 'ACCEPTED', 'DELIVERED', 'FAILED', 'UNKNOWN');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE event_alert_kind AS ENUM ('venue', 'time', 'speaker', 'cancellation', 'safety');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE offline_op_outcome AS ENUM ('SYNCED', 'DUPLICATE', 'REJECTED', 'CONFLICT');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE scan_conflict_status AS ENUM ('OPEN', 'RESOLVED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE outbox_status AS ENUM ('PENDING', 'PROCESSING', 'DONE', 'DEAD');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      -- Enrich outbox with Phase 9 columns
+      ALTER TABLE outbox ADD COLUMN IF NOT EXISTS topic VARCHAR(100);
+      ALTER TABLE outbox ADD COLUMN IF NOT EXISTS aggregate_id VARCHAR(255);
+      ALTER TABLE outbox ADD COLUMN IF NOT EXISTS attempts SMALLINT DEFAULT 0;
+      ALTER TABLE outbox ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+
+      -- Notifications
+      CREATE TABLE IF NOT EXISTS notifications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR(100) NOT NULL,
+        event_id UUID REFERENCES events(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        severity notification_severity DEFAULT 'info' NOT NULL,
+        payload JSONB,
+        read_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Notification Deliveries
+      CREATE TABLE IF NOT EXISTS notification_deliveries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        notification_id UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+        channel notification_channel NOT NULL,
+        status delivery_status DEFAULT 'QUEUED' NOT NULL,
+        provider VARCHAR(50),
+        provider_msg_id VARCHAR(255),
+        attempts SMALLINT DEFAULT 0 NOT NULL,
+        accepted_at TIMESTAMPTZ,
+        delivered_at TIMESTAMPTZ,
+        error_code VARCHAR(100),
+        CONSTRAINT uq_notification_channel UNIQUE (notification_id, channel)
+      );
+
+      -- Event Alerts
+      CREATE TABLE IF NOT EXISTS event_alerts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        kind event_alert_kind NOT NULL,
+        message TEXT NOT NULL,
+        severity notification_severity DEFAULT 'info' NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Notification Metrics (Latency samples)
+      CREATE TABLE IF NOT EXISTS notification_metrics (
+        id BIGSERIAL PRIMARY KEY,
+        notification_id UUID,
+        t_trigger TIMESTAMPTZ NOT NULL,
+        t_enqueued TIMESTAMPTZ NOT NULL,
+        t_dequeued TIMESTAMPTZ NOT NULL,
+        t_provider_accepted TIMESTAMPTZ
+      );
+
+      -- Offline Manifests
+      CREATE TABLE IF NOT EXISTS offline_manifests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        staff_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        device_id VARCHAR(100) NOT NULL,
+        issued_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        ticket_count INTEGER DEFAULT 0 NOT NULL,
+        key_id VARCHAR(64) NOT NULL
+      );
+
+      -- Offline Checkin Batches
+      CREATE TABLE IF NOT EXISTS offline_checkin_batches (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        device_id VARCHAR(100) NOT NULL,
+        staff_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        status VARCHAR(50) DEFAULT 'RECEIVED' NOT NULL,
+        received_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        op_count INTEGER DEFAULT 0 NOT NULL
+      );
+
+      -- Offline Ops
+      CREATE TABLE IF NOT EXISTS offline_ops (
+        op_id UUID PRIMARY KEY,
+        batch_id UUID NOT NULL REFERENCES offline_checkin_batches(id) ON DELETE CASCADE,
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        ticket_ref VARCHAR(64) NOT NULL,
+        device_id VARCHAR(100) NOT NULL,
+        scanned_at_local TIMESTAMPTZ NOT NULL,
+        outcome offline_op_outcome NOT NULL,
+        reason TEXT,
+        reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        resolution TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Scan Conflicts
+      CREATE TABLE IF NOT EXISTS scan_conflicts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        op_ids UUID[] NOT NULL,
+        status scan_conflict_status DEFAULT 'OPEN' NOT NULL,
+        resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        resolution_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id) WHERE read_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status ON notification_deliveries(status);
+      CREATE INDEX IF NOT EXISTS idx_event_alerts_event ON event_alerts(event_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_offline_manifests_event ON offline_manifests(event_id, expires_at);
+      CREATE INDEX IF NOT EXISTS idx_offline_ops_ticket ON offline_ops(ticket_ref, event_id);
+      CREATE INDEX IF NOT EXISTS idx_scan_conflicts_event ON scan_conflicts(event_id, status);
+      CREATE INDEX IF NOT EXISTS idx_outbox_queue ON outbox(status, next_attempt_at) WHERE status IN ('pending', 'PENDING');
+    `);
+
     // DB Roles & Grants
     await client.query(`
       DO $$ BEGIN

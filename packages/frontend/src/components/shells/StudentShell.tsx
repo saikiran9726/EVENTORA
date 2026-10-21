@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Compass, Calendar, Ticket, Award, User, Bell, Sun, Moon, Users, HeartHandshake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PROTOTYPE_BADGE_TEXT } from '@/prototype/data';
+import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 
 export interface ShellCommonProps {
   currentRole: string;
@@ -22,6 +23,9 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
   onToggleDarkMode,
   children,
 }) => {
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
   const navItems = [
     { id: 'discover', label: 'Discover', icon: Compass },
     { id: 'calendar', label: 'Calendar', icon: Calendar },
@@ -116,12 +120,16 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
 
           <button
             type="button"
-            onClick={() => onRouteChange('notifications')}
+            onClick={() => setIsNotificationOpen(true)}
             className="p-2 rounded-md text-text-muted hover:text-text hover:bg-surface-2 transition-colors relative"
             aria-label="View notifications"
           >
             <Bell className="w-4 h-4" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-brand rounded-full" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
           </button>
         </div>
       </header>
@@ -204,6 +212,12 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
           );
         })}
       </nav>
+
+      <NotificationCenter
+        isOpen={isNotificationOpen}
+        onClose={() => setIsNotificationOpen(false)}
+        onUnreadCountChange={setUnreadCount}
+      />
     </div>
   );
 };
