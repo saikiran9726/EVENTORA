@@ -12,6 +12,7 @@ import {
   unique,
   integer,
   numeric,
+  smallint,
   primaryKey,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
@@ -143,6 +144,39 @@ export const scanOutcomeEnum = pgEnum('scan_outcome', [
   'REVOKED',
   'OUTSIDE_WINDOW',
   'NOT_ASSIGNED',
+]);
+
+export const feedbackModerationStatusEnum = pgEnum('feedback_moderation_status', [
+  'visible',
+  'flagged',
+  'hidden',
+]);
+
+export const feedbackInvitationStatusEnum = pgEnum('feedback_invitation_status', [
+  'PENDING',
+  'REMINDED',
+  'COMPLETED',
+]);
+
+export const feedbackReportStatusEnum = pgEnum('feedback_report_status', [
+  'PENDING',
+  'REVIEWED',
+  'DISMISSED',
+  'ACTIONED',
+]);
+
+export const exportJobStatusEnum = pgEnum('export_job_status', [
+  'PENDING',
+  'PROCESSING',
+  'COMPLETED',
+  'FAILED',
+]);
+
+export const exportJobKindEnum = pgEnum('export_job_kind', [
+  'attendees',
+  'feedback',
+  'sales_ledger',
+  'analytics',
 ]);
 
 // 1. Colleges
@@ -836,6 +870,121 @@ export const scanLog = pgTable('scan_log', {
   at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// 43. Event Feedback
+export const eventFeedback = pgTable(
+  'event_feedback',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    eventId: uuid('event_id')
+      .references(() => events.id, { onDelete: 'cascade' })
+      .notNull(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    ticketId: uuid('ticket_id')
+      .references(() => tickets.id, { onDelete: 'set null' }),
+    rating: smallint('rating').notNull(),
+    answers: jsonb('answers').default({}),
+    comment: text('comment'),
+    moderationStatus: feedbackModerationStatusEnum('moderation_status').default('visible').notNull(),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }).defaultNow().notNull(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+  },
+  (table) => ({
+    uqFeedbackEventUser: unique('uq_feedback_event_user').on(table.eventId, table.userId),
+  })
+);
+
+// 44. Feedback Invitations
+export const feedbackInvitations = pgTable(
+  'feedback_invitations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    eventId: uuid('event_id')
+      .references(() => events.id, { onDelete: 'cascade' })
+      .notNull(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    status: feedbackInvitationStatusEnum('status').default('PENDING').notNull(),
+    invitedAt: timestamp('invited_at', { withTimezone: true }).defaultNow().notNull(),
+    lastRemindedAt: timestamp('last_reminded_at', { withTimezone: true }),
+    remindersSent: smallint('reminders_sent').default(0).notNull(),
+  },
+  (table) => ({
+    uqFeedbackInvitationEventUser: unique('uq_feedback_invitation_event_user').on(table.eventId, table.userId),
+  })
+);
+
+// 45. Feedback Reports
+export const feedbackReports = pgTable('feedback_reports', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  feedbackId: uuid('feedback_id')
+    .references(() => eventFeedback.id, { onDelete: 'cascade' })
+    .notNull(),
+  reporterId: uuid('reporter_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  reason: text('reason').notNull(),
+  status: feedbackReportStatusEnum('status').default('PENDING').notNull(),
+  resolvedBy: uuid('resolved_by')
+    .references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+});
+
+// 46. Feedback Questions
+export const feedbackQuestions = pgTable('feedback_questions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  label: text('label').notNull(),
+  type: varchar('type', { length: 50 }).notNull(),
+  required: boolean('required').default(false).notNull(),
+  options: jsonb('options'),
+  sort: integer('sort').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 47. Export Jobs
+export const exportJobs = pgTable('export_jobs', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  requesterId: uuid('requester_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  eventId: uuid('event_id')
+    .references(() => events.id, { onDelete: 'cascade' })
+    .notNull(),
+  kind: exportJobKindEnum('kind').notNull(),
+  format: varchar('format', { length: 10 }).default('csv').notNull(),
+  status: exportJobStatusEnum('status').default('PENDING').notNull(),
+  fileKey: text('file_key'),
+  downloadUrl: text('download_url'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  rowCount: integer('row_count').default(0),
+});
+
+// 48. Event Metrics (Aggregate & Analytics Table)
+export const eventMetrics = pgTable('event_metrics', {
+  eventId: uuid('event_id')
+    .primaryKey()
+    .references(() => events.id, { onDelete: 'cascade' }),
+  registrations: integer('registrations').default(0).notNull(),
+  confirmed: integer('confirmed').default(0).notNull(),
+  cancellations: integer('cancellations').default(0).notNull(),
+  waitlistJoined: integer('waitlist_joined').default(0).notNull(),
+  waitlistConverted: integer('waitlist_converted').default(0).notNull(),
+  checkins: integer('checkins').default(0).notNull(),
+  noShows: integer('no_shows').default(0).notNull(),
+  feedbackCount: integer('feedback_count').default(0).notNull(),
+  ratingAvg: numeric('rating_avg', { precision: 3, scale: 2 }).default('0.00').notNull(),
+  salesPaiseSimulated: integer('sales_paise_simulated').default(0).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ one, many }) => ({
   college: one(colleges, {
@@ -959,3 +1108,15 @@ export type Checkin = typeof checkins.$inferSelect;
 export type CertificatePolicy = typeof certificatePolicies.$inferSelect;
 export type Certificate = typeof certificates.$inferSelect;
 export type ScanLogEntry = typeof scanLog.$inferSelect;
+
+export type EventFeedback = typeof eventFeedback.$inferSelect;
+export type NewEventFeedback = typeof eventFeedback.$inferInsert;
+export type FeedbackModerationStatus = typeof feedbackModerationStatusEnum.enumValues[number];
+export type FeedbackInvitation = typeof feedbackInvitations.$inferSelect;
+export type FeedbackInvitationStatus = typeof feedbackInvitationStatusEnum.enumValues[number];
+export type FeedbackReport = typeof feedbackReports.$inferSelect;
+export type FeedbackQuestion = typeof feedbackQuestions.$inferSelect;
+export type ExportJob = typeof exportJobs.$inferSelect;
+export type ExportJobStatus = typeof exportJobStatusEnum.enumValues[number];
+export type ExportJobKind = typeof exportJobKindEnum.enumValues[number];
+export type EventMetrics = typeof eventMetrics.$inferSelect;

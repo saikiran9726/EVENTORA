@@ -6,7 +6,8 @@ import { Modal } from '@/components/ui/Modal';
 import { QRDisplay } from '@/components/ui/QRDisplay';
 import { useToast } from '@/components/ui/Toast';
 import { WaitlistOfferBanner } from '@/components/booking/WaitlistOfferBanner';
-import { Calendar, MapPin, Ticket, ArrowRight } from 'lucide-react';
+import { FeedbackSheet } from '@/components/feedback/FeedbackSheet';
+import { Calendar, MapPin, Ticket, ArrowRight, MessageSquare } from 'lucide-react';
 import { formatINR } from '@/lib/utils';
 
 export interface BookingRecord {
@@ -20,6 +21,7 @@ export interface BookingRecord {
   qrPayload?: string;
   startsAt?: string;
   venueName?: string;
+  isCheckedIn?: boolean;
 }
 
 export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = ({ onNavigateToDiscovery }) => {
@@ -30,6 +32,8 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
   const [cancelReason, setCancelReason] = useState('Change of schedule');
   const [isCancelling, setIsCancelling] = useState(false);
   const [activeOffer, setActiveOffer] = useState<any | null>(null);
+  const [selectedBookingForFeedback, setSelectedBookingForFeedback] = useState<BookingRecord | null>(null);
+  const [submittedFeedbacks, setSubmittedFeedbacks] = useState<Record<string, any>>({});
 
   const fetchBookings = async () => {
     setIsLoading(true);
@@ -199,18 +203,29 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
                 </div>
               </div>
 
-              <div className="mt-4 pt-3 border-t border-border/60 flex items-center justify-between">
+              <div className="mt-4 pt-3 border-t border-border/60 flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold text-text">
                   {booking.totalPaise === 0 ? 'FREE PASS' : formatINR(booking.totalPaise)}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setCancelBookingId(booking.id)}
-                  className="text-destructive hover:bg-destructive/10 text-xs"
-                >
-                  Cancel Registration
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSelectedBookingForFeedback(booking)}
+                    className="text-xs flex items-center gap-1.5"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 text-brand" />
+                    <span>{submittedFeedbacks[booking.eventId] ? 'Edit Review' : 'Feedback'}</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCancelBookingId(booking.id)}
+                    className="text-destructive hover:bg-destructive/10 text-xs"
+                  >
+                    Cancel Registration
+                  </Button>
+                </div>
               </div>
             </Card>
           ))}
@@ -256,6 +271,23 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* Feedback Sheet */}
+      {selectedBookingForFeedback && (
+        <FeedbackSheet
+          isOpen={!!selectedBookingForFeedback}
+          onClose={() => setSelectedBookingForFeedback(null)}
+          eventId={selectedBookingForFeedback.eventId}
+          eventTitle={selectedBookingForFeedback.eventTitle}
+          existingFeedback={submittedFeedbacks[selectedBookingForFeedback.eventId]}
+          onSuccess={(fb) => {
+            setSubmittedFeedbacks((prev) => ({
+              ...prev,
+              [selectedBookingForFeedback.eventId]: fb,
+            }));
+          }}
+        />
       )}
     </div>
   );

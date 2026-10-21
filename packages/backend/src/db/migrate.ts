@@ -780,6 +780,117 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_event_announcements_event ON event_announcements(event_id, created_at DESC);
     `);
 
+    // Phase 7: Feedback, Reviews, Organizer Insights, Exports
+    await client.query(`
+      DO $$ BEGIN
+        CREATE TYPE feedback_moderation_status AS ENUM ('visible', 'flagged', 'hidden');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE feedback_invitation_status AS ENUM ('PENDING', 'REMINDED', 'COMPLETED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE feedback_report_status AS ENUM ('PENDING', 'REVIEWED', 'DISMISSED', 'ACTIONED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE export_job_status AS ENUM ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE export_job_kind AS ENUM ('attendees', 'feedback', 'sales_ledger', 'analytics');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      -- 43. Event Feedback
+      CREATE TABLE IF NOT EXISTS event_feedback (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID REFERENCES events(id) ON DELETE CASCADE NOT NULL,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+        ticket_id UUID REFERENCES tickets(id) ON DELETE SET NULL,
+        rating SMALLINT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+        answers JSONB DEFAULT '{}'::jsonb,
+        comment TEXT,
+        moderation_status feedback_moderation_status DEFAULT 'visible' NOT NULL,
+        submitted_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        edited_at TIMESTAMPTZ,
+        CONSTRAINT uq_feedback_event_user UNIQUE (event_id, user_id)
+      );
+
+      -- 44. Feedback Invitations
+      CREATE TABLE IF NOT EXISTS feedback_invitations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID REFERENCES events(id) ON DELETE CASCADE NOT NULL,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+        status feedback_invitation_status DEFAULT 'PENDING' NOT NULL,
+        invited_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        last_reminded_at TIMESTAMPTZ,
+        reminders_sent SMALLINT DEFAULT 0 NOT NULL,
+        CONSTRAINT uq_feedback_invitation_event_user UNIQUE (event_id, user_id)
+      );
+
+      -- 45. Feedback Reports
+      CREATE TABLE IF NOT EXISTS feedback_reports (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        feedback_id UUID REFERENCES event_feedback(id) ON DELETE CASCADE NOT NULL,
+        reporter_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+        reason TEXT NOT NULL,
+        status feedback_report_status DEFAULT 'PENDING' NOT NULL,
+        resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        resolved_at TIMESTAMPTZ
+      );
+
+      -- 46. Feedback Questions
+      CREATE TABLE IF NOT EXISTS feedback_questions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID REFERENCES events(id) ON DELETE CASCADE NOT NULL,
+        label TEXT NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        required BOOLEAN DEFAULT false NOT NULL,
+        options JSONB,
+        sort INT DEFAULT 0 NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- 47. Export Jobs
+      CREATE TABLE IF NOT EXISTS export_jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        requester_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+        event_id UUID REFERENCES events(id) ON DELETE CASCADE NOT NULL,
+        kind export_job_kind NOT NULL,
+        format VARCHAR(10) DEFAULT 'csv' NOT NULL,
+        status export_job_status DEFAULT 'PENDING' NOT NULL,
+        file_key TEXT,
+        download_url TEXT,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        completed_at TIMESTAMPTZ,
+        row_count INT DEFAULT 0
+      );
+
+      -- 48. Event Metrics (Aggregate & Materialized Analytics Table)
+      CREATE TABLE IF NOT EXISTS event_metrics (
+        event_id UUID PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+        registrations INT DEFAULT 0 NOT NULL,
+        confirmed INT DEFAULT 0 NOT NULL,
+        cancellations INT DEFAULT 0 NOT NULL,
+        waitlist_joined INT DEFAULT 0 NOT NULL,
+        waitlist_converted INT DEFAULT 0 NOT NULL,
+        checkins INT DEFAULT 0 NOT NULL,
+        no_shows INT DEFAULT 0 NOT NULL,
+        feedback_count INT DEFAULT 0 NOT NULL,
+        rating_avg NUMERIC(3, 2) DEFAULT 0.00 NOT NULL,
+        sales_paise_simulated INT DEFAULT 0 NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_event_feedback_event ON event_feedback(event_id, submitted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_feedback_invitations_user ON feedback_invitations(user_id, status);
+      CREATE INDEX IF NOT EXISTS idx_export_jobs_requester ON export_jobs(requester_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_export_jobs_event ON export_jobs(event_id);
+    `);
+
     // DB Roles & Grants
     await client.query(`
       DO $$ BEGIN

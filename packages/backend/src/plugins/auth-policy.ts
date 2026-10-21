@@ -291,12 +291,25 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
 
       case 'analytics:view:owned': {
         if (userRole === 'admin') break;
-        const organizerId = (req.params as any)?.id || (req.params as any)?.organizerId;
-        if (!organizerId) break;
+        let organizerId = (req.params as any)?.organizerId;
+        const paramId = (req.params as any)?.id;
 
         const { db } = await import('../db/index.js');
-        const { organizerMembers } = await import('../db/schema.js');
+        const { events, organizerMembers } = await import('../db/schema.js');
         const { eq, and } = await import('drizzle-orm');
+
+        if (!organizerId && paramId) {
+          const targetEvent = await db.query.events.findFirst({
+            where: eq(events.id, paramId),
+          });
+          if (targetEvent) {
+            organizerId = targetEvent.organizerId;
+          } else {
+            organizerId = paramId;
+          }
+        }
+
+        if (!organizerId) break;
 
         const membership = await db.query.organizerMembers.findFirst({
           where: and(
@@ -312,6 +325,51 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
               code: 'FORBIDDEN',
               message: 'You do not have permission to view analytics or ledger for this organizer',
               details: { requiredPolicy: 'analytics:view:owned', organizerId },
+              requestId: req.id,
+            },
+          });
+        }
+        break;
+      }
+
+      case 'export:owned': {
+        if (userRole === 'admin') break;
+        const eventId = (req.params as any)?.id || (req.params as any)?.eventId;
+        if (!eventId) break;
+
+        const { db } = await import('../db/index.js');
+        const { events, organizerMembers } = await import('../db/schema.js');
+        const { eq, and } = await import('drizzle-orm');
+
+        const targetEvent = await db.query.events.findFirst({
+          where: eq(events.id, eventId),
+        });
+
+        if (!targetEvent) {
+          return reply.code(404).send({
+            error: {
+              code: 'EVENT_NOT_FOUND',
+              message: `Event ${eventId} not found`,
+              details: { eventId },
+              requestId: req.id,
+            },
+          });
+        }
+
+        const membership = await db.query.organizerMembers.findFirst({
+          where: and(
+            eq(organizerMembers.organizerId, targetEvent.organizerId),
+            eq(organizerMembers.userId, req.user!.id),
+            eq(organizerMembers.status, 'active')
+          ),
+        });
+
+        if (!membership || (membership.role !== 'owner' && membership.role !== 'manager')) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'You do not have export permissions for this event',
+              details: { requiredPolicy: 'export:owned', eventId },
               requestId: req.id,
             },
           });

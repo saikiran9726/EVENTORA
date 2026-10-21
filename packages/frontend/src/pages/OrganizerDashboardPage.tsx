@@ -6,6 +6,11 @@ import {
   TrendingDown,
   TrendingUp,
   ShieldAlert,
+  Star,
+  Flag,
+  EyeOff,
+  Eye,
+  CheckCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -15,6 +20,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { useToast } from '@/components/ui/Toast';
 import { PROTOTYPE_ORGANIZER_STATS, PROTOTYPE_ATTENDEES } from '@/prototype/data';
 import { formatPaise } from '@/lib/utils';
+import { ExportDialog } from '@/components/analytics/ExportDialog';
 
 interface OrganizerDashboardPageProps {
   organizerId?: string;
@@ -39,15 +45,107 @@ interface SalesSummary {
   refundsCount: number;
 }
 
+interface EventAnalytics {
+  kpis: {
+    registrations: number;
+    confirmed: number;
+    cancellations: number;
+    waitlistJoined: number;
+    waitlistConverted: number;
+    checkins: number;
+    noShows: number;
+    feedbackCount: number;
+    ratingAvg: number | null;
+    checkinRate: number;
+    responseRate: number;
+  };
+  funnel: Array<{ stage: string; count: number; conversionRate: number }>;
+  timeSeries: Array<{ date: string; registrations: number; cumulative: number }>;
+  ratingsDistribution: Record<number, number>;
+}
+
+interface FeedbackItem {
+  id: string;
+  attendeeLabel: string;
+  rating: number;
+  comment: string | null;
+  moderationStatus: 'visible' | 'flagged' | 'hidden';
+  submittedAt: string;
+  editedAt: string | null;
+}
+
 export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
   organizerId = 'org-profile-1',
   onProposeEvent,
 }) => {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'roster' | 'ledger'>('roster');
+  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights'>('roster');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'studentName' | 'rollNumber' | 'checkInStatus'>('studentName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [selectedEventId, setSelectedEventId] = useState('mock-evt-1');
+  const [selectedEventTitle, setSelectedEventTitle] = useState('Smart Campus AI & Robotics Symposium');
+
+  // Insights State
+  const [analytics, setAnalytics] = useState<EventAnalytics>({
+    kpis: {
+      registrations: 142,
+      confirmed: 120,
+      cancellations: 22,
+      waitlistJoined: 18,
+      waitlistConverted: 6,
+      checkins: 98,
+      noShows: 22,
+      feedbackCount: 42,
+      ratingAvg: 4.6,
+      checkinRate: 81.7,
+      responseRate: 42.9,
+    },
+    funnel: [
+      { stage: 'Initiated Registrations', count: 142, conversionRate: 100 },
+      { stage: 'Confirmed Bookings', count: 120, conversionRate: 84.5 },
+      { stage: 'Checked In', count: 98, conversionRate: 81.7 },
+      { stage: 'Feedback Submitted', count: 42, conversionRate: 42.9 },
+    ],
+    timeSeries: [
+      { date: '2026-10-15', registrations: 25, cumulative: 25 },
+      { date: '2026-10-16', registrations: 40, cumulative: 65 },
+      { date: '2026-10-17', registrations: 35, cumulative: 100 },
+      { date: '2026-10-18', registrations: 20, cumulative: 120 },
+    ],
+    ratingsDistribution: { 5: 28, 4: 10, 3: 3, 2: 1, 1: 0 },
+  });
+
+  const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>([
+    {
+      id: 'fb-1',
+      attendeeLabel: 'Attendee #1',
+      rating: 5,
+      comment: 'Excellent hands-on session with the robotics lab equipment. Very well structured.',
+      moderationStatus: 'visible',
+      submittedAt: '2026-10-21T14:30:00Z',
+      editedAt: null,
+    },
+    {
+      id: 'fb-2',
+      attendeeLabel: 'Attendee #2',
+      rating: 4,
+      comment: 'Great speaker and pacing, would love more time for the Q&A segment next time.',
+      moderationStatus: 'visible',
+      submittedAt: '2026-10-21T15:10:00Z',
+      editedAt: '2026-10-21T16:00:00Z',
+    },
+    {
+      id: 'fb-3',
+      attendeeLabel: 'Attendee #3',
+      rating: 5,
+      comment: 'The live demo was the highlight of the week! Super smooth digital check-in too.',
+      moderationStatus: 'visible',
+      submittedAt: '2026-10-21T16:45:00Z',
+      editedAt: null,
+    },
+  ]);
 
   // Ledger state
   const [salesSummary, setSalesSummary] = useState<SalesSummary>({
@@ -124,6 +222,95 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
     loadLedger();
   }, [organizerId]);
 
+  // Fetch real analytics and feedback when on insights tab
+  useEffect(() => {
+    if (activeTab !== 'insights') return;
+
+    async function loadInsights() {
+      try {
+        const token = localStorage.getItem('eventora_auth_token');
+        if (!token) return;
+        const headers = { Authorization: `Bearer ${token}` };
+
+        const [analyticsRes, feedbackRes] = await Promise.all([
+          fetch(`/api/v1/organizer/events/${selectedEventId}/analytics`, { headers }),
+          fetch(`/api/v1/organizer/events/${selectedEventId}/feedback`, { headers }),
+        ]);
+
+        if (analyticsRes.ok) {
+          const aData = await analyticsRes.json();
+          if (aData.analytics) {
+            setAnalytics(aData.analytics);
+          }
+        }
+
+        if (feedbackRes.ok) {
+          const fData = await feedbackRes.json();
+          if (Array.isArray(fData.feedback)) {
+            setFeedbackList(fData.feedback);
+          }
+        }
+      } catch {
+        // Retain fallback prototype analytics
+      }
+    }
+
+    loadInsights();
+  }, [activeTab, selectedEventId]);
+
+  const handleModerateFeedback = async (feedbackId: string, status: 'visible' | 'flagged' | 'hidden') => {
+    try {
+      const token = localStorage.getItem('eventora_auth_token');
+
+      if (!token || feedbackId.startsWith('fb-')) {
+        toast({
+          type: 'success',
+          title: 'Review Moderated',
+          message: `Feedback status set to ${status}.`,
+        });
+        setFeedbackList((prev) =>
+          prev.map((f) => (f.id === feedbackId ? { ...f, moderationStatus: status } : f))
+        );
+        return;
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      };
+
+      const res = await fetch(`/api/v1/feedback/${feedbackId}/moderate`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ status }),
+      });
+
+      if (res.ok) {
+        toast({
+          type: 'success',
+          title: 'Review Moderated',
+          message: `Feedback status set to ${status}.`,
+        });
+        setFeedbackList((prev) =>
+          prev.map((f) => (f.id === feedbackId ? { ...f, moderationStatus: status } : f))
+        );
+      } else {
+        toast({
+          type: 'error',
+          title: 'Moderation Error',
+          message: 'Could not update feedback moderation status.',
+        });
+      }
+    } catch {
+      toast({
+        type: 'error',
+        title: 'Network Error',
+        message: 'Could not connect to server.',
+      });
+    }
+  };
+
   const handleSort = (field: 'studentName' | 'rollNumber' | 'checkInStatus') => {
     if (sortField === field) {
       setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
@@ -175,7 +362,7 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Tab Switcher */}
           <div className="flex bg-surface-2 p-1 rounded-lg border border-border">
             <button
@@ -187,6 +374,16 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
               }`}
             >
               Attendee Roster
+            </button>
+            <button
+              onClick={() => setActiveTab('insights')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                activeTab === 'insights'
+                  ? 'bg-surface text-text shadow-sm'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Insights & Feedback (FR-FEED)
             </button>
             <button
               onClick={() => setActiveTab('ledger')}
@@ -203,16 +400,11 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              toast({
-                type: 'info',
-                title: 'Data Export',
-                message: activeTab === 'roster' ? 'Attendee roster CSV generated.' : 'Financial ledger CSV exported.',
-              })
-            }
+            onClick={() => setIsExportOpen(true)}
+            className="flex items-center gap-1.5"
           >
-            <Download className="w-3.5 h-3.5 mr-1" />
-            <span>Export CSV</span>
+            <Download className="w-3.5 h-3.5" />
+            <span>Export Data</span>
           </Button>
 
           <Button
@@ -244,31 +436,59 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
             <Users className="w-4 h-4 text-brand" />
           </div>
           <div className="text-2xl font-bold text-text">
-            {PROTOTYPE_ORGANIZER_STATS.activeRegistrations}
+            {activeTab === 'insights' ? analytics.kpis.registrations : PROTOTYPE_ORGANIZER_STATS.activeRegistrations}
           </div>
-          <p className="text-[11px] text-text-muted mt-1">Across 4 published club events</p>
+          <p className="text-[11px] text-text-muted mt-1">
+            {activeTab === 'insights' ? `${analytics.kpis.confirmed} confirmed seats` : 'Across 4 published club events'}
+          </p>
         </Card>
 
         <Card>
           <div className="flex items-center justify-between pb-2">
-            <span className="text-xs font-medium text-text-muted">Simulated Gross Sales</span>
-            <TrendingUp className="w-4 h-4 text-success" />
+            <span className="text-xs font-medium text-text-muted">
+              {activeTab === 'insights' ? 'Check-in Attendance' : 'Simulated Gross Sales'}
+            </span>
+            {activeTab === 'insights' ? (
+              <CheckCircle className="w-4 h-4 text-success" />
+            ) : (
+              <TrendingUp className="w-4 h-4 text-success" />
+            )}
           </div>
           <div className="text-2xl font-bold text-text">
-            ₹{formatPaise(salesSummary.grossPaise)}
+            {activeTab === 'insights'
+              ? `${analytics.kpis.checkinRate}%`
+              : `₹${formatPaise(salesSummary.grossPaise)}`}
           </div>
-          <p className="text-[11px] text-text-muted mt-1">({salesSummary.grossPaise} paise)</p>
+          <p className="text-[11px] text-text-muted mt-1">
+            {activeTab === 'insights'
+              ? `${analytics.kpis.checkins} scanned (${analytics.kpis.noShows} no-shows)`
+              : `(${salesSummary.grossPaise} paise)`}
+          </p>
         </Card>
 
         <Card>
           <div className="flex items-center justify-between pb-2">
-            <span className="text-xs font-medium text-text-muted">Simulated Refunds</span>
-            <TrendingDown className="w-4 h-4 text-error" />
+            <span className="text-xs font-medium text-text-muted">
+              {activeTab === 'insights' ? 'Average Feedback Score' : 'Simulated Refunds'}
+            </span>
+            {activeTab === 'insights' ? (
+              <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+            ) : (
+              <TrendingDown className="w-4 h-4 text-error" />
+            )}
           </div>
           <div className="text-2xl font-bold text-text">
-            ₹{formatPaise(salesSummary.refundsPaise)}
+            {activeTab === 'insights'
+              ? analytics.kpis.ratingAvg !== null
+                ? `${analytics.kpis.ratingAvg.toFixed(1)} ★`
+                : 'Not enough responses'
+              : `₹${formatPaise(salesSummary.refundsPaise)}`}
           </div>
-          <p className="text-[11px] text-text-muted mt-1">{salesSummary.refundsCount} approved refund(s)</p>
+          <p className="text-[11px] text-text-muted mt-1">
+            {activeTab === 'insights'
+              ? `${analytics.kpis.feedbackCount} reviews · ${analytics.kpis.responseRate}% response rate`
+              : `${salesSummary.refundsCount} approved refund(s)`}
+          </p>
         </Card>
 
         <Card>
@@ -396,7 +616,275 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
         </Card>
       )}
 
-      {/* Tab 2: Financial Sales & Ledger Section (FR-PAY) */}
+      {/* Tab 2: Insights & Feedback Section (FR-FEED, FR-INSIGHT) */}
+      {activeTab === 'insights' && (
+        <div className="space-y-6">
+          {/* Event Selector in Insights Tab */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 bg-surface-2 border border-border rounded-lg">
+            <div>
+              <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">Analyzing Event:</span>
+              <h2 className="text-sm font-bold text-text mt-0.5">{selectedEventTitle}</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <label htmlFor="insight-event-selector" className="text-xs text-text-muted">Switch Event:</label>
+              <select
+                id="insight-event-selector"
+                value={selectedEventId}
+                onChange={(e) => {
+                  setSelectedEventId(e.target.value);
+                  setSelectedEventTitle(e.target.options[e.target.selectedIndex].text);
+                }}
+                className="text-xs p-1.5 rounded border border-border bg-surface text-text"
+              >
+                <option value="mock-evt-1">Smart Campus AI & Robotics Symposium</option>
+                <option value="mock-evt-2">Annual Autonomous Drone Derby</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Funnel & Distribution Row */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Conversion Funnel */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Attendee Lifecycle Funnel</CardTitle>
+                <p className="text-xs text-text-muted mt-1">
+                  Conversion tracking from registration through check-in and post-event feedback.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {analytics.funnel.map((step, idx) => (
+                  <div key={step.stage} className="space-y-1">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="font-semibold text-text">
+                        {idx + 1}. {step.stage}
+                      </span>
+                      <span className="font-mono font-medium text-text">
+                        {step.count} ({step.conversionRate}%)
+                      </span>
+                    </div>
+                    <div className="w-full bg-surface-2 h-3 rounded-full overflow-hidden border border-border/50">
+                      <div
+                        className="bg-brand-600 h-full rounded-full transition-all duration-300"
+                        style={{ width: `${Math.max(5, Math.min(100, step.conversionRate))}%` }}
+                        role="progressbar"
+                        aria-valuenow={step.conversionRate}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${step.stage} conversion rate`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            {/* Ratings Breakdown */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Rating Distribution & Breakdown</CardTitle>
+                <p className="text-xs text-text-muted mt-1">
+                  Attendee satisfaction scores submitted within 48-hour post-event window.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {[5, 4, 3, 2, 1].map((stars) => {
+                  const count = analytics.ratingsDistribution[stars] || 0;
+                  const total = analytics.kpis.feedbackCount || 1;
+                  const pct = Math.round((count / total) * 100);
+                  return (
+                    <div key={stars} className="flex items-center gap-3 text-xs">
+                      <span className="font-medium text-text min-w-[3.5rem] flex items-center gap-1">
+                        {stars} <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+                      </span>
+                      <div className="flex-1 bg-surface-2 h-2.5 rounded-full overflow-hidden border border-border/50">
+                        <div
+                          className="bg-amber-400 h-full rounded-full transition-all duration-300"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="font-mono text-text-muted min-w-[3rem] text-right">
+                        {count} ({pct}%)
+                      </span>
+                    </div>
+                  );
+                })}
+
+                <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-text-muted">
+                  <span>Cold-Start Guard (Blueprint §4):</span>
+                  <Badge variant={analytics.kpis.feedbackCount >= 5 ? 'success' : 'neutral'} size="sm">
+                    {analytics.kpis.feedbackCount >= 5
+                      ? 'Mature Rating (n ≥ 5)'
+                      : 'Low Data Rule (n < 5)'}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Time Series Table (Accessible Table Alternative) */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Registration Trend Over Time</CardTitle>
+              <p className="text-xs text-text-muted mt-1">
+                Accessible tabular representation of daily and cumulative attendee registrations.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div
+                className="overflow-x-auto"
+                tabIndex={0}
+                role="region"
+                aria-label="Registrations over time table container"
+              >
+                <table
+                  className="w-full text-xs text-left border-collapse"
+                  aria-label="Registrations over time table"
+                >
+                  <thead>
+                    <tr className="border-b border-border text-text-muted">
+                      <th scope="col" className="py-2 px-3 font-semibold">Date</th>
+                      <th scope="col" className="py-2 px-3 font-semibold">New Bookings</th>
+                      <th scope="col" className="py-2 px-3 font-semibold">Cumulative Total</th>
+                      <th scope="col" className="py-2 px-3 font-semibold">Trend Indicator</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analytics.timeSeries.map((row) => (
+                      <tr key={row.date} className="border-b border-border/40 hover:bg-surface-2">
+                        <td className="py-2 px-3 font-mono text-text">{row.date}</td>
+                        <td className="py-2 px-3 font-semibold text-brand-600">+{row.registrations}</td>
+                        <td className="py-2 px-3 font-mono font-medium text-text">{row.cumulative}</td>
+                        <td className="py-2 px-3">
+                          <div className="w-24 bg-surface-2 h-2 rounded-full overflow-hidden">
+                            <div
+                              className="bg-brand-500 h-full rounded-full"
+                              style={{ width: `${Math.min(100, (row.cumulative / (analytics.kpis.confirmed || 1)) * 100)}%` }}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Attendee Feedback & Moderation Queue */}
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Attendee Reviews & Feedback Queue</CardTitle>
+                  <p className="text-xs text-text-muted mt-1">
+                    Zero PII displayed. Emails, student roll numbers, and personal identities are completely excluded.
+                  </p>
+                </div>
+                <Badge variant="neutral" size="sm">
+                  Privacy Guard: ZERO_PII
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {feedbackList.length === 0 ? (
+                <div className="py-8 text-center text-xs text-text-muted">
+                  No feedback reviews submitted yet for this event.
+                </div>
+              ) : (
+                <div
+                  className="overflow-x-auto"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Feedback reviews table container"
+                >
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Attendee</TableHead>
+                        <TableHead>Rating</TableHead>
+                        <TableHead>Review Comment</TableHead>
+                        <TableHead>Submitted At</TableHead>
+                        <TableHead>Moderation</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {feedbackList.map((item) => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-semibold text-xs text-text">
+                            {item.attendeeLabel}
+                          </TableCell>
+                          <TableCell>
+                            <span className="inline-flex items-center gap-1 font-bold text-xs text-amber-500">
+                              {item.rating} <Star className="w-3.5 h-3.5 fill-amber-500" />
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-xs max-w-sm truncate text-text">
+                            {item.comment || <span className="italic text-text-muted">No comment provided</span>}
+                          </TableCell>
+                          <TableCell className="text-xs text-text-muted whitespace-nowrap">
+                            {new Date(item.submittedAt).toLocaleDateString()}
+                            {item.editedAt && (
+                              <span className="block text-[10px] text-brand-600 font-mono">(edited)</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                item.moderationStatus === 'visible'
+                                  ? 'success'
+                                  : item.moderationStatus === 'flagged'
+                                  ? 'warning'
+                                  : 'neutral'
+                              }
+                              size="sm"
+                            >
+                              {item.moderationStatus}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5">
+                              {item.moderationStatus !== 'flagged' && (
+                                <button
+                                  onClick={() => handleModerateFeedback(item.id, 'flagged')}
+                                  title="Flag review"
+                                  className="p-1 text-amber-500 hover:bg-surface-2 rounded"
+                                >
+                                  <Flag className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {item.moderationStatus !== 'hidden' ? (
+                                <button
+                                  onClick={() => handleModerateFeedback(item.id, 'hidden')}
+                                  title="Hide review"
+                                  className="p-1 text-text-muted hover:text-error hover:bg-surface-2 rounded"
+                                >
+                                  <EyeOff className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleModerateFeedback(item.id, 'visible')}
+                                  title="Make visible"
+                                  className="p-1 text-success hover:bg-surface-2 rounded"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Tab 3: Financial Sales & Ledger Section (FR-PAY) */}
       {activeTab === 'ledger' && (
         <Card>
           <CardHeader>
@@ -467,6 +955,16 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Export Dialog Modal */}
+      {isExportOpen && (
+        <ExportDialog
+          isOpen={isExportOpen}
+          onClose={() => setIsExportOpen(false)}
+          eventId={selectedEventId}
+          eventTitle={selectedEventTitle}
+        />
       )}
     </div>
   );
