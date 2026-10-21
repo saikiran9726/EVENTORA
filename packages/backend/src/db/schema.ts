@@ -1556,10 +1556,10 @@ export const studentAchievements = pgTable(
     visibility: achievementVisibilityEnum('visibility').default('public').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [
-    uniqueIndex('uq_student_achievements_type_sourceref').on(table.type, table.sourceRefId),
-    index('idx_student_achievements_user_visibility').on(table.userId, table.visibility, table.verificationStatus),
-  ]
+  (table) => ({
+    uqStudentAchievementsTypeSourceref: uniqueIndex('uq_student_achievements_type_sourceref').on(table.type, table.sourceRefId),
+    idxStudentAchievementsUserVisibility: index('idx_student_achievements_user_visibility').on(table.userId, table.visibility, table.verificationStatus),
+  })
 );
 
 // 56. Passport Settings (FR-PASS)
@@ -1600,3 +1600,32 @@ export type AchievementType = typeof achievementTypeEnum.enumValues[number];
 export type AchievementVerificationStatus = typeof achievementVerificationStatusEnum.enumValues[number];
 export type AchievementVisibility = typeof achievementVisibilityEnum.enumValues[number];
 export type PassportSetting = typeof passportSettings.$inferSelect;
+
+// 57. Ops Runs (Phase 11 Rehearsal Evidence)
+export const opsRuns = pgTable(
+  'ops_runs',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    kind: varchar('kind', { length: 50 }).notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    outcome: varchar('outcome', { length: 20 }).notNull(),
+    evidenceRef: jsonb('evidence_ref').default({}).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxOpsRunsKindOutcome: index('idx_ops_runs_kind_outcome').on(table.kind, table.outcome, table.startedAt),
+  })
+);
+
+// 58. Schema Migrations (Readiness Tracker)
+export const schemaMigrations = pgTable('schema_migrations', {
+  version: integer('version').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  appliedAt: timestamp('applied_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type OpsRun = typeof opsRuns.$inferSelect;
+export type NewOpsRun = typeof opsRuns.$inferInsert;
+export type SchemaMigration = typeof schemaMigrations.$inferSelect;
+

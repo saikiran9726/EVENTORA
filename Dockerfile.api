@@ -1,0 +1,59 @@
+# ========================================================
+# Dockerfile.api - Multi-Stage, Non-Root, Read-Only FS
+# ========================================================
+
+# Stage 1: Build & Bundle
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+RUN npm install -g pnpm@9.12.0
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/frontend/package.json ./packages/frontend/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/shared/ ./packages/shared/
+COPY packages/backend/ ./packages/backend/
+
+RUN pnpm --filter @eventora/shared build && \
+    pnpm --filter @eventora/backend build
+
+# Stage 2: Hardened Minimal Production Runtime
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=4000
+ENV HOST=0.0.0.0
+
+# Create unprivileged system group & user (UID 10001)
+RUN addgroup -g 10001 -S eventora && \
+    adduser -u 10001 -S eventora -G eventora
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/backend/package.json ./packages/backend/
+
+RUN npm install -g pnpm@9.12.0 && \
+    pnpm install --prod --frozen-lockfile && \
+    npm uninstall -g pnpm && \
+    rm -rf /root/.npm /root/.local
+
+COPY --from=builder --chown=eventora:eventora /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder --chown=eventora:eventora /app/packages/backend/dist ./packages/backend/dist
+
+# Switch to unprivileged non-root user
+USER 10001:10001
+
+EXPOSE 4000
+
+# Read-only root filesystem support: /tmp must be mounted tmpfs
+VOLUME ["/tmp"]
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:4000/health || exit 1
+
+CMD ["node", "packages/backend/dist/index.js"]

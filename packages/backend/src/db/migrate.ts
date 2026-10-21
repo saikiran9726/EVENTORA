@@ -1255,6 +1255,56 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_passport_settings_slug ON passport_settings(slug) WHERE is_public = TRUE;
     `);
 
+    // ==========================================
+    // PHASE 11: PRODUCTION HARDENING, OPS RUNS, AUDIT PARTITIONING & READINESS
+    // ==========================================
+    try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";');
+    } catch {
+      // Allowed if pg_stat_statements is not in shared_preload_libraries
+    }
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ops_runs (
+        id BIGSERIAL PRIMARY KEY,
+        kind VARCHAR(50) NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL,
+        finished_at TIMESTAMPTZ,
+        outcome VARCHAR(20) NOT NULL,
+        evidence_ref JSONB DEFAULT '{}'::jsonb NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ops_runs_kind_outcome ON ops_runs(kind, outcome, started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        applied_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      INSERT INTO schema_migrations (version, name) VALUES
+        (1, 'Phase 1: Core Foundation & Tokens'),
+        (2, 'Phase 2: Auth, Roles & Sessions'),
+        (3, 'Phase 3: Event Lifecycle, Venues, Discovery & Calendar'),
+        (4, 'Phase 4: Registration, Capacity, Waitlists & Teams'),
+        (5, 'Phase 5: Test-Mode Paid Checkout, Receipts & Ledger'),
+        (6, 'Phase 6: QR Tickets, Check-in, Attendance & Certificates'),
+        (7, 'Phase 7: Feedback, Reviews, Organizer Insights & Exports'),
+        (8, 'Phase 8: Volunteers, Venue Navigator, Equipment & Issue Desk'),
+        (9, 'Phase 9: Alerts, Notification Pipeline & Offline Check-in'),
+        (10, 'Phase 10: Cross-College Discovery & Student Event Passport'),
+        (11, 'Phase 11: Production Hardening, ops_runs & Monthly Partitioning')
+      ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
+
+      -- Comprehensive production performance indexes
+      CREATE INDEX IF NOT EXISTS idx_events_perf_discovery ON events(visibility, status, starts_at, category);
+      CREATE INDEX IF NOT EXISTS idx_bookings_perf_user_event ON bookings(user_id, event_id, status);
+      CREATE INDEX IF NOT EXISTS idx_tickets_perf_qr_hash ON tickets(qr_token_hash);
+      CREATE INDEX IF NOT EXISTS idx_checkins_perf_dedupe ON checkins(ticket_id, session_id);
+      CREATE INDEX IF NOT EXISTS idx_ledger_perf_analytics ON organizer_ledger_entries(organizer_id, entry_type, created_at);
+      CREATE INDEX IF NOT EXISTS idx_feedback_perf_event ON event_feedback(event_id, moderation_status);
+    `);
+
     // DB Roles & Grants
     await client.query(`
       DO $$ BEGIN
@@ -1273,7 +1323,7 @@ export async function runMigrations() {
     `);
 
     await client.query('COMMIT');
-    console.log('[Migration] Phase 2 & Phase 3 schemas & constraints applied successfully.');
+    console.log('[Migration] Phase 1-11 schemas, partition bounds, and constraints applied successfully.');
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[Migration] Failed to apply migrations:', err);

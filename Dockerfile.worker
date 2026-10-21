@@ -1,0 +1,50 @@
+# ========================================================
+# Dockerfile.worker - Outbox Dispatcher & Background Jobs
+# ========================================================
+
+# Stage 1: Builder
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+RUN npm install -g pnpm@9.12.0
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/frontend/package.json ./packages/frontend/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/shared/ ./packages/shared/
+COPY packages/backend/ ./packages/backend/
+
+RUN pnpm --filter @eventora/shared build && \
+    pnpm --filter @eventora/backend build
+
+# Stage 2: Hardened Runtime
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Create unprivileged system group & user (UID 10001)
+RUN addgroup -g 10001 -S eventora && \
+    adduser -u 10001 -S eventora -G eventora
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/backend/package.json ./packages/backend/
+
+RUN npm install -g pnpm@9.12.0 && \
+    pnpm install --prod --frozen-lockfile && \
+    npm uninstall -g pnpm && \
+    rm -rf /root/.npm /root/.local
+
+COPY --from=builder --chown=eventora:eventora /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder --chown=eventora:eventora /app/packages/backend/dist ./packages/backend/dist
+
+USER 10001:10001
+
+VOLUME ["/tmp"]
+
+CMD ["node", "packages/backend/dist/index.js"]

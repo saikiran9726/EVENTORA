@@ -18,6 +18,10 @@ import { volunteerRoutes } from './routes/api/v1/volunteers.js';
 import { notificationRoutes } from './routes/api/v1/notifications.js';
 import { offlineCheckinRoutes } from './routes/api/v1/offline-checkin.js';
 import { crossCollegePassportRoutes } from './routes/api/v1/crosscollege-passport.js';
+import { monitoringRoutes, recordMetricRequest } from './routes/monitoring.js';
+import { securityHeadersPlugin } from './plugins/security-headers.js';
+import { rateLimiterPlugin } from './plugins/rate-limiter.js';
+import { REDACT_PATHS } from './logger.js';
 import { verifyPaymentStartupGuard } from './services/startup-guard.js';
 
 export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
@@ -25,8 +29,27 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
 
   const app = fastify({
     genReqId: () => crypto.randomUUID(),
-    logger: process.env.NODE_ENV === 'test' ? false : { level: 'info' },
+    logger: process.env.NODE_ENV === 'test' ? false : {
+      level: 'info',
+      redact: {
+        paths: REDACT_PATHS,
+        censor: '[REDACTED]',
+      },
+    },
     ...opts,
+  });
+
+  // Security Headers (CSP, HSTS, X-Content-Type-Options, Permissions-Policy)
+  app.register(securityHeadersPlugin);
+
+  // Rate Limiting (Sensitive Routes)
+  app.register(rateLimiterPlugin);
+
+  // Metrics hook
+  app.addHook('onResponse', async (req, reply) => {
+    const durationSec = (reply.elapsedTime || 0) / 1000;
+    const route = req.routeOptions?.url || req.url.split('?')[0];
+    recordMetricRequest(req.method, route, reply.statusCode, durationSec);
   });
 
   // Preserve raw request body as Buffer for timing-safe webhook HMAC-SHA256 signature verification
@@ -70,10 +93,8 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   // Auth & Policy enforcement
   app.register(authPolicyPlugin);
 
-  // Health check route (whitelisted in auth-policy)
-  app.get('/health', async (req) => {
-    return { status: 'ok', timestamp: new Date().toISOString(), requestId: req.id };
-  });
+  // Monitoring & Health (GET /health, GET /readiness, GET /metrics)
+  app.register(monitoringRoutes);
 
   // API v1 routes
   app.register(authRoutes, { prefix: '/api/v1/auth' });
