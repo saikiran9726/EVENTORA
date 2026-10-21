@@ -43,7 +43,7 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
   const [apiEvents, setApiEvents] = useState<DiscoveredEvent[]>([]);
   const [_nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [hasLoadedApi, setHasLoadedApi] = useState(false);
+  const [_hasLoadedApi, setHasLoadedApi] = useState(false);
 
   const categories = ['All', 'Tech', 'AI & Robotics', 'Hackathon', 'Cultural Fest', 'Workshop', 'Sports'];
 

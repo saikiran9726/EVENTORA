@@ -9,6 +9,8 @@ import { adminRoutes } from './routes/api/v1/admin.js';
 import { eventRoutes } from './routes/api/v1/events.js';
 import { venueRoutes } from './routes/api/v1/venues.js';
 import { calendarRoutes } from './routes/api/v1/calendar.js';
+import { bookingRoutes } from './routes/api/v1/bookings.js';
+import { teamRoutes } from './routes/api/v1/teams.js';
 
 export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   const app = fastify({
@@ -28,7 +30,16 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-csrf-token'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-CSRF-Token',
+      'x-csrf-token',
+      'Idempotency-Key',
+      'idempotency-key',
+      'If-Match',
+      'if-match',
+    ],
   });
 
   // Cookie parsing
@@ -49,6 +60,8 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.register(eventRoutes, { prefix: '/api/v1/events' });
   app.register(venueRoutes, { prefix: '/api/v1/venues' });
   app.register(calendarRoutes, { prefix: '/api/v1/calendar' });
+  app.register(bookingRoutes, { prefix: '/api/v1' });
+  app.register(teamRoutes, { prefix: '/api/v1/teams' });
 
   // 404 Handler - Strict Error Envelope
   app.setNotFoundHandler((req, reply) => {

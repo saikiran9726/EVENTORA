@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import {
   ArrowLeft,
-  Calendar,
   MapPin,
-  Users,
   Share2,
   Download,
   HelpCircle,
@@ -20,6 +18,7 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { useToast } from '@/components/ui/Toast';
 import { PROTOTYPE_EVENTS } from '@/prototype/data';
 import { formatINR } from '@/lib/utils';
+import { TicketSelector } from '@/components/booking/TicketSelector';
 
 interface EventDetailsPageProps {
   eventId: string;
@@ -367,57 +366,35 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
           </Card>
         </div>
 
-        {/* Right Column: Booking Status Box on Desktop */}
+        {/* Right Column: Live Polling Ticket Selector on Desktop */}
         <div className="lg:col-span-4 space-y-4">
-          <Card className="sticky top-20">
-            <h2 className="text-sm font-bold text-text mb-4">Registration Status</h2>
-
-            <div className="space-y-3 pb-4 border-b border-border">
-              <div className="flex items-center gap-2.5 text-xs text-text">
-                <Calendar className="w-4 h-4 text-brand shrink-0" />
-                <div>
-                  <p className="font-semibold">{event.dateStr}</p>
-                  <p className="text-text-muted text-[11px]">{event.timeStr}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2.5 text-xs text-text">
-                <Users className="w-4 h-4 text-brand shrink-0" />
-                <div>
-                  <p className="font-semibold">
-                    {isSoldOut ? 'Sold Out' : `${event.capacity - event.registeredCount} Seats Remaining`}
-                  </p>
-                  <p className="text-text-muted text-[11px]">
-                    {event.registeredCount} / {event.capacity} seats filled
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-4 space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-xs text-text-muted">Ticket Fee</span>
-                <span className="text-base font-bold text-text">
-                  {event.isPaid ? formatINR(event.pricePaise) : 'Free'}
-                </span>
-              </div>
-
-              <Button
-                variant={isSoldOut ? 'secondary' : 'primary'}
-                size="lg"
-                className="w-full"
-                onClick={() => setIsRegisterOpen(true)}
-              >
-                {isSoldOut ? 'Join Seat Waitlist' : event.isPaid ? 'Proceed to Test Checkout' : 'Claim Free Pass'}
-              </Button>
-
-              <p className="text-[11px] text-text-muted text-center leading-normal">
-                {event.isPaid
-                  ? 'Simulated sandbox transaction. No card or bank account needed.'
-                  : 'Instant confirmation. Zero payment details required.'}
-              </p>
-            </div>
-          </Card>
+          <div className="sticky top-20">
+            <TicketSelector
+              eventId={event.id}
+              eventTitle={event.title}
+              startsAt={event.dateStr}
+              endsAt={event.timeStr}
+              onOpenCheckoutModal={() => setIsRegisterOpen(true)}
+              initialTicketTypes={[
+                {
+                  id: 'tier-standard',
+                  name: 'Student Admission',
+                  pricePaise: event.isPaid ? event.pricePaise : 0,
+                  capacity: event.capacity,
+                  sold: event.registeredCount,
+                  held: 0,
+                  available: Math.max(event.capacity - event.registeredCount, 0),
+                },
+              ]}
+              onBookingSuccess={() => {
+                toast({
+                  type: 'success',
+                  title: 'Booking Confirmed!',
+                  message: 'Your digital QR ticket has been added to My Tickets.',
+                });
+              }}
+            />
+          </div>
         </div>
       </div>
 

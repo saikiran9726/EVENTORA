@@ -69,6 +69,26 @@ export async function runMigrations() {
       DO $$ BEGIN
         CREATE TYPE venue_booking_status AS ENUM ('hold', 'confirmed', 'released');
       EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE booking_status AS ENUM ('CONFIRMED', 'PENDING_PAYMENT', 'CANCELLED', 'EXPIRED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE waitlist_status AS ENUM ('WAITING', 'OFFERED', 'CLAIMED', 'EXPIRED', 'LEFT');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE team_visibility AS ENUM ('private', 'discoverable');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE team_member_role AS ENUM ('leader', 'co_leader', 'member');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE team_member_status AS ENUM ('INVITED', 'REQUESTED', 'ACTIVE', 'DECLINED', 'REMOVED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
     `);
 
     // 1. Colleges
@@ -321,6 +341,205 @@ export async function runMigrations() {
         dedupe_key VARCHAR(255) UNIQUE,
         created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
         processed_at TIMESTAMPTZ
+      );
+    `);
+
+    // 18. Ticket Types
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ticket_types (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        price_paise INT DEFAULT 0 NOT NULL CHECK (price_paise >= 0),
+        capacity INT NOT NULL CHECK (capacity >= 0),
+        sold INT DEFAULT 0 NOT NULL CHECK (sold <= capacity),
+        held INT DEFAULT 0 NOT NULL CHECK (held >= 0 AND sold + held <= capacity),
+        sales_start TIMESTAMPTZ,
+        sales_end TIMESTAMPTZ,
+        eligibility JSONB,
+        per_user_limit INT DEFAULT 1 NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 19. Teams
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS teams (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        visibility team_visibility DEFAULT 'private' NOT NULL,
+        max_size INT DEFAULT 4 NOT NULL,
+        status VARCHAR(50) DEFAULT 'active' NOT NULL,
+        created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        skills_offered TEXT[] DEFAULT ARRAY[]::TEXT[],
+        skills_needed TEXT[] DEFAULT ARRAY[]::TEXT[],
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 20. Team Members
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS team_members (
+        team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role team_member_role DEFAULT 'member' NOT NULL,
+        status team_member_status DEFAULT 'INVITED' NOT NULL,
+        joined_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        PRIMARY KEY (team_id, user_id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_team_active_leader ON team_members (team_id) WHERE role = 'leader' AND status = 'ACTIVE';
+    `);
+
+    // 21. Team Invitations
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS team_invitations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        inviter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        invitee_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        token_hash VARCHAR(255),
+        expires_at TIMESTAMPTZ NOT NULL,
+        status VARCHAR(50) DEFAULT 'PENDING' NOT NULL,
+        revoked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 22. Team Join Requests
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS team_join_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status VARCHAR(50) DEFAULT 'PENDING' NOT NULL,
+        reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        reviewed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 23. Team Event Registrations
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS team_event_registrations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        status VARCHAR(50) DEFAULT 'registered' NOT NULL,
+        submitted_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        member_snapshot JSONB NOT NULL,
+        booking_id UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        CONSTRAINT uq_team_event_reg UNIQUE (team_id, event_id)
+      );
+    `);
+
+    // 24. Team Submissions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS team_submissions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        team_registration_id UUID NOT NULL REFERENCES team_event_registrations(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        abstract TEXT NOT NULL,
+        repo_url VARCHAR(500),
+        demo_url VARCHAR(500),
+        submitted_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        locked_at TIMESTAMPTZ
+      );
+    `);
+
+    // 25. Bookings
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bookings (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        team_registration_id UUID REFERENCES team_event_registrations(id) ON DELETE SET NULL,
+        status booking_status DEFAULT 'CONFIRMED' NOT NULL,
+        total_paise INT DEFAULT 0 NOT NULL CHECK (total_paise >= 0),
+        expires_at TIMESTAMPTZ,
+        idempotency_key VARCHAR(255) NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        CONSTRAINT uq_booking_user_idempotency UNIQUE (user_id, idempotency_key)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_booking_user_event_active ON bookings (user_id, event_id) WHERE (status != 'CANCELLED' AND team_registration_id IS NULL);
+    `);
+
+    // 26. Booking Items
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS booking_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        ticket_type_id UUID NOT NULL REFERENCES ticket_types(id) ON DELETE RESTRICT,
+        quantity INT DEFAULT 1 NOT NULL CHECK (quantity > 0),
+        unit_price_paise INT DEFAULT 0 NOT NULL CHECK (unit_price_paise >= 0)
+      );
+    `);
+
+    // 27. Tickets
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tickets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        ticket_type_id UUID NOT NULL REFERENCES ticket_types(id) ON DELETE RESTRICT,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        ticket_code VARCHAR(100) NOT NULL UNIQUE,
+        qr_payload_hash BYTEA NOT NULL UNIQUE,
+        status VARCHAR(50) DEFAULT 'VALID' NOT NULL,
+        checked_in_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 28. Registration Form Questions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS registration_form_questions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        type VARCHAR(50) DEFAULT 'text' NOT NULL,
+        required BOOLEAN DEFAULT false NOT NULL,
+        options JSONB,
+        sort INT DEFAULT 0 NOT NULL
+      );
+    `);
+
+    // 29. Registration Answers
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS registration_answers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        question_id UUID NOT NULL REFERENCES registration_form_questions(id) ON DELETE CASCADE,
+        answer JSONB NOT NULL
+      );
+    `);
+
+    // 30. Waitlist Entries
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS waitlist_entries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        ticket_type_id UUID NOT NULL REFERENCES ticket_types(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        status waitlist_status DEFAULT 'WAITING' NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        offered_at TIMESTAMPTZ,
+        offer_expires_at TIMESTAMPTZ,
+        claim_token_hash VARCHAR(255)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_active_user ON waitlist_entries (ticket_type_id, user_id) WHERE status IN ('WAITING', 'OFFERED');
+    `);
+
+    // 31. Cancellations
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cancellations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        reason TEXT NOT NULL,
+        actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        at TIMESTAMPTZ DEFAULT NOW() NOT NULL
       );
     `);
 

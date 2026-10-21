@@ -16,12 +16,13 @@ import { LoginPage } from '@/pages/auth/LoginPage';
 import { RegisterPage } from '@/pages/auth/RegisterPage';
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
 import { ProfilePreferencesPage } from '@/pages/ProfilePreferencesPage';
+import { MyBookingsPage } from '@/pages/MyBookingsPage';
+import { TeamsPage } from '@/pages/teams/TeamsPage';
 import { ExpiredSessionModal } from '@/components/auth/ExpiredSessionModal';
 import { ToastProvider } from '@/components/ui/Toast';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { QRDisplay } from '@/components/ui/QRDisplay';
 import { QrCode } from 'lucide-react';
 
 export type CurrentRole = 'student' | 'organizer' | 'reviewer' | 'admin' | 'checkin_staff';
@@ -206,18 +207,11 @@ const AppInner: React.FC = () => {
     }
 
     if (activeRoute === 'tickets') {
-      return (
-        <div className="space-y-6">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text">My Event Tickets</h1>
-          <QRDisplay
-            ticketId="TCK-88219-01"
-            qrPayloadPreview="dGVzdF9xcl90b2tlbl8zMl9ieXRlc19yYW5kb21fc2VjdXJlX2hhc2g"
-            status="VALID"
-            eventName="Smart Campus AI & Robotics Symposium"
-            attendeeName="Aarav Sharma (CS22B1042)"
-          />
-        </div>
-      );
+      return <MyBookingsPage onNavigateToDiscovery={() => setActiveRoute('discover')} />;
+    }
+
+    if (activeRoute === 'teams') {
+      return <TeamsPage />;
     }
 
     if (activeRoute === 'passport') {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, Calendar, Ticket, Award, User, Bell, Sun, Moon } from 'lucide-react';
+import { Compass, Calendar, Ticket, Award, User, Bell, Sun, Moon, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PROTOTYPE_BADGE_TEXT } from '@/prototype/data';
 
@@ -81,6 +81,15 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
 
           <button
             type="button"
+            onClick={() => onRouteChange('teams')}
+            className="px-2 py-1 rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Teams</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => onRouteChange('components')}
             className="px-2 py-1 rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
           >
@@ -133,6 +142,16 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
                 </button>
               );
             })}
+            <button
+              onClick={() => onRouteChange('teams')}
+              className={cn(
+                'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left',
+                activeRoute === 'teams' ? 'bg-brand text-white shadow-sm' : 'text-text-muted hover:text-text hover:bg-surface-2'
+              )}
+            >
+              <Users className="w-4 h-4 shrink-0" />
+              <span>Teams & Hub</span>
+            </button>
             <div className="pt-2 mt-2 border-t border-border">
               <button
                 onClick={() => onRouteChange('components')}

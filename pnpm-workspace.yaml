@@ -4,6 +4,7 @@ packages:
 allowBuilds:
   argon2: true
   esbuild: true
+  msgpackr-extract: set this to true or false
 
 overrides:
   '@vitest/mocker@>=2.1.0 <4.1.11': ^4.1.11

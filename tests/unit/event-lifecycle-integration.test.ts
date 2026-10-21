@@ -1,9 +1,26 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { buildApp } from '../../packages/backend/src/app.js';
 import { db } from '../../packages/backend/src/db/index.js';
-import { venues, events, organizerProfiles, organizerMembers, users, venueBookings, eventStatusHistory, eventApprovals } from '../../packages/backend/src/db/schema.js';
+import {
+  venues,
+  events,
+  organizerProfiles,
+  organizerMembers,
+  users,
+  venueBookings,
+  eventStatusHistory,
+  eventApprovals,
+  bookingItems,
+  tickets,
+  bookings,
+  ticketTypes,
+  waitlistEntries,
+  teamSubmissions,
+  teamEventRegistrations,
+} from '../../packages/backend/src/db/schema.js';
 import { bookVenueWindow, VenueConflictError } from '../../packages/backend/src/services/venue.js';
 import { eq } from 'drizzle-orm';
+import { not, like, inArray } from 'drizzle-orm';
 import crypto from 'crypto';
 
 describe('Phase 3 Event Lifecycle, Venues, Discovery & Authorization Integration', () => {
@@ -45,11 +62,21 @@ describe('Phase 3 Event Lifecycle, Venues, Discovery & Authorization Integration
   });
 
   beforeEach(async () => {
-    // Clear bookings, approvals, status history, and events for clean state between tests
-    await db.delete(venueBookings);
-    await db.delete(eventApprovals);
-    await db.delete(eventStatusHistory);
-    await db.delete(events);
+    // Clear only test events (preserving the 100k discovery performance dataset)
+    const testEvents = await db.select({ id: events.id }).from(events).where(not(like(events.slug, 'perf-slug-%')));
+    const testEvtIds = testEvents.map((e) => e.id);
+
+    if (testEvtIds.length > 0) {
+      await db.delete(teamEventRegistrations).where(inArray(teamEventRegistrations.eventId, testEvtIds));
+      await db.delete(waitlistEntries).where(inArray(waitlistEntries.eventId, testEvtIds));
+      await db.delete(tickets).where(inArray(tickets.eventId, testEvtIds));
+      await db.delete(bookings).where(inArray(bookings.eventId, testEvtIds));
+      await db.delete(ticketTypes).where(inArray(ticketTypes.eventId, testEvtIds));
+      await db.delete(venueBookings).where(inArray(venueBookings.eventId, testEvtIds));
+      await db.delete(eventApprovals).where(inArray(eventApprovals.eventId, testEvtIds));
+      await db.delete(eventStatusHistory).where(inArray(eventStatusHistory.eventId, testEvtIds));
+      await db.delete(events).where(inArray(events.id, testEvtIds));
+    }
   });
 
   it('enforces PostgreSQL GiST exclusion constraint on concurrent overlapping venue bookings', async () => {
