@@ -5,6 +5,7 @@ import { createBooking, BookingError } from '../../../services/booking.js';
 import { joinWaitlist, leaveWaitlist, claimOffer, WaitlistError } from '../../../services/waitlist.js';
 import { cancelBooking } from '../../../services/cancellation.js';
 import { checkRateLimit } from '../../../services/redis.js';
+import { checkRegistrationEligibility } from '../../../services/passport-crosscollege.js';
 
 const bookingItemSchema = z.object({
   ticketTypeId: z.string().uuid(),
@@ -80,6 +81,23 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
             code: 'VALIDATION_ERROR',
             message: 'Invalid booking payload',
             details: parseResult.error.flatten(),
+            requestId: req.id,
+          },
+        });
+      }
+
+      // Cross-college & department eligibility verification (Phase 10 FR-XCOL)
+      const eligibility = await checkRegistrationEligibility(eventId, {
+        collegeId: user.collegeId,
+        department: (user as any).department,
+        year: (user as any).year,
+      });
+
+      if (!eligibility.eligible) {
+        return reply.code(403).send({
+          error: {
+            code: eligibility.reason || 'ELIGIBILITY_RESTRICTION',
+            message: eligibility.message || 'You do not meet the eligibility criteria for this event.',
             requestId: req.id,
           },
         });

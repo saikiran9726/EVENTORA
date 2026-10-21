@@ -21,6 +21,7 @@ import { TeamsPage } from '@/pages/teams/TeamsPage';
 import { CheckoutPage } from '@/pages/CheckoutPage';
 import { ScannerPage } from '@/pages/ScannerPage';
 import { PassportPage } from '@/pages/PassportPage';
+import { PublicPassportPage } from '@/pages/PublicPassportPage';
 import { PublicVerifyPage } from '@/pages/PublicVerifyPage';
 import { VolunteerHubPage } from '@/pages/VolunteerHubPage';
 import { NotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -47,6 +48,21 @@ const AppInner: React.FC = () => {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [activeBookingId, setActiveBookingId] = useState<string | null>(null);
   const [verifyCode, setVerifyCode] = useState<string>('');
+  const [publicPassportSlug, setPublicPassportSlug] = useState<string>('');
+
+  // Handle direct navigation to /p/:slug
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      if (path.startsWith('/p/')) {
+        const slug = path.replace('/p/', '').trim();
+        if (slug) {
+          setPublicPassportSlug(slug);
+          setActiveRoute('public-passport');
+        }
+      }
+    }
+  }, []);
 
   // Sync currentRole when user authenticates
   useEffect(() => {
@@ -256,12 +272,29 @@ const AppInner: React.FC = () => {
       );
     }
 
+    if (activeRoute === 'public-passport' && publicPassportSlug) {
+      return (
+        <PublicPassportPage
+          slug={publicPassportSlug}
+          onBack={() => setActiveRoute('passport')}
+          onNavigateToVerify={(code) => {
+            setVerifyCode(code);
+            setActiveRoute('verify');
+          }}
+        />
+      );
+    }
+
     if (activeRoute === 'passport') {
       return (
         <PassportPage
           onNavigateToVerify={(code) => {
             setVerifyCode(code);
             setActiveRoute('verify');
+          }}
+          onNavigateToPublicPassport={(slug) => {
+            setPublicPassportSlug(slug);
+            setActiveRoute('public-passport');
           }}
         />
       );

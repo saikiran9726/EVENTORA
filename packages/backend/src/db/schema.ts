@@ -14,6 +14,8 @@ import {
   numeric,
   smallint,
   primaryKey,
+  uniqueIndex,
+  index,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -249,6 +251,37 @@ export const outboxStatusEnum = pgEnum('outbox_status', [
   'DEAD',
 ]);
 
+// Phase 10 Enums (FR-XCOL, FR-PASS)
+export const collegeParticipationStatusEnum = pgEnum('college_participation_status', [
+  'none',
+  'pending',
+  'participating',
+]);
+
+export const organizerVerificationStatusEnum = pgEnum('organizer_verification_status', [
+  'PENDING',
+  'VERIFIED',
+  'REJECTED',
+]);
+
+export const achievementTypeEnum = pgEnum('achievement_type', [
+  'ATTENDANCE',
+  'VOLUNTEER',
+  'CERTIFICATE',
+  'TEAM_PARTICIPATION',
+]);
+
+export const achievementVerificationStatusEnum = pgEnum('achievement_verification_status', [
+  'VERIFIED',
+  'PENDING',
+  'REVOKED',
+]);
+
+export const achievementVisibilityEnum = pgEnum('achievement_visibility', [
+  'private',
+  'public',
+]);
+
 // 1. Colleges
 export const colleges = pgTable('colleges', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -256,6 +289,9 @@ export const colleges = pgTable('colleges', {
   domain: varchar('domain', { length: 255 }).notNull().unique(),
   status: varchar('status', { length: 50 }).default('active').notNull(),
   publicDiscovery: boolean('public_discovery').default(false).notNull(),
+  participationStatus: collegeParticipationStatusEnum('participation_status').default('none').notNull(),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }),
+  verifiedBy: uuid('verified_by').references((): any => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -1490,6 +1526,55 @@ export const scanConflicts = pgTable('scan_conflicts', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// 54. Organizer Verifications (FR-XCOL)
+export const organizerVerifications = pgTable('organizer_verifications', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  organizerId: uuid('organizer_id')
+    .references(() => organizerProfiles.id, { onDelete: 'cascade' })
+    .notNull(),
+  status: organizerVerificationStatusEnum('status').default('PENDING').notNull(),
+  evidenceRef: text('evidence_ref').notNull(),
+  reviewedBy: uuid('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 55. Student Achievements (FR-PASS)
+export const studentAchievements = pgTable(
+  'student_achievements',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    type: achievementTypeEnum('type').notNull(),
+    sourceEventId: uuid('source_event_id')
+      .references(() => events.id, { onDelete: 'cascade' })
+      .notNull(),
+    sourceRefId: uuid('source_ref_id').notNull(),
+    verificationStatus: achievementVerificationStatusEnum('verification_status').default('VERIFIED').notNull(),
+    visibility: achievementVisibilityEnum('visibility').default('public').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_student_achievements_type_sourceref').on(table.type, table.sourceRefId),
+    index('idx_student_achievements_user_visibility').on(table.userId, table.visibility, table.verificationStatus),
+  ]
+);
+
+// 56. Passport Settings (FR-PASS)
+export const passportSettings = pgTable('passport_settings', {
+  userId: uuid('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .primaryKey(),
+  isPublic: boolean('is_public').default(false).notNull(),
+  slug: varchar('slug', { length: 255 }).unique().notNull(),
+  showAttendance: boolean('show_attendance').default(true).notNull(),
+  showVolunteer: boolean('show_volunteer').default(true).notNull(),
+  showCertificates: boolean('show_certificates').default(true).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 export type Notification = typeof notifications.$inferSelect;
 export type NewNotification = typeof notifications.$inferInsert;
 export type NotificationSeverity = typeof notificationSeverityEnum.enumValues[number];
@@ -1506,3 +1591,12 @@ export type OfflineOpOutcome = typeof offlineOpOutcomeEnum.enumValues[number];
 export type ScanConflict = typeof scanConflicts.$inferSelect;
 export type ScanConflictStatus = typeof scanConflictStatusEnum.enumValues[number];
 export type OutboxStatus = typeof outboxStatusEnum.enumValues[number];
+
+export type CollegeParticipationStatus = typeof collegeParticipationStatusEnum.enumValues[number];
+export type OrganizerVerification = typeof organizerVerifications.$inferSelect;
+export type OrganizerVerificationStatus = typeof organizerVerificationStatusEnum.enumValues[number];
+export type StudentAchievement = typeof studentAchievements.$inferSelect;
+export type AchievementType = typeof achievementTypeEnum.enumValues[number];
+export type AchievementVerificationStatus = typeof achievementVerificationStatusEnum.enumValues[number];
+export type AchievementVisibility = typeof achievementVisibilityEnum.enumValues[number];
+export type PassportSetting = typeof passportSettings.$inferSelect;

@@ -228,6 +228,18 @@ export async function scanTicket(params: ScanTicketParams): Promise<ScanOutcomeR
       const tierName = metaRes.rows[0]?.tier_name || 'Standard Admission';
       const attendeeInitials = getInitials(attendeeName);
 
+      // Record Attendance Achievement (FR-PASS)
+      try {
+        await client.query(
+          `INSERT INTO student_achievements (user_id, type, source_event_id, source_ref_id, verification_status, visibility)
+           VALUES ($1, 'ATTENDANCE', $2, $3, 'VERIFIED', 'public')
+           ON CONFLICT (type, source_ref_id) DO NOTHING;`,
+          [ticket.user_id, eventId, ticket.id]
+        );
+      } catch {
+        // Non-blocking
+      }
+
       // Check certificate policy auto-issuance hook
       try {
         await issueCertificateIfEligibleInternal(ticket.user_id, eventId, client);
@@ -399,6 +411,14 @@ export async function revokeTicket(params: {
       [reason, ticket.user_id, ticket.event_id]
     );
 
+    // Propagate revocation to student_achievements (FR-PASS)
+    await client.query(
+      `UPDATE student_achievements
+       SET verification_status = 'REVOKED'
+       WHERE source_event_id = $1 AND user_id = $2;`,
+      [ticket.event_id, ticket.user_id]
+    );
+
     // Audit log
     await client.query(
       `INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, meta)
@@ -485,7 +505,21 @@ async function issueCertificateIfEligibleInternal(
     [userId, eventId, code, now, hash]
   );
 
-  return certRes.rows[0];
+  const cert = certRes.rows[0];
+
+  // Record Certificate Achievement (FR-PASS)
+  try {
+    await client.query(
+      `INSERT INTO student_achievements (user_id, type, source_event_id, source_ref_id, verification_status, visibility)
+       VALUES ($1, 'CERTIFICATE', $2, $3, 'VERIFIED', 'public')
+       ON CONFLICT (type, source_ref_id) DO NOTHING;`,
+      [userId, eventId, cert.id]
+    );
+  } catch {
+    // Non-blocking
+  }
+
+  return cert;
 }
 
 /**

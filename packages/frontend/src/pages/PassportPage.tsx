@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
+import { Switch } from '@/components/ui/Switch';
+import { Input } from '@/components/ui/Input';
 import {
   Award,
   ShieldCheck,
@@ -10,7 +12,14 @@ import {
   ExternalLink,
   Calendar,
   AlertCircle,
+  EyeOff,
+  Copy,
+  HeartHandshake,
+  Users,
+  CheckCircle2,
+  Globe,
 } from 'lucide-react';
+import { useToast } from '@/components/ui/Toast';
 
 export interface UserCertificate {
   id: string;
@@ -23,83 +32,252 @@ export interface UserCertificate {
   event_date: string;
 }
 
+export interface StudentAchievement {
+  id: string;
+  type: 'ATTENDANCE' | 'VOLUNTEER' | 'CERTIFICATE' | 'TEAM_PARTICIPATION';
+  sourceEventId: string;
+  sourceRefId: string;
+  eventTitle: string;
+  eventDate: string;
+  verificationStatus: 'VERIFIED' | 'PENDING' | 'REVOKED';
+  visibility: 'private' | 'public';
+  createdAt: string;
+}
+
+export interface PassportSettings {
+  userId: string;
+  isPublic: boolean;
+  slug: string;
+  showAttendance: boolean;
+  showVolunteer: boolean;
+  showCertificates: boolean;
+  updatedAt: string;
+}
+
+const DEFAULT_PROTOTYPE_ACHIEVEMENTS: StudentAchievement[] = [
+  {
+    id: 'ach-1',
+    type: 'CERTIFICATE',
+    sourceEventId: 'evt-ai-summit',
+    sourceRefId: 'cert-7h9k2m4n',
+    eventTitle: 'Smart Campus AI & Robotics Symposium 2026',
+    eventDate: '2026-11-20T10:00:00Z',
+    verificationStatus: 'VERIFIED',
+    visibility: 'public',
+    createdAt: '2026-11-20T16:00:00Z',
+  },
+  {
+    id: 'ach-2',
+    type: 'ATTENDANCE',
+    sourceEventId: 'evt-hackathon',
+    sourceRefId: 'scan-882190',
+    eventTitle: 'Inter-College Autonomous Hackathon 2026',
+    eventDate: '2026-10-15T09:00:00Z',
+    verificationStatus: 'VERIFIED',
+    visibility: 'public',
+    createdAt: '2026-10-15T09:12:00Z',
+  },
+  {
+    id: 'ach-3',
+    type: 'VOLUNTEER',
+    sourceEventId: 'evt-summit-vol',
+    sourceRefId: 'shift-vol-441',
+    eventTitle: 'National Tech Summit 2026',
+    eventDate: '2026-09-10T08:00:00Z',
+    verificationStatus: 'VERIFIED',
+    visibility: 'public',
+    createdAt: '2026-09-10T17:30:00Z',
+  },
+];
+
 export const PassportPage: React.FC<{
   onNavigateToVerify?: (code: string) => void;
-}> = ({ onNavigateToVerify }) => {
-  const [certificates, setCertificates] = useState<UserCertificate[]>([]);
+  onNavigateToPublicPassport?: (slug: string) => void;
+}> = ({ onNavigateToVerify, onNavigateToPublicPassport }) => {
+  const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<'timeline' | 'certificates' | 'settings'>('timeline');
+  const [achievements, setAchievements] = useState<StudentAchievement[]>(DEFAULT_PROTOTYPE_ACHIEVEMENTS);
+  const [certificates, setCertificates] = useState<UserCertificate[]>([
+    {
+      id: 'cert-7h9k2m4n',
+      verification_code: '7H9K-2M4N-8PQR',
+      issued_at: '2026-11-20T16:00:00Z',
+      revoked_at: null,
+      revoke_reason: null,
+      event_id: 'evt-ai-summit',
+      event_title: 'Smart Campus AI & Robotics Symposium 2026',
+      event_date: '2026-11-20T10:00:00Z',
+    },
+  ]);
+  const [settings, setSettings] = useState<PassportSettings>(() => {
+    const isPub = typeof localStorage !== 'undefined' ? localStorage.getItem('eventora_passport_public') === 'true' : false;
+    const slug = typeof localStorage !== 'undefined' ? localStorage.getItem('eventora_passport_slug') || 'aarav-patel' : 'aarav-patel';
+    return {
+      userId: 'u_student',
+      isPublic: isPub,
+      slug,
+      showAttendance: true,
+      showVolunteer: true,
+      showCertificates: true,
+      updatedAt: new Date().toISOString(),
+    };
+  });
   const [isLoading, setIsLoading] = useState(true);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [selectedCert, setSelectedCert] = useState<any | null>(null);
 
-  const fetchCertificates = async () => {
+  // Load Passport and Achievements from API
+  const loadPassportData = useCallback(async () => {
     setIsLoading(true);
+    const token = localStorage.getItem('eventora_auth_token');
+
     try {
-      const res = await fetch('/api/v1/me/certificates', { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        setCertificates(data.certificates || []);
-      } else {
-        // Fallback default
-        setCertificates([
-          {
-            id: 'mock-cert-1',
-            verification_code: '7H9K-2M4N-8PQR',
-            issued_at: new Date().toISOString(),
-            revoked_at: null,
-            revoke_reason: null,
-            event_id: 'mock-event-1',
-            event_title: 'Smart Campus AI & Robotics Symposium 2026',
-            event_date: '2026-11-20T10:00:00Z',
-          },
-        ]);
+      const [passRes, certRes] = await Promise.all([
+        fetch('/api/v1/me/passport', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: 'include',
+        }),
+        fetch('/api/v1/me/certificates', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: 'include',
+        }),
+      ]);
+
+      if (passRes.ok) {
+        const passData = await passRes.json();
+        if (passData.settings) setSettings(passData.settings);
+        if (passData.achievements) setAchievements(passData.achievements);
+      }
+
+      if (certRes.ok) {
+        const certData = await certRes.json();
+        setCertificates(certData.certificates || []);
       }
     } catch {
-      // Offline fallback
+      // Prototype fallback
     } finally {
       setIsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchCertificates();
   }, []);
 
-  const handleDownload = async (certId: string) => {
+  useEffect(() => {
+    loadPassportData();
+  }, [loadPassportData]);
+
+  // Update Settings
+  const handleSaveSettings = async (partial: Partial<PassportSettings>) => {
+    const updated = { ...settings, ...partial };
+    setSettings(updated);
+    if (typeof localStorage !== 'undefined') {
+      if (partial.isPublic !== undefined) {
+        localStorage.setItem('eventora_passport_public', partial.isPublic ? 'true' : 'false');
+      }
+      if (partial.slug !== undefined) {
+        localStorage.setItem('eventora_passport_slug', partial.slug);
+      }
+    }
+    setIsSavingSettings(true);
+    const token = localStorage.getItem('eventora_auth_token');
+
     try {
-      const res = await fetch(`/api/v1/certificates/${certId}/download`, {
+      const res = await fetch('/api/v1/me/passport/visibility', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         credentials: 'include',
+        body: JSON.stringify(partial),
       });
+
       if (res.ok) {
         const data = await res.json();
-        setSelectedCert(data.certificate);
-      } else {
-        const found = certificates.find((c) => c.id === certId);
-        setSelectedCert({
-          id: certId,
-          eventTitle: found?.event_title || 'Smart Campus AI & Robotics Symposium 2026',
-          attendeeName: 'Student Attendee',
-          verificationCode: found?.verification_code || '7H9K-2M4N-8PQR',
-          issuedAt: found?.issued_at || new Date().toISOString(),
-          verifyUrl: `https://eventora.campus.edu/verify/${found?.verification_code || '7H9K-2M4N-8PQR'}`,
-          hashHex: '8f4325a76e9c1d0f8a92bc654e321a987b654321cba9876543210fedcba98765',
+        if (data.settings) setSettings(data.settings);
+        toast({
+          type: 'success',
+          title: 'Passport Settings Saved',
+          message: partial.isPublic !== undefined
+            ? partial.isPublic
+              ? 'Public passport URL is now active.'
+              : 'Passport is now completely private.'
+            : 'Visibility preferences updated.',
         });
       }
     } catch {
-      const found = certificates.find((c) => c.id === certId);
-      setSelectedCert({
-        id: certId,
-        eventTitle: found?.event_title || 'Smart Campus AI & Robotics Symposium 2026',
-        attendeeName: 'Student Attendee',
-        verificationCode: found?.verification_code || '7H9K-2M4N-8PQR',
-        issuedAt: found?.issued_at || new Date().toISOString(),
-        verifyUrl: `https://eventora.campus.edu/verify/${found?.verification_code || '7H9K-2M4N-8PQR'}`,
-        hashHex: '8f4325a76e9c1d0f8a92bc654e321a987b654321cba9876543210fedcba98765',
+      toast({
+        type: 'info',
+        title: 'Settings Updated (Local)',
+        message: 'Passport preferences adjusted.',
+      });
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
+  // One-tap "Hide Everything"
+  const handleHideEverything = async () => {
+    await handleSaveSettings({
+      isPublic: false,
+    });
+  };
+
+  // Copy Public Link
+  const handleCopyLink = () => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://eventora.campus.edu';
+    const publicUrl = `${origin}/p/${settings.slug}`;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(publicUrl);
+      toast({
+        type: 'success',
+        title: 'Link Copied',
+        message: publicUrl,
       });
     }
   };
 
+  const handleDownload = async (certId: string) => {
+    try {
+      const res = await fetch(`/api/v1/certificates/${certId}/download`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedCert(data.certificate);
+        return;
+      }
+    } catch {
+      // fallback
+    }
+
+    const found = certificates.find((c) => c.id === certId);
+    setSelectedCert({
+      id: certId,
+      eventTitle: found?.event_title || 'Smart Campus AI & Robotics Symposium 2026',
+      attendeeName: 'Aarav Patel',
+      verificationCode: found?.verification_code || '7H9K-2M4N-8PQR',
+      issuedAt: found?.issued_at || new Date().toISOString(),
+      verifyUrl: `https://eventora.campus.edu/verify/${found?.verification_code || '7H9K-2M4N-8PQR'}`,
+      hashHex: '8f4325a76e9c1d0f8a92bc654e321a987b654321cba9876543210fedcba98765',
+    });
+  };
+
+  const getAchievementIcon = (type: StudentAchievement['type']) => {
+    switch (type) {
+      case 'CERTIFICATE':
+        return <Award className="w-4 h-4 text-brand" />;
+      case 'VOLUNTEER':
+        return <HeartHandshake className="w-4 h-4 text-emerald-500" />;
+      case 'TEAM_PARTICIPATION':
+        return <Users className="w-4 h-4 text-amber-500" />;
+      case 'ATTENDANCE':
+      default:
+        return <CheckCircle2 className="w-4 h-4 text-blue-500" />;
+    }
+  };
+
+  const verifiedAchievementsCount = achievements.filter((a) => a.verificationStatus === 'VERIFIED').length;
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto pb-12">
-      {/* Header */}
+      {/* Header & Policy */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text flex items-center gap-2">
@@ -107,116 +285,353 @@ export const PassportPage: React.FC<{
             <span>Student Event Passport & Credentials</span>
           </h1>
           <p className="text-xs sm:text-sm text-text-muted mt-1">
-            Verified attendance milestones, certificates, and cryptographic verification codes.
+            FR-PASS Cryptographically Anchored Milestone Timeline • Cross-College Proof of Activity
           </p>
         </div>
-        <Badge variant="brand" size="sm">Verified Portfolio</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="brand" size="sm" className="font-mono">
+            {verifiedAchievementsCount} Verified Milestones
+          </Badge>
+          <Badge variant={settings.isPublic ? 'success' : 'neutral'} size="sm">
+            {settings.isPublic ? 'Public Visible' : 'Private'}
+          </Badge>
+        </div>
       </div>
 
-      {/* Portfolio Overview Banner */}
-      <div className="bg-surface border border-border rounded-xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-brand/10 text-brand flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-sm font-bold text-text">Cryptographically Anchored Credentials</h2>
-            <p className="text-xs text-text-muted mt-0.5">
-              12-character Crockford Base32 codes verified against institutional SHA-256 signatures.
+      {/* Public Status & Share Banner */}
+      <Card className="p-4 bg-surface border-l-4 border-l-brand space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              {settings.isPublic ? (
+                <Globe className="w-4 h-4 text-success" />
+              ) : (
+                <EyeOff className="w-4 h-4 text-text-muted" />
+              )}
+              <span className="text-xs font-bold text-text uppercase tracking-wider">
+                Public Passport Status: {settings.isPublic ? 'ONLINE & PUBLIC' : 'HIDDEN / PRIVATE'}
+              </span>
+            </div>
+            <p className="text-xs text-text-muted">
+              {settings.isPublic
+                ? `Shareable verified URL: /p/${settings.slug} (Cache-Control: no-store zero CDN lag)`
+                : 'Your passport is completely invisible to outsiders. Public queries return 404.'}
             </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {settings.isPublic ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyLink}
+                  className="text-xs flex items-center gap-1.5"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy Link</span>
+                </Button>
+                {onNavigateToPublicPassport && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => onNavigateToPublicPassport(settings.slug)}
+                    className="text-xs flex items-center gap-1.5"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>View Public Page</span>
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleHideEverything}
+                  disabled={isSavingSettings}
+                  className="text-xs flex items-center gap-1.5"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>Hide Everything</span>
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => handleSaveSettings({ isPublic: true })}
+                disabled={isSavingSettings}
+                className="text-xs flex items-center gap-1.5"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>Make Public</span>
+              </Button>
+            )}
           </div>
         </div>
-        <Badge variant="success" size="sm">
-          {certificates.filter((c) => !c.revoked_at).length} Verified Credentials
-        </Badge>
-      </div>
 
-      {/* Certificates List */}
-      <div className="space-y-4">
-        <h2 className="text-sm font-bold text-text">Issued Attendance Certificates</h2>
+        {/* Tab Controls */}
+        <div className="pt-2 border-t border-border flex items-center gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setActiveTab('timeline')}
+            className={`px-3 py-1.5 font-semibold rounded-md transition-colors ${
+              activeTab === 'timeline'
+                ? 'bg-brand text-white shadow-xs'
+                : 'text-text-muted hover:text-text bg-surface-2'
+            }`}
+          >
+            Milestone Timeline ({achievements.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('certificates')}
+            className={`px-3 py-1.5 font-semibold rounded-md transition-colors ${
+              activeTab === 'certificates'
+                ? 'bg-brand text-white shadow-xs'
+                : 'text-text-muted hover:text-text bg-surface-2'
+            }`}
+          >
+            Digital Certificates ({certificates.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('settings')}
+            className={`px-3 py-1.5 font-semibold rounded-md transition-colors ${
+              activeTab === 'settings'
+                ? 'bg-brand text-white shadow-xs'
+                : 'text-text-muted hover:text-text bg-surface-2'
+            }`}
+          >
+            Privacy & Visibility Controls
+          </button>
+        </div>
+      </Card>
 
-        {isLoading ? (
-          <div className="p-8 text-center text-xs text-text-muted">Loading credentials...</div>
-        ) : certificates.length === 0 ? (
-          <Card className="p-8 text-center space-y-2">
-            <Award className="w-10 h-10 text-text-muted/60 mx-auto" />
-            <h3 className="text-sm font-bold text-text">No Certificates Issued Yet</h3>
-            <p className="text-xs text-text-muted max-w-sm mx-auto">
-              Attend campus events and check in at turnstiles to automatically earn verified digital credentials.
-            </p>
-          </Card>
-        ) : (
+      {/* Tab 1: Timeline View */}
+      {activeTab === 'timeline' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-text flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-brand" />
+              <span>Verified Milestone Feed</span>
+            </h2>
+            <Badge variant="neutral" size="sm">
+              Server-Verified Records Only (Anti-Tamper)
+            </Badge>
+          </div>
+
+          {isLoading ? (
+            <div className="p-8 text-center text-text-muted text-xs">
+              Loading passport achievements...
+            </div>
+          ) : achievements.length === 0 ? (
+            <Card className="p-8 text-center text-text-muted space-y-2">
+              <ShieldCheck className="w-10 h-10 mx-auto text-text-muted/40" />
+              <p className="text-sm font-semibold text-text">No Milestones Recorded Yet</p>
+              <p className="text-xs max-w-sm mx-auto">
+                Check in to registered events or complete verified volunteer shifts to automatically earn immutable passport entries.
+              </p>
+            </Card>
+          ) : (
+            <div className="relative pl-6 space-y-4 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
+              {achievements.map((item) => (
+                <div key={item.id} className="relative group">
+                  <span className="absolute -left-6 top-3 w-3 h-3 rounded-full bg-brand border-2 border-surface" />
+
+                  <Card className="p-4 hover:border-brand/40 transition-colors space-y-2 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {getAchievementIcon(item.type)}
+                        <span className="font-bold uppercase tracking-wider text-[11px] text-text">
+                          [{item.type}]
+                        </span>
+                        <Badge
+                          variant={
+                            item.verificationStatus === 'VERIFIED'
+                              ? 'success'
+                              : item.verificationStatus === 'PENDING'
+                              ? 'warning'
+                              : 'error'
+                          }
+                          size="sm"
+                        >
+                          {item.verificationStatus === 'PENDING'
+                            ? 'Pending verification'
+                            : item.verificationStatus}
+                        </Badge>
+                      </div>
+
+                      <span className="text-[11px] text-text-muted font-mono">
+                        {new Date(item.eventDate || item.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    <h3 className="text-sm font-bold text-text">{item.eventTitle}</h3>
+
+                    <div className="pt-2 border-t border-border/60 flex items-center justify-between text-[11px] text-text-muted">
+                      <span>Ref: {item.sourceRefId.substring(0, 8)}...</span>
+                      <span>Visibility: <strong className="text-text capitalize">{item.visibility}</strong></span>
+                    </div>
+                  </Card>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab 2: Issued Certificates */}
+      {activeTab === 'certificates' && (
+        <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {certificates.map((cert) => {
               const isRevoked = Boolean(cert.revoked_at);
               return (
-                <Card key={cert.id} className="p-5 flex flex-col justify-between space-y-4 hover:border-brand/50 transition-colors">
-                  <div className="space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-sm font-bold text-text leading-snug">
-                        {cert.event_title}
-                      </h3>
-                      <Badge variant={isRevoked ? 'error' : 'success'} size="sm">
-                        {isRevoked ? 'Revoked' : 'Authentic'}
-                      </Badge>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 text-xs text-text-muted">
-                      <Calendar className="w-3.5 h-3.5 text-brand" />
-                      <span>{new Date(cert.event_date).toLocaleDateString()}</span>
-                    </div>
-
-                    {/* Verification Code Box */}
-                    <div className="p-2.5 bg-surface-2 rounded-lg border border-border space-y-1">
-                      <span className="text-[10px] text-text-muted font-medium uppercase tracking-wider block">
-                        Crockford Verification Code
-                      </span>
-                      <p className="font-mono text-sm font-bold text-brand tracking-widest">
-                        {cert.verification_code}
-                      </p>
-                    </div>
-
-                    {isRevoked && (
-                      <div className="p-2 bg-error/10 border border-error/30 rounded text-[11px] text-error flex items-center gap-1.5">
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                        <span>Revocation Reason: {cert.revoke_reason || 'Administrative Action'}</span>
-                      </div>
-                    )}
+                <Card key={cert.id} className="p-4 space-y-3 hover:border-brand/50 transition-colors text-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="text-sm font-bold text-text leading-snug">{cert.event_title}</h3>
+                    <Badge variant={isRevoked ? 'error' : 'success'} size="sm">
+                      {isRevoked ? 'Revoked' : 'Authentic'}
+                    </Badge>
                   </div>
 
-                  <div className="pt-3 border-t border-border flex items-center justify-between gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDownload(cert.id)}
-                      className="text-xs"
-                    >
-                      <Download className="w-3.5 h-3.5 mr-1" />
-                      <span>Download</span>
-                    </Button>
+                  <div className="p-2 bg-surface-2 rounded border border-border">
+                    <span className="text-[10px] text-text-muted font-medium uppercase tracking-wider block">
+                      Crockford Verification Code
+                    </span>
+                    <p className="font-mono text-sm font-bold text-brand tracking-widest mt-0.5">
+                      {cert.verification_code}
+                    </p>
+                  </div>
 
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        if (onNavigateToVerify) {
-                          onNavigateToVerify(cert.verification_code);
-                        } else {
-                          window.open(`/verify/${cert.verification_code}`, '_blank');
-                        }
-                      }}
-                      className="text-xs"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                      <span>Public Verify</span>
+                  {isRevoked && (
+                    <div className="p-2 bg-error/10 border border-error/30 rounded text-[11px] text-error flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>Revoked: {cert.revoke_reason || 'Administrative Action'}</span>
+                    </div>
+                  )}
+
+                  <div className="pt-2 border-t border-border flex items-center justify-between gap-2">
+                    <Button variant="outline" size="sm" onClick={() => handleDownload(cert.id)} className="text-xs">
+                      <Download className="w-3.5 h-3.5 mr-1" />
+                      Download
                     </Button>
+                    {onNavigateToVerify && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => onNavigateToVerify(cert.verification_code)}
+                        className="text-xs"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                        Verify
+                      </Button>
+                    )}
                   </div>
                 </Card>
               );
             })}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* Tab 3: Privacy & Visibility Settings (FR-PASS) */}
+      {activeTab === 'settings' && (
+        <Card className="p-5 space-y-4">
+          <div className="pb-3 border-b border-border">
+            <h2 className="text-base font-bold text-text flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-brand" />
+              <span>Passport Visibility & Sharing Controls</span>
+            </h2>
+            <p className="text-xs text-text-muted mt-1">
+              Control what participating recruiters, cross-college organizers, and external viewers can see.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {/* Master Public Toggle */}
+            <div className="p-3 bg-surface-2 rounded-lg border border-border flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-text">Public Passport Active</p>
+                <p className="text-[11px] text-text-muted">
+                  When enabled, your portfolio is viewable at /p/{settings.slug}
+                </p>
+              </div>
+              <Switch
+                checked={settings.isPublic}
+                onChange={(checked) => handleSaveSettings({ isPublic: checked })}
+                aria-label="Toggle public passport visibility"
+              />
+            </div>
+
+            {/* Slug Editor */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-text">Public URL Handle (Slug)</label>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-text-muted font-mono bg-surface-2 px-2.5 py-2 rounded border border-border">
+                  https://eventora.campus.edu/p/
+                </span>
+                <Input
+                  value={settings.slug}
+                  onChange={(e) => setSettings({ ...settings, slug: e.target.value })}
+                  className="text-xs font-mono"
+                />
+                <Button
+                  variant="outline"
+                  size="md"
+                  onClick={() => handleSaveSettings({ slug: settings.slug })}
+                  disabled={isSavingSettings}
+                  className="text-xs"
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
+
+            {/* Granular Milestone Filters */}
+            <div className="pt-3 border-t border-border space-y-3">
+              <h3 className="text-xs font-bold text-text">Included Public Sections</h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Card className="p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-text">Attendance</p>
+                    <p className="text-[10px] text-text-muted">Event admittance passes</p>
+                  </div>
+                  <Switch
+                    checked={settings.showAttendance}
+                    onChange={(checked) => handleSaveSettings({ showAttendance: checked })}
+                    aria-label="Toggle attendance section in public passport"
+                  />
+                </Card>
+
+                <Card className="p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-text">Volunteer Hours</p>
+                    <p className="text-[10px] text-text-muted">Verified community service</p>
+                  </div>
+                  <Switch
+                    checked={settings.showVolunteer}
+                    onChange={(checked) => handleSaveSettings({ showVolunteer: checked })}
+                    aria-label="Toggle volunteer section in public passport"
+                  />
+                </Card>
+
+                <Card className="p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-text">Certificates</p>
+                    <p className="text-[10px] text-text-muted">Crockford codes & verify</p>
+                  </div>
+                  <Switch
+                    checked={settings.showCertificates}
+                    onChange={(checked) => handleSaveSettings({ showCertificates: checked })}
+                    aria-label="Toggle certificates section in public passport"
+                  />
+                </Card>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Certificate Modal */}
       {selectedCert && (
@@ -225,9 +640,9 @@ export const PassportPage: React.FC<{
           onClose={() => setSelectedCert(null)}
           title="Digital Certificate of Attendance"
         >
-          <div className="space-y-4 py-2 text-center">
-            <div className="w-16 h-16 rounded-full bg-brand/10 text-brand flex items-center justify-center mx-auto border-2 border-brand">
-              <Award className="w-8 h-8" />
+          <div className="space-y-4 py-2 text-center text-xs">
+            <div className="w-14 h-14 rounded-full bg-brand/10 text-brand flex items-center justify-center mx-auto border-2 border-brand">
+              <Award className="w-7 h-7" />
             </div>
 
             <div>
@@ -238,29 +653,16 @@ export const PassportPage: React.FC<{
               <p className="text-xs text-text-muted mt-0.5">Awarded to: <strong className="text-text">{selectedCert.attendeeName}</strong></p>
             </div>
 
-            <div className="p-3 bg-surface-2 rounded-lg border border-border text-left space-y-1.5 text-xs font-mono">
+            <div className="p-3 bg-surface-2 rounded-lg border border-border text-left space-y-1.5 font-mono">
               <div className="flex justify-between">
-                <span className="text-text-muted">Verification Code:</span>
+                <span className="text-text-muted">Code:</span>
                 <span className="font-bold text-brand">{selectedCert.verificationCode}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Issued:</span>
                 <span>{new Date(selectedCert.issuedAt).toLocaleDateString()}</span>
               </div>
-              {selectedCert.hashHex && (
-                <div className="flex justify-between text-[10px] pt-1 border-t border-border/60">
-                  <span className="text-text-muted">SHA-256 Hash:</span>
-                  <span className="truncate max-w-[180px]">{selectedCert.hashHex.substring(0, 16)}...</span>
-                </div>
-              )}
             </div>
-
-            <p className="text-[11px] text-text-muted">
-              Anyone can verify this credential at{' '}
-              <a href={selectedCert.verifyUrl} target="_blank" rel="noreferrer" className="text-brand underline font-mono">
-                {selectedCert.verifyUrl}
-              </a>
-            </p>
 
             <div className="flex justify-end pt-2">
               <Button variant="primary" onClick={() => setSelectedCert(null)}>

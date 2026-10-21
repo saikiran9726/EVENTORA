@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Filter, Calendar, MapPin, Users, ArrowRight, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { Search, Filter, Calendar, MapPin, Users, ArrowRight, Image as ImageIcon, Loader2, ShieldCheck, School } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -38,6 +38,7 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedCollege, setSelectedCollege] = useState<string>('All Colleges');
   const [selectedFormat, setSelectedFormat] = useState<string>('all');
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
   const [apiEvents, setApiEvents] = useState<DiscoveredEvent[]>([]);
@@ -45,6 +46,7 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
   const [isLoading, setIsLoading] = useState(false);
   const [_hasLoadedApi, setHasLoadedApi] = useState(false);
 
+  const collegesList = ['All Colleges', 'Tech University A', 'Polytechnic Institute B', 'Sir MV Institute of Technology'];
   const categories = ['All', 'Tech', 'AI & Robotics', 'Hackathon', 'Cultural Fest', 'Workshop', 'Sports'];
 
   // 250ms debounced search-as-you-type
@@ -217,6 +219,29 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
         </div>
       </div>
 
+      {/* Cross-College Filter Chips Bar (FR-XCOL) */}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5 text-xs text-text-muted font-medium">
+          <School className="w-3.5 h-3.5 text-brand" />
+          <span>Cross-College Discovery:</span>
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none select-none">
+          {collegesList.map((col) => (
+            <button
+              key={col}
+              onClick={() => setSelectedCollege(col)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-all duration-fast shrink-0 ${
+                selectedCollege === col
+                  ? 'bg-brand/15 text-brand border border-brand/40 font-semibold'
+                  : 'bg-surface text-text-muted hover:text-text border border-border'
+              }`}
+            >
+              {col}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Swipeable Category Chips Bar */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none select-none">
         {categories.map((cat) => (
@@ -273,15 +298,29 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
               {/* Event Metadata */}
               <div className="flex-1 flex flex-col justify-between">
                 <div>
-                  <span className="text-[11px] font-semibold text-brand tracking-wider uppercase">
-                    {evt.organizerName}
-                  </span>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <span className="text-[11px] font-semibold text-brand tracking-wider uppercase truncate">
+                      {evt.organizerName}
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-500 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 shrink-0">
+                      <ShieldCheck className="w-3 h-3" />
+                      <span>Verified Organizer</span>
+                    </span>
+                  </div>
+
                   <h2 className="text-base font-bold text-text group-hover:text-brand transition-colors mt-0.5 line-clamp-2">
                     {evt.title}
                   </h2>
                   <p className="text-xs text-text-muted mt-2 line-clamp-2 leading-relaxed">
                     {evt.description}
                   </p>
+
+                  {/* Eligibility Explainer Chip */}
+                  <div className="mt-2.5">
+                    <span className="inline-block text-[10px] font-medium text-text-muted bg-surface-2 px-2 py-0.5 rounded border border-border">
+                      {evt.category === 'Hackathon' ? 'Open to All Participating Colleges' : 'Open to CSE & Engineering Students'}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-3 pt-4 border-t border-border mt-4">

@@ -17,6 +17,7 @@ import { feedbackRoutes } from './routes/api/v1/feedback.js';
 import { volunteerRoutes } from './routes/api/v1/volunteers.js';
 import { notificationRoutes } from './routes/api/v1/notifications.js';
 import { offlineCheckinRoutes } from './routes/api/v1/offline-checkin.js';
+import { crossCollegePassportRoutes } from './routes/api/v1/crosscollege-passport.js';
 import { verifyPaymentStartupGuard } from './services/startup-guard.js';
 
 export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
@@ -89,6 +90,8 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.register(volunteerRoutes, { prefix: '/api/v1' });
   app.register(notificationRoutes, { prefix: '/api/v1' });
   app.register(offlineCheckinRoutes, { prefix: '/api/v1' });
+  app.register(crossCollegePassportRoutes, { prefix: '/api/v1' });
+  app.register(crossCollegePassportRoutes, { prefix: '' });
 
   // 404 Handler - Strict Error Envelope
   app.setNotFoundHandler((req, reply) => {

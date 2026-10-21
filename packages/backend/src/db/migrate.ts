@@ -1187,6 +1187,72 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_offline_ops_ticket ON offline_ops(ticket_ref, event_id);
       CREATE INDEX IF NOT EXISTS idx_scan_conflicts_event ON scan_conflicts(event_id, status);
       CREATE INDEX IF NOT EXISTS idx_outbox_queue ON outbox(status, next_attempt_at) WHERE status IN ('pending', 'PENDING');
+
+      -- Phase 10: Cross-College & Student Event Passport (FR-XCOL, FR-PASS)
+      DO $$ BEGIN
+        CREATE TYPE college_participation_status AS ENUM ('none', 'pending', 'participating');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE organizer_verification_status AS ENUM ('PENDING', 'VERIFIED', 'REJECTED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE achievement_type AS ENUM ('ATTENDANCE', 'VOLUNTEER', 'CERTIFICATE', 'TEAM_PARTICIPATION');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE achievement_verification_status AS ENUM ('VERIFIED', 'PENDING', 'REVOKED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE achievement_visibility AS ENUM ('private', 'public');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      -- Alter colleges
+      ALTER TABLE colleges ADD COLUMN IF NOT EXISTS participation_status college_participation_status DEFAULT 'none' NOT NULL;
+      ALTER TABLE colleges ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+      ALTER TABLE colleges ADD COLUMN IF NOT EXISTS verified_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
+      -- Organizer Verifications
+      CREATE TABLE IF NOT EXISTS organizer_verifications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organizer_id UUID NOT NULL REFERENCES organizer_profiles(id) ON DELETE CASCADE,
+        status organizer_verification_status DEFAULT 'PENDING' NOT NULL,
+        evidence_ref TEXT NOT NULL,
+        reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        reviewed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      -- Student Achievements
+      CREATE TABLE IF NOT EXISTS student_achievements (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type achievement_type NOT NULL,
+        source_event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        source_ref_id UUID NOT NULL,
+        verification_status achievement_verification_status DEFAULT 'VERIFIED' NOT NULL,
+        visibility achievement_visibility DEFAULT 'public' NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        CONSTRAINT uq_student_achievements_type_sourceref UNIQUE (type, source_ref_id)
+      );
+
+      -- Passport Settings
+      CREATE TABLE IF NOT EXISTS passport_settings (
+        user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        is_public BOOLEAN DEFAULT FALSE NOT NULL,
+        slug VARCHAR(255) UNIQUE NOT NULL,
+        show_attendance BOOLEAN DEFAULT TRUE NOT NULL,
+        show_volunteer BOOLEAN DEFAULT TRUE NOT NULL,
+        show_certificates BOOLEAN DEFAULT TRUE NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_colleges_participation ON colleges(participation_status);
+      CREATE INDEX IF NOT EXISTS idx_organizer_verifications_org ON organizer_verifications(organizer_id, status);
+      CREATE INDEX IF NOT EXISTS idx_student_achievements_user_vis ON student_achievements(user_id, visibility, verification_status);
+      CREATE INDEX IF NOT EXISTS idx_passport_settings_slug ON passport_settings(slug) WHERE is_public = TRUE;
     `);
 
     // DB Roles & Grants
