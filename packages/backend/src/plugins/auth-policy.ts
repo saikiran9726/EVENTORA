@@ -280,6 +280,36 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
         break;
       }
 
+      case 'analytics:view:owned': {
+        if (userRole === 'admin') break;
+        const organizerId = (req.params as any)?.id || (req.params as any)?.organizerId;
+        if (!organizerId) break;
+
+        const { db } = await import('../db/index.js');
+        const { organizerMembers } = await import('../db/schema.js');
+        const { eq, and } = await import('drizzle-orm');
+
+        const membership = await db.query.organizerMembers.findFirst({
+          where: and(
+            eq(organizerMembers.organizerId, organizerId),
+            eq(organizerMembers.userId, req.user!.id),
+            eq(organizerMembers.status, 'active')
+          ),
+        });
+
+        if (!membership) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'You do not have permission to view analytics or ledger for this organizer',
+              details: { requiredPolicy: 'analytics:view:owned', organizerId },
+              requestId: req.id,
+            },
+          });
+        }
+        break;
+      }
+
       default:
         // For other policies, fallback to admin or check
         if (userRole !== 'admin') {

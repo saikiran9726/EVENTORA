@@ -18,6 +18,7 @@ import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
 import { ProfilePreferencesPage } from '@/pages/ProfilePreferencesPage';
 import { MyBookingsPage } from '@/pages/MyBookingsPage';
 import { TeamsPage } from '@/pages/teams/TeamsPage';
+import { CheckoutPage } from '@/pages/CheckoutPage';
 import { ExpiredSessionModal } from '@/components/auth/ExpiredSessionModal';
 import { ToastProvider } from '@/components/ui/Toast';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
@@ -41,6 +42,7 @@ const AppInner: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<CurrentRole>('student');
   const [activeRoute, setActiveRoute] = useState<string>('discover');
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [activeBookingId, setActiveBookingId] = useState<string | null>(null);
 
   // Sync currentRole when user authenticates
   useEffect(() => {
@@ -169,6 +171,20 @@ const AppInner: React.FC = () => {
       return (
         <EventDetailsPage
           eventId={selectedEventId}
+          onBack={() => setActiveRoute('discover')}
+          onProceedToCheckout={(bId) => {
+            setActiveBookingId(bId);
+            setActiveRoute('checkout');
+          }}
+        />
+      );
+    }
+
+    if (activeRoute === 'checkout' && activeBookingId) {
+      return (
+        <CheckoutPage
+          bookingId={activeBookingId}
+          onNavigateToTickets={() => setActiveRoute('tickets')}
           onBack={() => setActiveRoute('discover')}
         />
       );

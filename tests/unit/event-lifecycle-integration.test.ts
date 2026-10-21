@@ -20,7 +20,7 @@ import {
 } from '../../packages/backend/src/db/schema.js';
 import { bookVenueWindow, VenueConflictError } from '../../packages/backend/src/services/venue.js';
 import { eq } from 'drizzle-orm';
-import { not, like, inArray } from 'drizzle-orm';
+import { and, not, like, inArray } from 'drizzle-orm';
 import crypto from 'crypto';
 
 describe('Phase 3 Event Lifecycle, Venues, Discovery & Authorization Integration', () => {
@@ -62,8 +62,14 @@ describe('Phase 3 Event Lifecycle, Venues, Discovery & Authorization Integration
   });
 
   beforeEach(async () => {
-    // Clear only test events (preserving the 100k discovery performance dataset)
-    const testEvents = await db.select({ id: events.id }).from(events).where(not(like(events.slug, 'perf-slug-%')));
+    // Clear only test events (preserving the 100k discovery performance dataset and other test suites)
+    const testEvents = await db.select({ id: events.id }).from(events).where(
+      and(
+        not(like(events.slug, 'perf-slug-%')),
+        not(like(events.slug, 'paid-%')),
+        not(like(events.slug, 'gate-%'))
+      )
+    );
     const testEvtIds = testEvents.map((e) => e.id);
 
     if (testEvtIds.length > 0) {

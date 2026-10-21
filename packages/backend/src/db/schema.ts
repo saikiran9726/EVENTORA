@@ -75,6 +75,7 @@ export const venueBookingStatusEnum = pgEnum('venue_booking_status', ['hold', 'c
 export const bookingStatusEnum = pgEnum('booking_status', [
   'CONFIRMED',
   'PENDING_PAYMENT',
+  'PAYMENT_FAILED',
   'CANCELLED',
   'EXPIRED',
 ]);
@@ -94,6 +95,33 @@ export const teamMemberStatusEnum = pgEnum('team_member_status', [
   'DECLINED',
   'REMOVED',
 ]);
+
+export const paymentStatusEnum = pgEnum('payment_status', [
+  'CREATED',
+  'PENDING',
+  'SUCCEEDED',
+  'FAILED',
+  'REFUND_PENDING',
+  'REFUNDED',
+]);
+
+export const webhookProcessingStatusEnum = pgEnum('webhook_processing_status', [
+  'RECEIVED',
+  'PROCESSED',
+  'IGNORED',
+  'FAILED',
+]);
+
+export const refundStatusEnum = pgEnum('refund_status', [
+  'REQUESTED',
+  'APPROVED',
+  'REJECTED',
+  'PROCESSING',
+  'SUCCEEDED',
+  'FAILED',
+]);
+
+export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', ['SALE', 'REFUND']);
 
 // 1. Colleges
 export const colleges = pgTable('colleges', {
@@ -596,6 +624,98 @@ export const cancellations = pgTable('cancellations', {
     .references(() => users.id, { onDelete: 'restrict' })
     .notNull(),
   at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 32. Payments (Phase 5 - Paid Ticketing & Simulator)
+export const payments = pgTable('payments', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  bookingId: uuid('booking_id')
+    .references(() => bookings.id, { onDelete: 'cascade' })
+    .notNull(),
+  provider: varchar('provider', { length: 50 }).default('simulator').notNull(),
+  providerOrderId: varchar('provider_order_id', { length: 255 }).notNull().unique(),
+  providerPaymentId: varchar('provider_payment_id', { length: 255 }).unique(),
+  amountPaise: integer('amount_paise').notNull(),
+  currency: varchar('currency', { length: 10 }).default('INR').notNull(),
+  status: paymentStatusEnum('status').default('CREATED').notNull(),
+  failureCode: varchar('failure_code', { length: 100 }),
+  isSimulated: boolean('is_simulated').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 33. Payment Attempts
+export const paymentAttempts = pgTable('payment_attempts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  paymentId: uuid('payment_id')
+    .references(() => payments.id, { onDelete: 'cascade' })
+    .notNull(),
+  status: varchar('status', { length: 50 }).notNull(),
+  rawRef: varchar('raw_ref', { length: 255 }),
+  at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 34. Webhook Events
+export const webhookEvents = pgTable('webhook_events', {
+  providerEventId: varchar('provider_event_id', { length: 255 }).primaryKey(),
+  provider: varchar('provider', { length: 50 }).notNull(),
+  type: varchar('type', { length: 100 }).notNull(),
+  signatureValid: boolean('signature_valid').default(false).notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+  processedAt: timestamp('processed_at', { withTimezone: true }),
+  processingStatus: webhookProcessingStatusEnum('processing_status').default('RECEIVED').notNull(),
+  payloadHash: bytea('payload_hash').notNull(),
+});
+
+// 35. Refunds
+export const refunds = pgTable('refunds', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  paymentId: uuid('payment_id')
+    .references(() => payments.id, { onDelete: 'restrict' })
+    .notNull(),
+  amountPaise: integer('amount_paise').notNull(),
+  reason: text('reason').notNull(),
+  status: refundStatusEnum('status').default('REQUESTED').notNull(),
+  requestedBy: uuid('requested_by')
+    .references(() => users.id, { onDelete: 'restrict' })
+    .notNull(),
+  decidedBy: uuid('decided_by').references(() => users.id, { onDelete: 'set null' }),
+  idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 36. Organizer Ledger Entries
+export const organizerLedgerEntries = pgTable(
+  'organizer_ledger_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    organizerId: uuid('organizer_id')
+      .references(() => organizerProfiles.id, { onDelete: 'restrict' })
+      .notNull(),
+    bookingId: uuid('booking_id')
+      .references(() => bookings.id, { onDelete: 'cascade' })
+      .notNull(),
+    paymentId: uuid('payment_id')
+      .references(() => payments.id, { onDelete: 'restrict' })
+      .notNull(),
+    entryType: ledgerEntryTypeEnum('entry_type').notNull(),
+    amountPaise: integer('amount_paise').notNull(),
+    isSimulated: boolean('is_simulated').default(true).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    uqPaymentEntry: unique('uq_ledger_payment_entry').on(table.paymentId, table.entryType),
+  })
+);
+
+// 37. Receipts
+export const receipts = pgTable('receipts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  bookingId: uuid('booking_id')
+    .references(() => bookings.id, { onDelete: 'cascade' })
+    .notNull(),
+  number: varchar('number', { length: 100 }).notNull().unique(),
+  issuedAt: timestamp('issued_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 // Relations

@@ -23,9 +23,14 @@ import { TicketSelector } from '@/components/booking/TicketSelector';
 interface EventDetailsPageProps {
   eventId: string;
   onBack: () => void;
+  onProceedToCheckout?: (bookingId: string) => void;
 }
 
-export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onBack }) => {
+export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
+  eventId,
+  onBack,
+  onProceedToCheckout,
+}) => {
   const { toast } = useToast();
   const event = PROTOTYPE_EVENTS.find((e) => e.id === eventId) || PROTOTYPE_EVENTS[0];
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
@@ -62,13 +67,22 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
     setTimeout(() => {
       setIsSubmitting(false);
       setIsRegisterOpen(false);
-      toast({
-        type: 'success',
-        title: event.isPaid ? 'Seat Hold Created (Test Mode)' : 'Registration Confirmed!',
-        message: event.isPaid
-          ? `Proceeding to test simulator checkout for ${formatINR(event.pricePaise)}.`
-          : 'Your digital QR ticket has been generated and added to My Events.',
-      });
+      if (event.isPaid) {
+        toast({
+          type: 'success',
+          title: 'Seat Hold Created (Test Mode)',
+          message: `Proceeding to test simulator checkout for ${formatINR(event.pricePaise)}.`,
+        });
+        if (onProceedToCheckout) {
+          onProceedToCheckout(`bkg_demo_${Date.now()}`);
+        }
+      } else {
+        toast({
+          type: 'success',
+          title: 'Registration Confirmed!',
+          message: 'Your digital QR ticket has been generated and added to My Events.',
+        });
+      }
     }, 600);
   };
 

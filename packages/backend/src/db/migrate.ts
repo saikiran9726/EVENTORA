@@ -89,6 +89,24 @@ export async function runMigrations() {
       DO $$ BEGIN
         CREATE TYPE team_member_status AS ENUM ('INVITED', 'REQUESTED', 'ACTIVE', 'DECLINED', 'REMOVED');
       EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE payment_status AS ENUM ('CREATED', 'PENDING', 'SUCCEEDED', 'FAILED', 'REFUND_PENDING', 'REFUNDED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE webhook_processing_status AS ENUM ('RECEIVED', 'PROCESSED', 'IGNORED', 'FAILED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE refund_status AS ENUM ('REQUESTED', 'APPROVED', 'REJECTED', 'PROCESSING', 'SUCCEEDED', 'FAILED');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      DO $$ BEGIN
+        CREATE TYPE ledger_entry_type AS ENUM ('SALE', 'REFUND');
+      EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+      ALTER TYPE booking_status ADD VALUE IF NOT EXISTS 'PAYMENT_FAILED';
     `);
 
     // 1. Colleges
@@ -541,6 +559,100 @@ export async function runMigrations() {
         actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
         at TIMESTAMPTZ DEFAULT NOW() NOT NULL
       );
+    `);
+
+    // 32. Payments
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        provider VARCHAR(50) DEFAULT 'simulator' NOT NULL,
+        provider_order_id VARCHAR(255) NOT NULL UNIQUE,
+        provider_payment_id VARCHAR(255) UNIQUE,
+        amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
+        currency VARCHAR(10) DEFAULT 'INR' NOT NULL,
+        status payment_status DEFAULT 'CREATED' NOT NULL,
+        failure_code VARCHAR(100),
+        is_simulated BOOLEAN DEFAULT true NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 33. Payment Attempts
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS payment_attempts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+        status VARCHAR(50) NOT NULL,
+        raw_ref VARCHAR(255),
+        at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 34. Webhook Events
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS webhook_events (
+        provider_event_id VARCHAR(255) PRIMARY KEY,
+        provider VARCHAR(50) NOT NULL,
+        type VARCHAR(100) NOT NULL,
+        signature_valid BOOLEAN DEFAULT false NOT NULL,
+        received_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        processed_at TIMESTAMPTZ,
+        processing_status webhook_processing_status DEFAULT 'RECEIVED' NOT NULL,
+        payload_hash BYTEA NOT NULL
+      );
+    `);
+
+    // 35. Refunds
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS refunds (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE RESTRICT,
+        amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
+        reason TEXT NOT NULL,
+        status refund_status DEFAULT 'REQUESTED' NOT NULL,
+        requested_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // 36. Organizer Ledger Entries
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS organizer_ledger_entries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organizer_id UUID NOT NULL REFERENCES organizer_profiles(id) ON DELETE RESTRICT,
+        booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE RESTRICT,
+        entry_type ledger_entry_type NOT NULL,
+        amount_paise INTEGER NOT NULL,
+        is_simulated BOOLEAN DEFAULT true NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        CONSTRAINT uq_ledger_payment_entry UNIQUE (payment_id, entry_type)
+      );
+    `);
+
+    // 37. Receipts
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS receipts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        number VARCHAR(100) NOT NULL UNIQUE,
+        issued_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+      );
+    `);
+
+    // Indexes on Payments, Ledger & Bookings
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_payments_booking_id ON payments(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_payments_provider_order ON payments(provider_order_id);
+      CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+      CREATE INDEX IF NOT EXISTS idx_refunds_payment_id ON refunds(payment_id);
+      CREATE INDEX IF NOT EXISTS idx_ledger_organizer_id ON organizer_ledger_entries(organizer_id);
+      CREATE INDEX IF NOT EXISTS idx_ledger_booking_id ON organizer_ledger_entries(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_receipts_booking_id ON receipts(booking_id);
     `);
 
     // Indexes on Events and Bookings

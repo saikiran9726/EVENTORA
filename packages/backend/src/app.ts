@@ -11,12 +11,28 @@ import { venueRoutes } from './routes/api/v1/venues.js';
 import { calendarRoutes } from './routes/api/v1/calendar.js';
 import { bookingRoutes } from './routes/api/v1/bookings.js';
 import { teamRoutes } from './routes/api/v1/teams.js';
+import { paymentRoutes } from './routes/api/v1/payments.js';
+import { verifyPaymentStartupGuard } from './services/startup-guard.js';
 
 export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
+  verifyPaymentStartupGuard();
+
   const app = fastify({
     genReqId: () => crypto.randomUUID(),
     logger: process.env.NODE_ENV === 'test' ? false : { level: 'info' },
     ...opts,
+  });
+
+  // Preserve raw request body as Buffer for timing-safe webhook HMAC-SHA256 signature verification
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
+    try {
+      (req as any).rawBody = body;
+      const json = JSON.parse(body.toString());
+      done(null, json);
+    } catch (err: any) {
+      err.statusCode = 400;
+      done(err, undefined);
+    }
   });
 
   // Strict Deny-by-default route validator
@@ -62,6 +78,7 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.register(calendarRoutes, { prefix: '/api/v1/calendar' });
   app.register(bookingRoutes, { prefix: '/api/v1' });
   app.register(teamRoutes, { prefix: '/api/v1/teams' });
+  app.register(paymentRoutes, { prefix: '/api/v1' });
 
   // 404 Handler - Strict Error Envelope
   app.setNotFoundHandler((req, reply) => {
