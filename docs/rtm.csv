@@ -21,4 +21,4 @@ NFR-SCALE,High concurrency handling up to 5000 concurrent users with connection 
 NFR-NOTIFY,Transactional outbox dispatch and notification latency under 2 seconds,N/A,/api/events/:id/alerts;/api/bookings/:id/checkout,outbox;notifications,auth:authenticated,T-NOTIFY-01,Not started,
 NFR-UPTIME,Health checks liveness readiness probes and graceful shutdown,/health,/health;/health/ready,N/A,public,T-UPTIME-01,Not started,
 NFR-SEC,Argon2id passwords SHA-256 hashed sessions CSRF double-submit and zero PII QR,/login;/scanner,/api/auth/login;/api/tickets/:id/check-in,users;sessions;tickets,auth:public;attendance:checkin:assigned,T-SEC-01;T-SEC-02;T-SEC-03,Not started,
-NFR-UX,Responsive mobile-first PWA design tokens WCAG 2.2 AA visible focus CLS near zero,All UI routes,All UI routes,N/A,public;auth:authenticated,T-UX-01;T-UX-02;T-UX-03,Verified,commit 0c5a331 (2026-10-21)
+NFR-UX,Responsive mobile-first PWA design tokens WCAG 2.2 AA visible focus CLS near zero,All UI routes,All UI routes,N/A,public;auth:authenticated,T-UX-01;T-UX-02;T-UX-03,Verified,commit 0e522fd (2026-10-21)
