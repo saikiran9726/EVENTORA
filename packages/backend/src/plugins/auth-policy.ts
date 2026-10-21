@@ -211,6 +211,75 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
         }
         break;
 
+      case 'event:create': {
+        if (userRole === 'admin') break;
+        // Check if user is an active member in any verified organizer club
+        const { db } = await import('../db/index.js');
+        const { organizerMembers } = await import('../db/schema.js');
+        const { eq, and } = await import('drizzle-orm');
+
+        const membership = await db.query.organizerMembers.findFirst({
+          where: and(eq(organizerMembers.userId, req.user!.id), eq(organizerMembers.status, 'active')),
+        });
+
+        if (!membership) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Organizer membership required to create events',
+              details: { requiredPolicy: 'event:create', userRole },
+              requestId: req.id,
+            },
+          });
+        }
+        break;
+      }
+
+      case 'event:manage:owned': {
+        if (userRole === 'admin') break;
+        const eventId = (req.params as any)?.id;
+        if (!eventId) break;
+
+        const { db } = await import('../db/index.js');
+        const { events, organizerMembers } = await import('../db/schema.js');
+        const { eq, and } = await import('drizzle-orm');
+
+        const targetEvent = await db.query.events.findFirst({
+          where: eq(events.id, eventId),
+        });
+
+        if (!targetEvent) {
+          return reply.code(404).send({
+            error: {
+              code: 'EVENT_NOT_FOUND',
+              message: `Event ${eventId} not found`,
+              details: { eventId },
+              requestId: req.id,
+            },
+          });
+        }
+
+        const membership = await db.query.organizerMembers.findFirst({
+          where: and(
+            eq(organizerMembers.organizerId, targetEvent.organizerId),
+            eq(organizerMembers.userId, req.user!.id),
+            eq(organizerMembers.status, 'active')
+          ),
+        });
+
+        if (!membership) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'You do not have organizer permissions for this event',
+              details: { requiredPolicy: 'event:manage:owned', eventId },
+              requestId: req.id,
+            },
+          });
+        }
+        break;
+      }
+
       default:
         // For other policies, fallback to admin or check
         if (userRole !== 'admin') {

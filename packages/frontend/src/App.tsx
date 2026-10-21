@@ -8,6 +8,9 @@ import { CheckinShell } from '@/components/shells/CheckinShell';
 import { DiscoveryPage } from '@/pages/DiscoveryPage';
 import { EventDetailsPage } from '@/pages/EventDetailsPage';
 import { OrganizerDashboardPage } from '@/pages/OrganizerDashboardPage';
+import { CreateEventPage } from '@/pages/events/CreateEventPage';
+import { ReviewQueuePage } from '@/pages/reviewer/ReviewQueuePage';
+import { CalendarPage } from '@/pages/CalendarPage';
 import { ComponentGalleryPage } from '@/pages/ComponentGalleryPage';
 import { LoginPage } from '@/pages/auth/LoginPage';
 import { RegisterPage } from '@/pages/auth/RegisterPage';
@@ -174,8 +177,24 @@ const AppInner: React.FC = () => {
       return <ComponentGalleryPage />;
     }
 
+    if (activeRoute === 'create-event') {
+      return (
+        <CreateEventPage
+          onBack={() => setActiveRoute('dashboard')}
+          onSuccess={(id) => {
+            setSelectedEventId(id);
+            setActiveRoute('details');
+          }}
+        />
+      );
+    }
+
     if (currentRole === 'organizer' && (activeRoute === 'dashboard' || activeRoute === 'roster' || activeRoute === 'insights')) {
-      return <OrganizerDashboardPage />;
+      return (
+        <OrganizerDashboardPage
+          onProposeEvent={() => setActiveRoute('create-event')}
+        />
+      );
     }
 
     if (activeRoute === 'discover') {
@@ -183,25 +202,7 @@ const AppInner: React.FC = () => {
     }
 
     if (activeRoute === 'calendar') {
-      return (
-        <div className="space-y-6">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text">Campus Event Calendar</h1>
-          <Card>
-            <CardHeader>
-              <CardTitle>Upcoming Sessions & Workshops</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="p-3 bg-surface-2 rounded-md border border-border flex justify-between items-center text-xs">
-                <div>
-                  <p className="font-semibold text-text">Smart Campus AI Symposium 2026</p>
-                  <p className="text-text-muted text-[11px]">28 October 2026 • 09:30 AM • Sir MV Auditorium</p>
-                </div>
-                <Badge variant="brand" size="sm">Confirmed</Badge>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      );
+      return <CalendarPage onSelectEvent={handleSelectEvent} />;
     }
 
     if (activeRoute === 'tickets') {
@@ -253,43 +254,7 @@ const AppInner: React.FC = () => {
     }
 
     if (activeRoute === 'review-queue') {
-      return (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text">
-                Faculty Approval & Review Queue
-              </h1>
-              <p className="text-xs sm:text-sm text-text-muted mt-1">
-                Authorized Faculty Coordinator: Dr. S. Ramanujan (CSE Dept)
-              </p>
-            </div>
-            <Badge variant="brand" size="sm">Policy: event:review</Badge>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Pending Proposal: Inter-College Robotics Grand Prix</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs text-text-muted">
-                Submitted by Robotics Club • Venue: Sir MV Auditorium • Requested Date: 14 Nov 2026.
-              </p>
-              <div className="p-3 bg-surface-2 rounded-md border border-border text-xs space-y-1">
-                <p className="font-semibold text-text">Automated Conflict Pre-Check:</p>
-                <p className="text-success flex items-center gap-1">
-                  ✓ Sir MV Auditorium is clear of overlapping events for 14 Nov 2026.
-                </p>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <Button variant="primary" size="sm">Approve Event</Button>
-                <Button variant="outline" size="sm">Request Changes</Button>
-                <Button variant="secondary" size="sm">Reject</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      );
+      return <ReviewQueuePage />;
     }
 
     if (activeRoute === 'scanner') {

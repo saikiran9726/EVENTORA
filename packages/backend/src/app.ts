@@ -6,6 +6,9 @@ import { authPolicyPlugin, validateRouteSecurity } from './plugins/auth-policy.j
 import { authRoutes } from './routes/api/v1/auth.js';
 import { meRoutes } from './routes/api/v1/me.js';
 import { adminRoutes } from './routes/api/v1/admin.js';
+import { eventRoutes } from './routes/api/v1/events.js';
+import { venueRoutes } from './routes/api/v1/venues.js';
+import { calendarRoutes } from './routes/api/v1/calendar.js';
 
 export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   const app = fastify({
@@ -43,6 +46,9 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.register(authRoutes, { prefix: '/api/v1/auth' });
   app.register(meRoutes, { prefix: '/api/v1/me' });
   app.register(adminRoutes, { prefix: '/api/v1/admin' });
+  app.register(eventRoutes, { prefix: '/api/v1/events' });
+  app.register(venueRoutes, { prefix: '/api/v1/venues' });
+  app.register(calendarRoutes, { prefix: '/api/v1/calendar' });
 
   // 404 Handler - Strict Error Envelope
   app.setNotFoundHandler((req, reply) => {

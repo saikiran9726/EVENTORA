@@ -15,7 +15,11 @@ import { useToast } from '@/components/ui/Toast';
 import { PROTOTYPE_ORGANIZER_STATS, PROTOTYPE_ATTENDEES } from '@/prototype/data';
 import { formatINR } from '@/lib/utils';
 
-export const OrganizerDashboardPage: React.FC = () => {
+interface OrganizerDashboardPageProps {
+  onProposeEvent?: () => void;
+}
+
+export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({ onProposeEvent }) => {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'studentName' | 'rollNumber' | 'checkInStatus'>('studentName');
@@ -78,13 +82,17 @@ export const OrganizerDashboardPage: React.FC = () => {
           <Button
             variant="primary"
             size="sm"
-            onClick={() =>
-              toast({
-                type: 'info',
-                title: 'Event Proposal Form',
-                message: 'Event creation wizard opens in Phase 3.',
-              })
-            }
+            onClick={() => {
+              if (onProposeEvent) {
+                onProposeEvent();
+              } else {
+                toast({
+                  type: 'info',
+                  title: 'Event Proposal Form',
+                  message: 'Opening proposal wizard...',
+                });
+              }
+            }}
           >
             <Plus className="w-3.5 h-3.5 mr-1" />
             <span>Propose Event</span>

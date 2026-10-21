@@ -5,6 +5,9 @@ import {
   MapPin,
   Users,
   Share2,
+  Download,
+  HelpCircle,
+  Bell,
   Image as ImageIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -138,6 +141,38 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Back to Event Discovery</span>
+        </button>
+
+        <button
+          onClick={() => {
+            const icsData = [
+              'BEGIN:VCALENDAR',
+              'VERSION:2.0',
+              'PRODID:-//Eventora//Campus Calendar//EN',
+              'BEGIN:VEVENT',
+              `SUMMARY:${event.title}`,
+              `LOCATION:${event.venue}`,
+              'END:VEVENT',
+              'END:VCALENDAR',
+            ].join('\r\n');
+            const blob = new Blob([icsData], { type: 'text/calendar;charset=utf-8' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `${event.id}.ics`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            toast({
+              type: 'success',
+              title: 'Calendar File Downloaded',
+              message: 'Added RFC 5545 .ics event to downloads.',
+            });
+          }}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text border border-border px-3 py-1.5 rounded-md hover:bg-surface-2"
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span>Add to Calendar (.ics)</span>
         </button>
 
         <button
@@ -289,6 +324,46 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({ eventId, onB
                 No real payments are collected.
               </p>
             )}
+          </Card>
+
+          {/* Event Announcements & FAQs (FR-OPS) */}
+          <Card>
+            <div className="flex items-center gap-2 mb-3">
+              <Bell className="w-4 h-4 text-brand" />
+              <h2 className="text-base font-bold text-text">Event Announcements & Live Updates</h2>
+            </div>
+            <div className="space-y-2.5">
+              <div className="p-3 bg-surface-2 rounded-md border border-border text-xs">
+                <div className="flex items-center justify-between font-semibold text-text">
+                  <span>Welcome Desk & Badge Pickup Location</span>
+                  <span className="text-[10px] text-text-muted">Today</span>
+                </div>
+                <p className="text-text-muted mt-1 leading-relaxed">
+                  Badges and kit distribution begins 45 minutes prior to the opening keynote at the Ground Floor Foyer.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-4 border-t border-border">
+              <div className="flex items-center gap-2 mb-3">
+                <HelpCircle className="w-4 h-4 text-brand" />
+                <h3 className="text-sm font-bold text-text">Frequently Asked Questions</h3>
+              </div>
+              <div className="space-y-2 text-xs">
+                <details className="bg-surface-2 p-3 rounded-md border border-border cursor-pointer">
+                  <summary className="font-semibold text-text">Can non-CSE students register?</summary>
+                  <p className="text-text-muted mt-1 leading-relaxed">
+                    Yes, registrations are open to all departments across the college. Interdisciplinary teams are encouraged.
+                  </p>
+                </details>
+                <details className="bg-surface-2 p-3 rounded-md border border-border cursor-pointer">
+                  <summary className="font-semibold text-text">Will verified participation certificates be awarded?</summary>
+                  <p className="text-text-muted mt-1 leading-relaxed">
+                    Yes, upon scanning check-in via QR code and attending the closing valedictory, an authentic cryptographic certificate is added to your Passport.
+                  </p>
+                </details>
+              </div>
+            </div>
           </Card>
         </div>
 

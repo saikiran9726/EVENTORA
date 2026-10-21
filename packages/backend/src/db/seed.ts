@@ -6,6 +6,7 @@ import {
   organizerProfiles,
   organizerMembers,
   eventStaffAssignments,
+  venues,
 } from './schema.js';
 import { hashPassword } from '../services/auth.js';
 import { eq } from 'drizzle-orm';
@@ -172,7 +173,60 @@ export async function seedDatabase() {
     }
   }
 
-  console.log('[Seed] Database successfully seeded with test accounts.');
+  console.log('[Seed] Seeding default campus venues...');
+  const venuesToSeed = [
+    {
+      name: 'Sir MV Auditorium',
+      building: 'Main Administrative Block',
+      capacity: 500,
+      accessibilityNotes: 'Ramp access at East entrance, elevator to balcony seats, hearing assistance loop installed',
+      directions: 'Take Central Avenue path to Main Block, 1st Floor',
+      status: 'active',
+    },
+    {
+      name: 'Dr. APJ Abdul Kalam Seminar Hall',
+      building: 'Science & Technology Block',
+      capacity: 200,
+      accessibilityNotes: 'Wheelchair ramp, ground floor access',
+      directions: 'Opposite Innovation Hub, Ground Floor West Wing',
+      status: 'active',
+    },
+    {
+      name: 'Turing Computing Lab',
+      building: 'Computer Science Department',
+      capacity: 80,
+      accessibilityNotes: 'Elevator access from CS Lobby',
+      directions: 'CS Department, 2nd Floor Room 204',
+      status: 'active',
+    },
+    {
+      name: 'Campus Central Amphitheater',
+      building: 'Student Activity Center',
+      capacity: 1200,
+      accessibilityNotes: 'Open-air step seating, designated wheelchair bay at top terrace',
+      directions: 'Behind Central Library, adjacent to Student Quad',
+      status: 'active',
+    },
+  ];
+
+  for (const v of venuesToSeed) {
+    const existing = await db.query.venues.findFirst({
+      where: (table, { and, eq }) => and(eq(table.name, v.name), eq(table.collegeId, college!.id)),
+    });
+    if (!existing) {
+      await db.insert(venues).values({
+        collegeId: college!.id,
+        name: v.name,
+        building: v.building,
+        capacity: v.capacity,
+        accessibilityNotes: v.accessibilityNotes,
+        directions: v.directions,
+        status: v.status,
+      });
+    }
+  }
+
+  console.log('[Seed] Database successfully seeded with test accounts and campus venues.');
 }
 
 if (process.argv[1]?.endsWith('seed.ts') || process.argv[1]?.endsWith('seed.js')) {

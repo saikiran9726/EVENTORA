@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Search, Filter, Calendar, MapPin, Users, ArrowRight, Image as ImageIcon } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Search, Filter, Calendar, MapPin, Users, ArrowRight, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -8,40 +8,154 @@ import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Select } from '@/components/ui/Select';
 import { PROTOTYPE_EVENTS } from '@/prototype/data';
 import { formatINR } from '@/lib/utils';
+import { apiClient } from '@/lib/api-client';
 
 interface DiscoveryPageProps {
   onSelectEvent: (eventId: string) => void;
 }
 
+export interface DiscoveredEvent {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  category: string;
+  department: string;
+  format: string;
+  capacity: number;
+  startsAt: string;
+  endsAt: string;
+  dateStr?: string;
+  timeStr?: string;
+  venueName?: string;
+  organizerName?: string;
+  isPaid?: boolean;
+  pricePaise?: number;
+  registeredCount?: number;
+}
+
 export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedFormat, setSelectedFormat] = useState<string>('all');
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
-  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [apiEvents, setApiEvents] = useState<DiscoveredEvent[]>([]);
+  const [_nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoadedApi, setHasLoadedApi] = useState(false);
 
-  const categories = ['All', 'Tech', 'Cultural', 'Workshop', 'Hackathon'];
+  const categories = ['All', 'Tech', 'AI & Robotics', 'Hackathon', 'Cultural Fest', 'Workshop', 'Sports'];
 
-  const filteredEvents = useMemo(() => {
-    return PROTOTYPE_EVENTS.filter((evt) => {
+  // 250ms debounced search-as-you-type
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Fetch from API whenever search/category/format changes
+  useEffect(() => {
+    let isCancelled = false;
+
+    const fetchDiscoveryEvents = async () => {
+      setIsLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (debouncedSearch.trim()) params.append('search', debouncedSearch.trim());
+        if (selectedCategory !== 'All') params.append('category', selectedCategory);
+        if (selectedFormat !== 'all') params.append('format', selectedFormat);
+        params.append('limit', '20');
+
+        const res = await apiClient<any>(`/api/v1/events?${params.toString()}`);
+        const eventList = res?.items || res?.events || res?.data?.events || [];
+
+        if (!isCancelled && eventList.length > 0) {
+          const mapped: DiscoveredEvent[] = eventList.map((e: any) => ({
+            id: e.id,
+            slug: e.slug,
+            title: e.title,
+            description: e.description || '',
+            category: e.category,
+            department: e.department,
+            format: e.format,
+            capacity: e.capacity,
+            startsAt: e.startsAt,
+            endsAt: e.endsAt,
+            venueName: e.venueName || e.venue?.name || 'Campus Venue',
+            organizerName: e.organizerName || e.organizer?.displayName || 'Campus Society',
+            isPaid: false,
+            pricePaise: 0,
+            registeredCount: 0,
+          }));
+          setApiEvents(mapped);
+          setNextCursor(res?.nextCursor || null);
+          setHasLoadedApi(true);
+        }
+      } catch {
+        if (!isCancelled) {
+          setHasLoadedApi(false);
+        }
+      } finally {
+        if (!isCancelled) setIsLoading(false);
+      }
+    };
+
+    fetchDiscoveryEvents();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [debouncedSearch, selectedCategory, selectedFormat]);
+
+  // Fallback to prototype data if backend returned 0 items and search is empty
+  const eventsToDisplay = useMemo(() => {
+    // Filter prototype events
+    const protoFiltered = PROTOTYPE_EVENTS.filter((evt) => {
       const matchesSearch =
         evt.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         evt.organizer.toLowerCase().includes(searchQuery.toLowerCase()) ||
         evt.venue.toLowerCase().includes(searchQuery.toLowerCase());
 
-      const matchesCat = selectedCategory === 'All' || evt.category === selectedCategory;
+      const matchesCat =
+        selectedCategory === 'All' ||
+        evt.category.toLowerCase().includes(selectedCategory.toLowerCase()) ||
+        selectedCategory.toLowerCase().includes(evt.category.toLowerCase());
+
       const matchesFormat =
         selectedFormat === 'all' ||
         (selectedFormat === 'free' && !evt.isPaid) ||
         (selectedFormat === 'paid' && evt.isPaid);
 
       return matchesSearch && matchesCat && matchesFormat;
-    });
-  }, [searchQuery, selectedCategory, selectedFormat]);
+    }).map((e) => ({
+      id: e.id,
+      slug: e.id,
+      title: e.title,
+      description: e.description,
+      category: e.category,
+      department: 'Computer Science',
+      format: e.isPaid ? 'hybrid' : 'in_person',
+      capacity: e.capacity,
+      startsAt: new Date().toISOString(),
+      endsAt: new Date(Date.now() + 7200000).toISOString(),
+      dateStr: e.dateStr,
+      timeStr: e.timeStr,
+      venueName: e.venue,
+      organizerName: e.organizer,
+      isPaid: e.isPaid,
+      pricePaise: e.pricePaise,
+      registeredCount: e.registeredCount,
+    }));
 
-  const handleImageError = (id: string) => {
-    setImageErrors((prev) => ({ ...prev, [id]: true }));
-  };
+    if (apiEvents.length > 0) {
+      const existingTitles = new Set(apiEvents.map((a) => a.title.toLowerCase()));
+      return [...protoFiltered.filter((p) => !existingTitles.has(p.title.toLowerCase())), ...apiEvents];
+    }
+
+    return protoFiltered;
+  }, [apiEvents, searchQuery, selectedCategory, selectedFormat]);
 
   return (
     <div className="space-y-6">
@@ -69,6 +183,9 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
             aria-label="Search events"
           />
           <Search className="w-4 h-4 text-text-muted absolute left-3 top-3 pointer-events-none" />
+          {isLoading && (
+            <Loader2 className="w-4 h-4 text-brand animate-spin absolute right-3 top-3 pointer-events-none" />
+          )}
         </div>
 
         {/* Mobile Filters Button (<640px) triggers Bottom Sheet */}
@@ -90,11 +207,12 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
             value={selectedFormat}
             onChange={(e) => setSelectedFormat(e.target.value)}
             className="bg-surface border border-border rounded-md px-3 py-2 text-xs font-medium text-text focus:outline-none cursor-pointer"
-            aria-label="Filter by pricing format"
+            aria-label="Filter by event format"
           >
-            <option value="all">All Pricing Types</option>
-            <option value="free">Free Events Only</option>
-            <option value="paid">Paid (Test Mode)</option>
+            <option value="all">All Formats</option>
+            <option value="in_person">In-Person Campus</option>
+            <option value="online">Online / Virtual</option>
+            <option value="hybrid">Hybrid</option>
           </select>
         </div>
       </div>
@@ -118,10 +236,10 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
 
       {/* Event Cards Grid (12-col grid: 1 col on mobile, 2 col on tablet, 3 col on desktop) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredEvents.map((evt) => {
-          const isSoldOut = evt.registeredCount >= evt.capacity;
-          const capacityPercent = Math.min(100, Math.round((evt.registeredCount / evt.capacity) * 100));
-          const hasImageError = imageErrors[evt.id];
+        {eventsToDisplay.map((evt) => {
+          const registered = evt.registeredCount || 0;
+          const isSoldOut = registered >= evt.capacity;
+          const capacityPercent = Math.min(100, Math.round((registered / evt.capacity) * 100));
 
           return (
             <Card
@@ -129,26 +247,12 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
               className="flex flex-col overflow-hidden hover:border-brand/50 transition-all duration-normal group cursor-pointer"
               onClick={() => onSelectEvent(evt.id)}
             >
-              {/* Fixed 16:9 or 4:3 Aspect Ratio Image Box with Gradient + Icon Fallback */}
-              <div
-                className={`relative w-full overflow-hidden bg-gradient-to-br from-surface-2 via-border to-surface -mx-4 -mt-4 mb-3 ${
-                  evt.aspectRatio === '4/3' ? 'aspect-4/3' : 'aspect-16/9'
-                }`}
-              >
-                {!hasImageError ? (
-                  <img
-                    src={evt.imageUrl}
-                    alt={evt.title}
-                    onError={() => handleImageError(evt.id)}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-slow ease-eventora"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-text-muted p-4">
-                    <ImageIcon className="w-8 h-8 text-brand/40 mb-1" />
-                    <span className="text-[11px] font-medium">{evt.category} Event</span>
-                  </div>
-                )}
+              {/* Fixed 16:9 Aspect Ratio Box with Gradient + Fallback */}
+              <div className="relative w-full overflow-hidden bg-gradient-to-br from-surface-2 via-border to-surface -mx-4 -mt-4 mb-3 aspect-16/9">
+                <div className="w-full h-full flex flex-col items-center justify-center text-text-muted p-4">
+                  <ImageIcon className="w-8 h-8 text-brand/40 mb-1" />
+                  <span className="text-[11px] font-medium">{evt.category} Event</span>
+                </div>
 
                 <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
                   <Badge variant="brand" size="sm">
@@ -170,7 +274,7 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
               <div className="flex-1 flex flex-col justify-between">
                 <div>
                   <span className="text-[11px] font-semibold text-brand tracking-wider uppercase">
-                    {evt.organizer}
+                    {evt.organizerName}
                   </span>
                   <h2 className="text-base font-bold text-text group-hover:text-brand transition-colors mt-0.5 line-clamp-2">
                     {evt.title}
@@ -183,12 +287,14 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
                 <div className="space-y-3 pt-4 border-t border-border mt-4">
                   <div className="flex items-center gap-2 text-xs text-text-muted">
                     <Calendar className="w-3.5 h-3.5 text-brand shrink-0" />
-                    <span>{evt.dateStr} • {evt.timeStr}</span>
+                    <span>
+                      {new Date(evt.startsAt).toLocaleDateString()} • {new Date(evt.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-2 text-xs text-text-muted">
                     <MapPin className="w-3.5 h-3.5 text-text-muted shrink-0" />
-                    <span className="truncate">{evt.venue}</span>
+                    <span className="truncate">{evt.venueName}</span>
                   </div>
 
                   {/* Capacity Bar */}
@@ -196,7 +302,7 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
                     <div className="flex justify-between text-[11px] font-medium text-text-muted">
                       <span className="flex items-center gap-1">
                         <Users className="w-3 h-3" />
-                        {isSoldOut ? 'Event Full (Waitlist available)' : `${evt.registeredCount} / ${evt.capacity} registered`}
+                        {isSoldOut ? 'Event Full (Waitlist available)' : `${registered} / ${evt.capacity} registered`}
                       </span>
                       <span>{capacityPercent}%</span>
                     </div>
@@ -215,7 +321,7 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
                     <div>
                       <span className="text-[11px] text-text-muted block">Entry Fee</span>
                       <span className="text-sm font-bold text-text">
-                        {evt.isPaid ? formatINR(evt.pricePaise) : 'Free Admission'}
+                        {evt.isPaid && evt.pricePaise ? formatINR(evt.pricePaise) : 'Free Admission'}
                       </span>
                     </div>
 
@@ -227,7 +333,7 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
                         onSelectEvent(evt.id);
                       }}
                     >
-                      <span>{isSoldOut ? 'Waitlist' : 'Register'}</span>
+                      <span>{isSoldOut ? 'Waitlist' : 'Details'}</span>
                       <ArrowRight className="w-3.5 h-3.5 ml-1" />
                     </Button>
                   </div>
@@ -243,17 +349,18 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) =
         isOpen={isFilterSheetOpen}
         onClose={() => setIsFilterSheetOpen(false)}
         title="Filter Events"
-        description="Filter campus events by pricing and category"
+        description="Filter campus events by format and category"
       >
         <div className="space-y-4">
           <Select
-            label="Pricing Type"
+            label="Event Format"
             value={selectedFormat}
             onChange={(e) => setSelectedFormat(e.target.value)}
             options={[
-              { value: 'all', label: 'All Pricing Types' },
-              { value: 'free', label: 'Free Admission Only' },
-              { value: 'paid', label: 'Paid Events (Test Mode)' },
+              { value: 'all', label: 'All Formats' },
+              { value: 'in_person', label: 'In-Person Campus' },
+              { value: 'online', label: 'Online / Virtual' },
+              { value: 'hybrid', label: 'Hybrid' },
             ]}
           />
 

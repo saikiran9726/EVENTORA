@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@eventora/shared": "workspace:*",
+    "@hookform/resolvers": "^6.0.0",
     "clsx": "^2.1.1",
     "framer-motion": "^11.5.4",
     "lucide-react": "^0.439.0",
