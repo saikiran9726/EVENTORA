@@ -11,7 +11,9 @@
     "test:e2e": "playwright test",
     "dev:frontend": "pnpm --filter @eventora/frontend dev",
     "build:frontend": "pnpm --filter @eventora/frontend build",
-    "preview:frontend": "pnpm --filter @eventora/frontend preview"
+    "preview:frontend": "pnpm --filter @eventora/frontend preview",
+    "build:backend": "pnpm --filter @eventora/shared build && pnpm --filter @eventora/backend build",
+    "start:backend": "pnpm --filter @eventora/backend start"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.0",

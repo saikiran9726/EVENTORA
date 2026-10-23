@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { pool } from '../db/index.js';
 import { expireOffers } from './waitlist.js';
+import { recordWorkerHeartbeat } from '../routes/monitoring.js';
 
 let isRunning = false;
 let workerInterval: NodeJS.Timeout | null = null;
@@ -266,6 +267,7 @@ export function startOutboxWorker(intervalMs = 3000) {
   // Interval polling fallback (also handles retries that have reached next_attempt_at)
   workerInterval = setInterval(async () => {
     try {
+      recordWorkerHeartbeat();
       await dispatchPendingOutboxMessages();
     } catch {
       // ignore in background loop

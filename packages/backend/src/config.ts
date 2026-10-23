@@ -5,7 +5,7 @@ const ConfigSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DATABASE_URL: z.string().default('postgres://postgres:postgres@localhost:5433/eventora'),
-  REDIS_URL: z.string().optional().default('redis://localhost:6379'),
+  REDIS_URL: z.string().optional().default(''),
   COOKIE_SECRET: z.string().min(16).default('development-cookie-secret-min-32-chars-long-secure-key'),
   JWT_SECRET: z.string().min(16).default('development-jwt-secret-min-32-chars-long-secure-key'),
   PAYMENT_ADAPTER: z.enum(['simulator', 'sandbox']).default('simulator'),

@@ -236,6 +236,7 @@ export async function runMigrations() {
         ip_hash VARCHAR(64),
         created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
       );
+      REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM PUBLIC;
     `);
 
     // ==========================================
@@ -1258,11 +1259,17 @@ export async function runMigrations() {
     // ==========================================
     // PHASE 11: PRODUCTION HARDENING, OPS RUNS, AUDIT PARTITIONING & READINESS
     // ==========================================
-    try {
-      await client.query('CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";');
-    } catch {
-      // Allowed if pg_stat_statements is not in shared_preload_libraries
-    }
+    await client.query(`
+      DO $$ BEGIN
+        CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+        WHEN insufficient_privilege THEN
+          RAISE NOTICE 'Skipping pg_stat_statements: insufficient privilege in managed database environment';
+        WHEN feature_not_supported THEN
+          RAISE NOTICE 'Skipping pg_stat_statements: not available in shared_preload_libraries';
+      END $$;
+    `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS ops_runs (
@@ -1305,21 +1312,40 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_feedback_perf_event ON event_feedback(event_id, moderation_status);
     `);
 
-    // DB Roles & Grants
+    // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC
+    await client.query(`
+      REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM PUBLIC;
+    `);
+
+    // Optional least-privilege roles (applicable for self-hosted / Docker Postgres; handled cleanly if restricted on managed cloud)
     await client.query(`
       DO $$ BEGIN
-        CREATE ROLE app_rw;
-      EXCEPTION WHEN duplicate_object THEN null; END $$;
+        -- 1. Create app_rw role if possible
+        BEGIN
+          CREATE ROLE app_rw;
+        EXCEPTION
+          WHEN duplicate_object THEN null;
+          WHEN insufficient_privilege THEN
+            RAISE NOTICE 'Skipping CREATE ROLE app_rw: insufficient privilege in managed database environment';
+        END;
 
-      DO $$ BEGIN
-        CREATE ROLE migrator;
-      EXCEPTION WHEN duplicate_object THEN null; END $$;
+        -- 2. Create migrator role if possible
+        BEGIN
+          CREATE ROLE migrator;
+        EXCEPTION
+          WHEN duplicate_object THEN null;
+          WHEN insufficient_privilege THEN
+            RAISE NOTICE 'Skipping CREATE ROLE migrator: insufficient privilege in managed database environment';
+        END;
 
-      GRANT USAGE ON SCHEMA public TO app_rw;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rw;
-      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_rw;
-
-      REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM app_rw, PUBLIC;
+        -- 3. If app_rw role exists, grant bounded privileges and revoke mutation on audit_logs
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_rw') THEN
+          GRANT USAGE ON SCHEMA public TO app_rw;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rw;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_rw;
+          REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM app_rw;
+        END IF;
+      END $$;
     `);
 
     await client.query('COMMIT');
