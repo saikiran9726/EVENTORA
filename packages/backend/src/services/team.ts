@@ -527,7 +527,7 @@ export async function leaveTeam(teamId: string, userId: string) {
     }
 
     const isLeader = memRes.rows[0].role === 'leader';
-    const otherMembersRes = await client.query(
+    const otherMembersRes = await client.query<{ user_id: string; role: string }>(
       `SELECT user_id, role FROM team_members WHERE team_id = $1 AND user_id != $2 AND status = 'ACTIVE' ORDER BY joined_at ASC;`,
       [teamId, userId]
     );

@@ -580,7 +580,13 @@ export async function getUserVolunteering(userId: string) {
       [userId]
     );
 
-    const recordsRes = await client.query(
+    const recordsRes = await client.query<{
+      id: string;
+      hours: string | number;
+      verifiedAt: Date | string;
+      eventTitle: string;
+      roleTitle: string;
+    }>(
       `SELECT rec.id, rec.hours, rec.verified_at AS "verifiedAt",
               e.title AS "eventTitle", r.title AS "roleTitle"
        FROM volunteer_records rec

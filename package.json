@@ -13,7 +13,7 @@
     "dev:frontend": "pnpm --filter @eventora/frontend dev",
     "build:frontend": "pnpm --filter @eventora/frontend build",
     "preview:frontend": "pnpm --filter @eventora/frontend preview",
-    "build:backend": "pnpm install && pnpm --filter @eventora/shared build && pnpm --filter @eventora/backend build",
+    "build:backend": "pnpm --filter @eventora/shared build && pnpm --filter @eventora/backend build",
     "start:backend": "pnpm --filter @eventora/backend start"
   },
   "dependencies": {
@@ -22,6 +22,8 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.10.0",
     "@playwright/test": "^1.47.0",
+    "@types/node": "^20.14.10",
+    "@types/pg": "^8.11.8",
     "@typescript-eslint/eslint-plugin": "^8.72.0",
     "@typescript-eslint/parser": "^8.72.0",
     "drizzle-orm": "^0.45.4",

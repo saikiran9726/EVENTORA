@@ -57,7 +57,7 @@ export async function createEventAlert(params: CreateAlertParams) {
     const alert = alertRes.rows[0];
 
     // 3. Find all confirmed registered attendees for this event
-    const attendeesRes = await client.query(
+    const attendeesRes = await client.query<{ user_id: string }>(
       `SELECT DISTINCT owner_user_id as user_id
        FROM tickets
        WHERE event_id = $1 AND status != 'CANCELLED';`,
@@ -180,7 +180,21 @@ export async function getUserNotifications(userId: string, options: { unreadOnly
     LIMIT $2;
   `;
 
-  const res = await pool.query(query, [userId, limit]);
+  interface NotificationQueryResult {
+    id: string;
+    user_id: string;
+    type: string;
+    event_id: string | null;
+    title: string;
+    body: string;
+    severity: string;
+    payload: unknown;
+    read_at: Date | string | null;
+    created_at: Date | string;
+    deliveries?: Array<{ channel: string; status: string; provider?: string; acceptedAt?: string; deliveredAt?: string }>;
+  }
+
+  const res = await pool.query<NotificationQueryResult>(query, [userId, limit]);
 
   const countRes = await pool.query(
     `SELECT COUNT(*)::int as unread_count FROM notifications WHERE user_id = $1 AND read_at IS NULL;`,

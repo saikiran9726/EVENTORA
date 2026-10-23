@@ -311,7 +311,16 @@ export async function getOrganizerFeedback(eventId: string, page: number = 1, li
     );
     const total = countRes.rows[0]?.total || 0;
 
-    const res = await client.query(
+    const res = await client.query<{
+      id: string;
+      rating: number;
+      comment: string | null;
+      answers: unknown;
+      moderation_status: string;
+      submitted_at: Date | string;
+      edited_at: Date | string | null;
+      ticket_tier_name: string | null;
+    }>(
       `SELECT ef.id, ef.rating, ef.comment, ef.answers, ef.moderation_status,
               ef.submitted_at, ef.edited_at,
               tt.name as ticket_tier_name
@@ -453,7 +462,7 @@ export async function getOrganizerAnalytics(eventId: string) {
     const waitlistConversionRate = waitlistJoined > 0 ? Math.round((waitlistConverted / waitlistJoined) * 100) : 0;
 
     // Daily cumulative registration points (time-series)
-    const tsRes = await client.query(
+    const tsRes = await client.query<{ date: Date | string; count: number }>(
       `SELECT DATE(created_at) as date, COUNT(*)::int as count
        FROM bookings
        WHERE event_id = $1 AND status != 'CANCELLED'
@@ -465,8 +474,9 @@ export async function getOrganizerAnalytics(eventId: string) {
     let cumulative = 0;
     const timeSeries = tsRes.rows.map((row) => {
       cumulative += row.count;
+      const dateStr = row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date).split('T')[0];
       return {
-        date: row.date.toISOString().split('T')[0],
+        date: dateStr,
         dailyCount: row.count,
         cumulativeCount: cumulative,
       };

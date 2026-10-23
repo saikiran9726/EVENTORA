@@ -62,7 +62,11 @@ export async function generateOfflineManifest(params: GenerateManifestParams) {
   }
 
   // 2. Query valid tickets for this event (non-cancelled)
-  const ticketsRes = await pool.query(
+  const ticketsRes = await pool.query<{
+    id: string;
+    qr_token_hash: string;
+    status: string;
+  }>(
     `SELECT id, qr_token_hash, status
      FROM tickets
      WHERE event_id = $1 AND status != 'CANCELLED';`,
@@ -286,7 +290,22 @@ export async function syncOfflineBatch(params: SyncBatchParams) {
  * Returns scan conflicts for an event, with associated ops details.
  */
 export async function getScanConflicts(eventId: string) {
-  const res = await pool.query(
+  interface ScanConflictRow {
+    id: string;
+    event_id: string;
+    ticket_id: string;
+    op_ids: string[];
+    status: string;
+    resolved_by: string | null;
+    resolution_note: string | null;
+    created_at: Date | string;
+    owner_user_id: string;
+    attendee_name: string;
+    attendee_email: string;
+    resolver_name: string | null;
+  }
+
+  const res = await pool.query<ScanConflictRow>(
     `SELECT sc.id, sc.event_id, sc.ticket_id, sc.op_ids, sc.status, sc.resolved_by, sc.resolution_note, sc.created_at,
             t.owner_user_id, u.display_name as attendee_name, u.email as attendee_email,
             res_u.display_name as resolver_name
