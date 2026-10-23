@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 5 E2E: Test-Mode Paid Checkout, Receipts & Ledger (FR-PAY)', () => {
-  test('End-to-End Paid Checkout -> Simulator Payment -> Digital Receipt -> Organizer Ledger', async ({ page }) => {
+  test('End-to-End Paid Checkout -> Simulator Payment -> Digital Receipt -> Organizer Ledger', async ({ page }, testInfo) => {
     // 1. Visit App
     await page.goto('/');
 
@@ -33,7 +34,7 @@ test.describe('Phase 5 E2E: Test-Mode Paid Checkout, Receipts & Ledger (FR-PAY)'
     // Or we can verify the CheckoutPage elements directly
     const testModeBanner = page.locator('text=TEST MODE – simulated money').first();
     await expect(testModeBanner).toBeVisible({ timeout: 6000 });
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase5-01-checkout-hold.png') });
+    await safeScreenshot(page, './docs/screenshots/phase5-01-checkout-hold.png', testInfo);
 
     // Verify Order Summary and Countdown Timer
     await expect(page.getByText('Order Summary')).toBeVisible();
@@ -50,7 +51,7 @@ test.describe('Phase 5 E2E: Test-Mode Paid Checkout, Receipts & Ledger (FR-PAY)'
     await expect(page.getByText(/Payment Confirmed & Verified/i).first()).toBeVisible({ timeout: 6000 });
     await expect(page.getByText(/Receipt Number/i).first()).toBeVisible();
     await expect(page.getByText(/Total Paid/i).first()).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase5-02-digital-receipt.png') });
+    await safeScreenshot(page, './docs/screenshots/phase5-02-digital-receipt.png', testInfo);
 
     // 7. Click View Tickets
     const viewTicketsBtn = page.locator('button:has-text("View QR Tickets"):visible').first();
@@ -59,7 +60,7 @@ test.describe('Phase 5 E2E: Test-Mode Paid Checkout, Receipts & Ledger (FR-PAY)'
 
     // Verify My Tickets page
     await expect(page.getByText('My Tickets & Registrations')).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase5-03-passport-tickets.png') });
+    await safeScreenshot(page, './docs/screenshots/phase5-03-passport-tickets.png', testInfo);
 
     // 8. Test Organizer Scoped Ledger View
     // Switch role to Organizer via header role selector
@@ -85,7 +86,7 @@ test.describe('Phase 5 E2E: Test-Mode Paid Checkout, Receipts & Ledger (FR-PAY)'
       await expect(page.getByText('Entry Type')).toBeVisible();
       await expect(page.getByText('SALE').first()).toBeVisible();
 
-      await page.screenshot({ path: path.resolve('./docs/screenshots/phase5-04-organizer-ledger.png') });
+      await safeScreenshot(page, './docs/screenshots/phase5-04-organizer-ledger.png', testInfo);
     }
   });
 });

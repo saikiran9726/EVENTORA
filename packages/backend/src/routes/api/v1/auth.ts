@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { config } from '../../../config.js';
 import { db } from '../../../db/index.js';
 import { users, colleges, passwordResets, userPreferences } from '../../../db/schema.js';
 import {
@@ -68,8 +69,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
     async (req, reply) => {
       const clientIp = req.ip || '127.0.0.1';
 
-      // Rate limit: 10 per hour per IP
-      const rateLimit = await checkRateLimit(`register:${clientIp}`, 10, 3600);
+      // Rate limit: 10 per hour per IP (configured via config.AUTH_RATE_LIMIT_REGISTER_MAX; explicitly isolated for test suites via env)
+      const maxAttempts = config.AUTH_RATE_LIMIT_REGISTER_MAX;
+      const rateLimit = await checkRateLimit(`register:${clientIp}`, maxAttempts, 3600);
       if (!rateLimit.allowed) {
         return reply.code(429).send({
           error: {

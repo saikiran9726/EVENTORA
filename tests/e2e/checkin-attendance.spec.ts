@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certificates (FR-CHECKIN, FR-CERT)', () => {
-  test('Complete Flow: QR Pass Display -> Staff Scanner Check-in -> Duplicate Rejection -> Passport Certificate -> Public Zero-PII Verification', async ({ page }) => {
+  test('Complete Flow: QR Pass Display -> Staff Scanner Check-in -> Duplicate Rejection -> Passport Certificate -> Public Zero-PII Verification', async ({ page }, testInfo) => {
     // 1. Visit App
     await page.goto('/');
 
@@ -18,7 +19,7 @@ test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certifi
     await expect(page.getByText(/Increase screen brightness for rapid gate scan/i).first()).toBeVisible();
     await expect(page.getByText(/Zero PII in QR|Zero PII Exposure/i).first()).toBeVisible();
 
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase6-01-qr-ticket-display.png') });
+    await safeScreenshot(page, './docs/screenshots/phase6-01-qr-ticket-display.png', testInfo);
 
     // 3. Switch to Check-in Staff Role
     const roleSelect = page.locator('select:visible').first();
@@ -49,7 +50,7 @@ test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certifi
     // Verify scan outcome is rendered
     await expect(page.getByText(/Scan Result & Admittance/i)).toBeVisible();
     await page.waitForTimeout(500); // Allow async state transition to settle
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase6-02-scanner-admittance.png') });
+    await safeScreenshot(page, './docs/screenshots/phase6-02-scanner-admittance.png', testInfo);
 
     // 5. Test Duplicate Scan Attempt
     await tokenInput.fill(sampleToken);
@@ -58,7 +59,7 @@ test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certifi
 
     await expect(page.getByText(/Scan Result & Admittance/i)).toBeVisible();
     await page.waitForTimeout(500);
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase6-03-scanner-duplicate.png') });
+    await safeScreenshot(page, './docs/screenshots/phase6-03-scanner-duplicate.png', testInfo);
 
     // 6. Switch Role to Student -> Navigate to Passport
     await roleSelect.selectOption('student');
@@ -66,22 +67,26 @@ test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certifi
     await expect(passportNavBtn).toBeVisible();
     await passportNavBtn.click();
 
-    // Verify Student Passport Page
+    // Verify Student Passport Page & Digital Certificates
     await expect(page.getByText('Student Event Passport & Credentials')).toBeVisible();
+
+    const certsTab = page.locator('button:has-text("Digital Certificates"):visible').first();
+    await expect(certsTab).toBeVisible();
+    await certsTab.click();
+
     await expect(page.getByText(/Crockford Verification Code/i).first()).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase6-04-passport-credentials.png') });
+    await safeScreenshot(page, './docs/screenshots/phase6-04-passport-credentials.png', testInfo);
 
     // 7. Click Download Credential Modal
     const downloadBtn = page.locator('button:has-text("Download"):visible').first();
-    if (await downloadBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await downloadBtn.click();
-      await expect(page.getByText(/Digital Certificate of Attendance/i)).toBeVisible();
-      await expect(page.getByText(/Verification Code:/i)).toBeVisible();
+    await expect(downloadBtn).toBeVisible();
+    await downloadBtn.click();
+    await expect(page.getByText(/Digital Certificate of Attendance/i)).toBeVisible();
+    await expect(page.getByText(/Verification Code:/i)).toBeVisible();
 
-      // Close modal
-      const closeBtn = page.locator('button:has-text("Close"):visible').first();
-      await closeBtn.click();
-    }
+    // Close modal
+    const closeBtn = page.locator('button:has-text("Close"):visible').first();
+    await closeBtn.click();
 
     // 8. Public Verification Portal Test
     const publicVerifyBtn = page.locator('button:has-text("Public Verify"):visible').first();
@@ -100,7 +105,7 @@ test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certifi
       const portalVerifyBtn = page.locator('button:has-text("Verify"):visible').first();
       await portalVerifyBtn.click();
 
-      await page.screenshot({ path: path.resolve('./docs/screenshots/phase6-05-public-verification.png') });
+      await safeScreenshot(page, './docs/screenshots/phase6-05-public-verification.png', testInfo);
     }
   });
 });

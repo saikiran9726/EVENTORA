@@ -655,7 +655,7 @@ export const PassportPage: React.FC<{
 
             <div className="p-3 bg-surface-2 rounded-lg border border-border text-left space-y-1.5 font-mono">
               <div className="flex justify-between">
-                <span className="text-text-muted">Code:</span>
+                <span className="text-text-muted">Verification Code:</span>
                 <span className="font-bold text-brand">{selectedCert.verificationCode}</span>
               </div>
               <div className="flex justify-between">

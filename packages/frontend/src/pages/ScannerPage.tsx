@@ -543,7 +543,7 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-ev
       )}
 
       {/* Live Attendance Counter Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
         <Card className="p-3 text-center border-l-4 border-l-brand">
           <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">Registered</span>
           <p className="text-2xl font-bold text-text mt-0.5">{attendance.summary.totalRegistered}</p>
@@ -559,6 +559,10 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-ev
         <Card className="p-3 text-center border-l-4 border-l-warning">
           <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">Conflicts</span>
           <p className="text-2xl font-bold text-warning mt-0.5">{conflictCount}</p>
+        </Card>
+        <Card className="p-3 text-center border-l-4 border-l-error">
+          <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">Duplicates</span>
+          <p className="text-2xl font-bold text-error mt-0.5">{attendance.summary.duplicateAttempts}</p>
         </Card>
       </div>
 
@@ -634,7 +638,7 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-ev
             </label>
             <div className="flex gap-2">
               <Input
-                placeholder="Paste token or enter TK-4829"
+                placeholder="Paste token or enter TK-4829 (43-char token)"
                 value={manualToken}
                 onChange={(e) => setManualToken(e.target.value)}
                 onKeyDown={(e) => {

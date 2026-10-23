@@ -15,6 +15,9 @@ export default defineConfig({
       port: 4000,
       reuseExistingServer: true,
       timeout: 30000,
+      env: {
+        AUTH_RATE_LIMIT_REGISTER_MAX: '500',
+      },
     },
     {
       command: 'pnpm --filter @eventora/frontend dev --port 5173 --strictPort',

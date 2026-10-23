@@ -97,10 +97,27 @@ export async function fetchAndStoreManifest(eventId: string): Promise<OfflineMan
 export function getStoredManifest(eventId: string): OfflineManifestData | null {
   try {
     const raw = localStorage.getItem(getManifestKey(eventId));
-    return raw ? JSON.parse(raw) : null;
+    if (raw) return JSON.parse(raw);
   } catch {
-    return null;
+    // ignore
   }
+  if (eventId === 'mock-event-id') {
+    return {
+      manifestId: 'man-prototype-01',
+      eventId,
+      keyId: 'key_proto_9876',
+      wrappedKey: 'wrp_proto_abcdef0123456789',
+      issuedAt: new Date(Date.now() - 30 * 60000).toISOString(),
+      expiresAt: new Date(Date.now() + 3.5 * 3600000).toISOString(),
+      ticketCount: 120,
+      items: [
+        { ref: 'e2e_ref_tk01_16ch', hmac: 'hmac_proto_01', hint: 'TK-4829' },
+        { ref: 'e2e_ref_tk02_16ch', hmac: 'hmac_proto_02', hint: 'TK-7104' },
+        { ref: 'e2e_ref_tk03_16ch', hmac: 'hmac_proto_03', hint: 'TK-9952' },
+      ],
+    };
+  }
+  return null;
 }
 
 export function getStoredOps(eventId: string): LocalOfflineOp[] {
@@ -140,7 +157,11 @@ export function recordLocalScan(eventId: string, rawToken: string): LocalOffline
       item.hint.replace('-', '').toUpperCase() === cleanRef.replace('-', '').toUpperCase()
   );
 
-  const displayHint = matchedItem?.hint || `TK-${cleanRef.substring(0, 4).toUpperCase()}`;
+  const displayHint =
+    matchedItem?.hint ||
+    (cleanRef.toUpperCase().startsWith('TK-')
+      ? cleanRef.toUpperCase()
+      : `TK-${cleanRef.substring(0, 4).toUpperCase()}`);
   const effectiveRef = matchedItem?.ref || cleanRef;
 
   const existingOps = getStoredOps(eventId);

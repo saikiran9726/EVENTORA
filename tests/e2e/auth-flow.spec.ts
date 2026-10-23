@@ -1,13 +1,14 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
-  test('User Journey: Register -> Verify -> Login -> Update Profile & Preferences -> Logout', async ({ page }) => {
+  test('User Journey: Register -> Verify -> Login -> Update Profile & Preferences -> Logout', async ({ page }, testInfo) => {
     // 1. Visit App
     await page.goto('/');
 
     // Screenshot initial discover screen
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase2-01-discover-initial.png') });
+    await safeScreenshot(page, './docs/screenshots/phase2-01-discover-initial.png', testInfo);
 
     // 2. Navigate to Me / Profile (triggers auth redirect since unauthenticated)
     const meNavBtn = page.locator('button:has-text("Me"):visible').first();
@@ -15,14 +16,14 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
 
     // Expect Sign In page
     await expect(page.getByText('Sign In to Eventora')).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase2-02-signin-page.png') });
+    await safeScreenshot(page, './docs/screenshots/phase2-02-signin-page.png', testInfo);
 
     // 3. Navigate to Register
     const createAccountBtn = page.getByRole('button', { name: /create campus account/i });
     await createAccountBtn.click();
 
     await expect(page.getByText('Join Eventora')).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase2-03-register-page.png') });
+    await safeScreenshot(page, './docs/screenshots/phase2-03-register-page.png', testInfo);
 
     // 4. Fill registration form
     const uniqueId = Date.now().toString().slice(-6);
@@ -37,14 +38,14 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
 
     await page.fill('#reg-password', 'Eventora#Test2026!');
     await expect(page.getByText('Strong')).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase2-04-password-strength.png') });
+    await safeScreenshot(page, './docs/screenshots/phase2-04-password-strength.png', testInfo);
 
     // Submit registration
     await page.click('button:has-text("Create Account")');
 
     // Verification screen should appear with pre-filled token
     await expect(page.getByText('Verify Your College Email')).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase2-05-email-verification.png') });
+    await safeScreenshot(page, './docs/screenshots/phase2-05-email-verification.png', testInfo);
 
     // Click verify
     await page.click('button:has-text("Verify Email & Activate")');
@@ -69,7 +70,7 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
 
     await expect(page.getByText('Account & Preferences')).toBeVisible();
     await expect(page.getByText(testEmail)).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase2-06-profile-preferences.png') });
+    await safeScreenshot(page, './docs/screenshots/phase2-06-profile-preferences.png', testInfo);
 
     // 7. Update display name
     await page.fill('#display-name', 'Dev E2E Student (Updated)');
@@ -80,7 +81,7 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
     await page.click('button:has-text("Sign Out")');
     // Navigates back to Discover
     await expect(page.getByText('Campus Event Discovery')).toBeVisible();
-    await page.screenshot({ path: path.resolve('./docs/screenshots/phase2-07-post-logout.png') });
+    await safeScreenshot(page, './docs/screenshots/phase2-07-post-logout.png', testInfo);
   });
 
   test('Role Navigation Matrix differences across all canonical shells', async ({ page }) => {
@@ -114,7 +115,7 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
 
     // 5. Check-in Staff Shell
     await roleSelect.selectOption('checkin_staff');
-    await expect(page.getByText('QR Ticket Check-in Scanner')).toBeVisible();
+    await expect(page.getByText('Turnstile Check-in Scanner')).toBeVisible();
     await expect(page.getByText('Policy: attendance:checkin:assigned')).toBeVisible();
   });
 });

@@ -49,6 +49,8 @@ export const VenueCard: React.FC<VenueCardProps> = ({
 
   return (
     <Card className="p-4 sm:p-5 border border-border shadow-sm space-y-4">
+      <h2 className="text-base font-bold text-text">Campus Venue Navigator</h2>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pb-3 border-b border-border/70">
         <div className="flex items-center gap-2.5">
