@@ -56,7 +56,7 @@ export async function apiClient<T>(
   endpoint: string,
   options: ApiClientOptions = {}
 ): Promise<T> {
-  const { timeoutMs = 15000, headers: customHeaders, signal: externalSignal, ...fetchOptions } = options;
+  const { timeoutMs = 45000, headers: customHeaders, signal: externalSignal, ...fetchOptions } = options;
 
   // Generate unique request ID for client-side tracing
   const requestId = typeof crypto !== 'undefined' && crypto.randomUUID

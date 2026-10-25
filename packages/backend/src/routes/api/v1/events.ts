@@ -10,6 +10,7 @@ import {
   eventStatusHistory,
   eventFaqs,
   eventAnnouncements,
+  ticketTypes,
   outbox,
   type Event,
   type EventStatus,
@@ -41,7 +42,7 @@ const listEventsQuerySchema = z.object({
 });
 
 const createEventSchema = z.object({
-  organizerId: z.string().uuid(),
+  organizerId: z.string().uuid().optional(),
   title: z.string().min(3).max(255),
   description: z.string().min(10),
   category: z.string().min(2).max(100),
@@ -354,11 +355,41 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         });
       }
 
+      // Auto-resolve organizerId from user's active membership if omitted
+      let resolvedOrganizerId = data.organizerId;
+      if (!resolvedOrganizerId) {
+        const firstMembership = await db.query.organizerMembers.findFirst({
+          where: and(
+            eq(organizerMembers.userId, user.id),
+            eq(organizerMembers.status, 'active')
+          ),
+        });
+        if (firstMembership) {
+          resolvedOrganizerId = firstMembership.organizerId;
+        } else if (user.globalRole === 'admin') {
+          const firstOrg = await db.query.organizerProfiles.findFirst({
+            where: eq(organizerProfiles.collegeId, user.collegeId),
+          });
+          resolvedOrganizerId = firstOrg?.id;
+        }
+      }
+
+      if (!resolvedOrganizerId) {
+        return reply.code(400).send({
+          error: {
+            code: 'ORGANIZER_REQUIRED',
+            message: 'An active organizer profile is required to propose an event.',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
+
       // Verify user has membership in the organizer profile (unless admin)
       if (user.globalRole !== 'admin') {
         const membership = await db.query.organizerMembers.findFirst({
           where: and(
-            eq(organizerMembers.organizerId, data.organizerId),
+            eq(organizerMembers.organizerId, resolvedOrganizerId),
             eq(organizerMembers.userId, user.id),
             eq(organizerMembers.status, 'active')
           ),
@@ -369,9 +400,28 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
             error: {
               code: 'FORBIDDEN',
               message: 'You are not an active member of this organizer profile.',
-              details: { organizerId: data.organizerId },
+              details: { organizerId: resolvedOrganizerId },
               requestId: req.id,
             },
+          });
+        }
+      }
+
+      // Idempotency: return existing draft if duplicate submission occurs within 15 minutes
+      const idempotencyKey = (req.headers['idempotency-key'] as string) || (req.body as any)?.idempotencyKey;
+      if (idempotencyKey) {
+        const existingEvent = await db.query.events.findFirst({
+          where: and(
+            eq(events.createdBy, user.id),
+            eq(events.organizerId, resolvedOrganizerId),
+            eq(events.title, data.title),
+            eq(events.status, 'draft')
+          ),
+        });
+        if (existingEvent) {
+          return reply.code(200).send({
+            event: existingEvent,
+            message: 'Event draft already created (idempotent)',
           });
         }
       }
@@ -381,7 +431,7 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       const [newEvent] = await db
         .insert(events)
         .values({
-          organizerId: data.organizerId,
+          organizerId: resolvedOrganizerId,
           collegeId: user.collegeId,
           title: data.title,
           slug,
@@ -407,6 +457,19 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           createdBy: user.id,
         })
         .returning();
+
+      // Automatically create initial General Admission ticket tier if capacity defined
+      if (newEvent.capacity > 0) {
+        await db.insert(ticketTypes).values({
+          eventId: newEvent.id,
+          name: 'General Admission',
+          pricePaise: 0,
+          capacity: newEvent.capacity,
+          sold: 0,
+          held: 0,
+          perUserLimit: 2,
+        });
+      }
 
       // Write initial status history
       await db.insert(eventStatusHistory).values({

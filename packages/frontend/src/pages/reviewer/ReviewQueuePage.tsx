@@ -47,7 +47,7 @@ export const ReviewQueuePage: React.FC = () => {
   const fetchProposals = async () => {
     setIsLoading(true);
     try {
-      const res = await apiClient<any>('/api/v1/events?limit=50');
+      const res = await apiClient<any>('/api/v1/events?status=pending_approval&limit=50');
       const eventList = res?.items || res?.events || res?.data?.events || [];
       if (eventList.length > 0) {
         const items: ProposalItem[] = eventList.map((e: any) => ({
@@ -67,6 +67,8 @@ export const ReviewQueuePage: React.FC = () => {
           contactEmail: e.contactEmail || 'organizer@campus.edu',
         }));
         setProposals(items);
+      } else {
+        setProposals([]);
       }
     } catch {
       // Prototype mock queue if API is offline

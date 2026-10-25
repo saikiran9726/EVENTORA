@@ -12,6 +12,7 @@ import {
   Building,
   Info,
   Users,
+  ShieldAlert,
 } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -19,6 +20,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { useToast } from '@/components/ui/Toast';
+import { useAuth } from '@/context/AuthContext';
 
 const detailsSchema = z.object({
   title: z.string().min(5, 'Title must be at least 5 characters').max(150),
@@ -61,10 +63,23 @@ interface CreateEventPageProps {
 
 export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSuccess }) => {
   const { toast } = useToast();
+  const { user, isAuthenticated } = useAuth();
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [venues, setVenues] = useState<VenueOption[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
+  const [createdDraftId, setCreatedDraftId] = useState<string | null>(null);
+  const [idempotencyKey] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('eventora_proposal_idempotency_key');
+      if (saved) return saved;
+      const newKey = `prop-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      localStorage.setItem('eventora_proposal_idempotency_key', newKey);
+      return newKey;
+    } catch {
+      return `prop-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    }
+  });
 
   // Form states with local autosave
   const detailsForm = useForm<z.infer<typeof detailsSchema>>({
@@ -197,14 +212,17 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSucc
       ? details.tags.split(',').map((t) => t.trim()).filter(Boolean)
       : [];
 
+    const organizerId = user?.organizerMemberships?.[0]?.organizerId;
+
     const payload = {
+      organizerId,
       title: details.title,
       description: details.description,
       category: details.category,
       department: details.department,
       format: details.format,
       tags: tagList,
-      contactEmail: details.contactEmail,
+      contactEmail: details.contactEmail || user?.email || 'organizer@campus.edu',
       venueId: details.format !== 'online' ? schedule.venueId : null,
       startsAt: new Date(schedule.startsAt).toISOString(),
       endsAt: new Date(schedule.endsAt).toISOString(),
@@ -218,17 +236,25 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSucc
     };
 
     try {
-      // 1. Create draft event
-      const res = await apiClient<any>(
-        '/api/v1/events',
-        {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        }
-      );
+      // 1. Create draft event (or reuse if previous attempt succeeded before response timeout)
+      let eventId = createdDraftId;
+      if (!eventId) {
+        const res = await apiClient<any>(
+          '/api/v1/events',
+          {
+            method: 'POST',
+            headers: { 'Idempotency-Key': idempotencyKey },
+            body: JSON.stringify(payload),
+            timeoutMs: 60000,
+          }
+        );
 
-      const eventId = res?.event?.id || res?.data?.event?.id;
+        eventId = res?.event?.id || res?.data?.event?.id;
+        if (eventId) setCreatedDraftId(eventId);
+      }
+
       localStorage.removeItem('eventora_event_draft');
+      localStorage.removeItem('eventora_proposal_idempotency_key');
 
       toast({
         title: 'Draft Created Successfully',
@@ -238,7 +264,11 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSucc
 
       // 2. Submit for review
       try {
-        await apiClient(`/api/v1/events/${eventId}/submit`, { method: 'POST' });
+        await apiClient(`/api/v1/events/${eventId}/submit`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+          timeoutMs: 60000,
+        });
         toast({
           title: 'Submitted for Faculty Review',
           message: 'Your event proposal has been queued for faculty approval.',
@@ -247,13 +277,15 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSucc
       } catch (submitErr) {
         if (submitErr instanceof ApiError && submitErr.code === 'VENUE_CONFLICT') {
           setConflictWarning(
-            `Venue booking conflict: Sir MV Auditorium is already booked during this time window. Please change venue or timing.`
+            `Venue booking conflict: The requested venue is already booked during this time window. Please change venue or timing.`
           );
           return;
         }
       }
 
-      onSuccess(eventId);
+      if (eventId) {
+        onSuccess(eventId);
+      }
     } catch (err: any) {
       if (err instanceof ApiError && err.code === 'VENUE_CONFLICT') {
         setConflictWarning(
@@ -295,6 +327,22 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSucc
           </Button>
         </div>
       </div>
+
+      {/* Unauthenticated Guest Alert */}
+      {!isAuthenticated && (
+        <div role="alert" className="p-3.5 rounded-lg bg-warning/10 border border-warning/30 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2.5">
+            <ShieldAlert className="w-4 h-4 text-warning shrink-0" />
+            <div>
+              <p className="font-semibold text-text">Organizer Sign-In Required</p>
+              <p className="text-text-muted">You are currently browsing as a guest. Please sign in with an active club organizer account to submit proposals for faculty review.</p>
+            </div>
+          </div>
+          <Button size="sm" variant="primary" onClick={() => window.location.href = '/login'}>
+            Sign In
+          </Button>
+        </div>
+      )}
 
       {/* Wizard Step Stepper */}
       <div className="flex items-center justify-between bg-surface border border-border rounded-lg p-3 sm:p-4 text-xs">

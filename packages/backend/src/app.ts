@@ -58,7 +58,8 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
     try {
       (req as any).rawBody = body;
-      const json = JSON.parse(body.toString());
+      const str = body.toString().trim();
+      const json = str ? JSON.parse(str) : {};
       done(null, json);
     } catch (err: any) {
       err.statusCode = 400;
