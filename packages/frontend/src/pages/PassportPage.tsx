@@ -20,6 +20,7 @@ import {
   Globe,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { apiClient } from '@/lib/api-client';
 
 export interface UserCertificate {
   id: string;
@@ -129,29 +130,20 @@ export const PassportPage: React.FC<{
   // Load Passport and Achievements from API
   const loadPassportData = useCallback(async () => {
     setIsLoading(true);
-    const token = localStorage.getItem('eventora_auth_token');
 
     try {
-      const [passRes, certRes] = await Promise.all([
-        fetch('/api/v1/me/passport', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          credentials: 'include',
-        }),
-        fetch('/api/v1/me/certificates', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          credentials: 'include',
-        }),
+      const [passData, certData] = await Promise.all([
+        apiClient<any>('/api/v1/me/passport'),
+        apiClient<any>('/api/v1/me/certificates'),
       ]);
 
-      if (passRes.ok) {
-        const passData = await passRes.json();
+      if (passData) {
         if (passData.settings) setSettings(passData.settings);
         if (passData.achievements) setAchievements(passData.achievements);
       }
 
-      if (certRes.ok) {
-        const certData = await certRes.json();
-        setCertificates(certData.certificates || []);
+      if (certData && Array.isArray(certData.certificates)) {
+        setCertificates(certData.certificates);
       }
     } catch {
       // Prototype fallback
@@ -177,32 +169,23 @@ export const PassportPage: React.FC<{
       }
     }
     setIsSavingSettings(true);
-    const token = localStorage.getItem('eventora_auth_token');
 
     try {
-      const res = await fetch('/api/v1/me/passport/visibility', {
+      const data = await apiClient<any>('/api/v1/me/passport/visibility', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        credentials: 'include',
         body: JSON.stringify(partial),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.settings) setSettings(data.settings);
-        toast({
-          type: 'success',
-          title: 'Passport Settings Saved',
-          message: partial.isPublic !== undefined
-            ? partial.isPublic
-              ? 'Public passport URL is now active.'
-              : 'Passport is now completely private.'
-            : 'Visibility preferences updated.',
-        });
-      }
+      if (data?.settings) setSettings(data.settings);
+      toast({
+        type: 'success',
+        title: 'Passport Settings Saved',
+        message: partial.isPublic !== undefined
+          ? partial.isPublic
+            ? 'Public passport URL is now active.'
+            : 'Passport is now completely private.'
+          : 'Visibility preferences updated.',
+      });
     } catch {
       toast({
         type: 'info',
@@ -237,9 +220,8 @@ export const PassportPage: React.FC<{
 
   const handleDownload = async (certId: string) => {
     try {
-      const res = await fetch(`/api/v1/certificates/${certId}/download`, { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiClient<any>(`/api/v1/certificates/${certId}/download`);
+      if (data?.certificate) {
         setSelectedCert(data.certificate);
         return;
       }

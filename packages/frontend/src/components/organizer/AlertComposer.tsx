@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Textarea } from '@/components/ui/Textarea';
 import { useToast } from '@/components/ui/Toast';
+import { apiClient } from '@/lib/api-client';
 
 export interface AlertRecord {
   id: string;
@@ -53,14 +54,10 @@ export const AlertComposer: React.FC<AlertComposerProps> = ({
 
   // Fetch live recipient count
   const fetchRecipientCount = useCallback(async () => {
-    const token = localStorage.getItem('eventora_auth_token');
     try {
-      const res = await fetch(`/api/v1/events/${eventId}/alerts/recipient-count`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setRecipientCount(data.recipientCount ?? 42);
+      const data = await apiClient<{ recipientCount?: number }>(`/api/v1/events/${eventId}/alerts/recipient-count`);
+      if (typeof data?.recipientCount === 'number') {
+        setRecipientCount(data.recipientCount);
         return;
       }
     } catch {
@@ -71,17 +68,11 @@ export const AlertComposer: React.FC<AlertComposerProps> = ({
 
   // Fetch alert history
   const fetchAlertHistory = useCallback(async () => {
-    const token = localStorage.getItem('eventora_auth_token');
     try {
-      const res = await fetch(`/api/v1/events/${eventId}/alerts`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.alerts) {
-          setAlerts(data.alerts);
-          return;
-        }
+      const data = await apiClient<{ alerts?: AlertRecord[] }>(`/api/v1/events/${eventId}/alerts`);
+      if (data?.alerts) {
+        setAlerts(data.alerts);
+        return;
       }
     } catch {
       // Prototype fallback
@@ -133,15 +124,10 @@ export const AlertComposer: React.FC<AlertComposerProps> = ({
     if (!message.trim()) return;
 
     setIsSubmitting(true);
-    const token = localStorage.getItem('eventora_auth_token');
 
     try {
-      const res = await fetch(`/api/v1/events/${eventId}/alerts`, {
+      const data = await apiClient<any>(`/api/v1/events/${eventId}/alerts`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           kind,
           severity,
@@ -149,17 +135,14 @@ export const AlertComposer: React.FC<AlertComposerProps> = ({
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        toast({
-          type: 'success',
-          title: severity === 'urgent' ? '⚡ Urgent Alert Broadcasted!' : 'Alert Dispatched',
-          message: `Dispatched to ${data.recipientCount ?? recipientCount} confirmed attendees. Outbox fan-out initiated.`,
-        });
-        setMessage('');
-        fetchAlertHistory();
-        return;
-      }
+      toast({
+        type: 'success',
+        title: severity === 'urgent' ? '⚡ Urgent Alert Broadcasted!' : 'Alert Dispatched',
+        message: `Dispatched to ${data?.recipientCount ?? recipientCount} confirmed attendees. Outbox fan-out initiated.`,
+      });
+      setMessage('');
+      fetchAlertHistory();
+      return;
     } catch {
       // Prototype fallback
     }

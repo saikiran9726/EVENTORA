@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import { BellRing, Clock, Volume2, VolumeX } from 'lucide-react';
+import { apiClient } from '@/lib/api-client';
 
 interface WaitlistOfferBannerProps {
   entryId: string;
@@ -85,38 +86,26 @@ export const WaitlistOfferBanner: React.FC<WaitlistOfferBannerProps> = ({
   const handleClaim = async () => {
     setIsClaiming(true);
     try {
-      const res = await fetch(`/api/v1/waitlist/${entryId}/claim`, {
+      await apiClient<any>(`/api/v1/waitlist/${entryId}/claim`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Idempotency-Key': `claim-${entryId}-${Date.now()}`,
         },
-        credentials: 'include',
       });
 
-      const data = await res.json();
-
-      if (res.ok) {
-        toast({
-          type: 'success',
-          title: 'Offer Claimed!',
-          message: `Your seat for ${eventName} has been secured. Your digital ticket is ready.`,
-        });
-        if (onOfferClaimed) {
-          onOfferClaimed();
-        }
-      } else {
-        toast({
-          type: 'error',
-          title: 'Offer Unavailable',
-          message: data.error?.message || 'This offer has expired or already been claimed.',
-        });
+      toast({
+        type: 'success',
+        title: 'Offer Claimed!',
+        message: `Your seat for ${eventName} has been secured. Your digital ticket is ready.`,
+      });
+      if (onOfferClaimed) {
+        onOfferClaimed();
       }
-    } catch {
+    } catch (err: any) {
       toast({
         type: 'error',
-        title: 'Error',
-        message: 'Network issue while claiming offer.',
+        title: 'Offer Unavailable',
+        message: err.message || 'This offer has expired or already been claimed.',
       });
     } finally {
       setIsClaiming(false);

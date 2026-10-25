@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { formatPaise } from '@/lib/utils';
+import { apiClient } from '@/lib/api-client';
 import {
   CreditCard,
   ShieldCheck,
@@ -68,67 +69,38 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     async function loadCheckoutOrder() {
       setLoading(true);
       try {
-        // Initiate or resume checkout order via server API
-        const token = localStorage.getItem('eventora_auth_token');
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const res = await fetch(`/api/v1/bookings/${bookingId}/checkout`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({}),
-        });
-
-        if (!res.ok) {
-          // If already confirmed or expired, handle gracefully
-          const errData = await res.json().catch(() => ({}));
-          if (errData.error?.code === 'BOOKING_EXPIRED') {
-            if (mounted) setCheckoutState('EXPIRED');
-            return;
-          }
-          throw new Error(errData.error?.message || 'Failed to initiate checkout');
-        }
-
-        const data = await res.json();
-        if (mounted) {
-          setOrderId(data.orderId);
-          setPaymentId(data.paymentId);
+        const data = await apiClient.post<any>(`/api/v1/bookings/${bookingId}/checkout`, {});
+        if (mounted && data?.order) {
+          setOrderId(data.order.orderId);
+          setPaymentId(data.order.paymentId);
           setBooking({
             id: bookingId,
-            eventId: data.booking?.eventId || 'evt-demo',
-            eventTitle: data.booking?.eventTitle || 'Advanced Robotics & AI Symposium',
-            ticketName: data.booking?.ticketName || 'VIP Student Pass',
-            quantity: data.booking?.quantity || 1,
-            unitPricePaise: data.amountPaise,
-            totalPaise: data.amountPaise,
-            expiresAt: data.booking?.expiresAt || new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            eventId: data.order.eventId || 'evt-confirmed',
+            eventTitle: data.order.eventTitle || 'Campus Event Admission',
+            ticketName: data.order.ticketName || 'Student Admission Tier',
+            quantity: 1,
+            unitPricePaise: data.order.amountPaise,
+            totalPaise: data.order.amountPaise,
+            expiresAt: data.order.expiresAt || new Date(Date.now() + 15 * 60 * 1000).toISOString(),
             status: 'PENDING_PAYMENT',
           });
 
-          // Compute remaining seconds from expiresAt
-          const expiryTime = new Date(data.booking?.expiresAt || Date.now() + 15 * 60 * 1000).getTime();
+          const expiryTime = new Date(data.order.expiresAt || Date.now() + 15 * 60 * 1000).getTime();
           const rem = Math.max(0, Math.floor((expiryTime - Date.now()) / 1000));
           setSecondsRemaining(rem > 0 ? rem : 900);
           setLoading(false);
         }
       } catch (err: any) {
-        // Fallback to local simulator preview if backend is standalone prototype
+        if (err?.code === 'HOLD_EXPIRED' || err?.error?.code === 'HOLD_EXPIRED') {
+          if (mounted) {
+            setCheckoutState('EXPIRED');
+            setLoading(false);
+          }
+          return;
+        }
         if (mounted) {
-          setBooking({
-            id: bookingId,
-            eventId: 'evt-test-mode',
-            eventTitle: 'Advanced Robotics & AI Symposium 2026',
-            ticketName: 'Standard Student Admission Tier',
-            quantity: 1,
-            unitPricePaise: 15000,
-            totalPaise: 15000,
-            expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-            status: 'PENDING_PAYMENT',
-          });
-          setOrderId(`sim_order_${Date.now()}`);
-          setPaymentId(`sim_pay_${Date.now()}`);
+          setCheckoutState('FAILED');
+          setFailureReason(err?.message || err?.error?.message || 'Failed to load booking checkout');
           setLoading(false);
         }
       }
@@ -203,30 +175,19 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       return;
     }
 
-    // Server verification call: client tells server payment was simulated
+    // Server verification call: verifies payment via authoritative backend transaction
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch('/api/v1/payments/verify', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          orderId: orderId || `order_${bookingId}`,
-          paymentId: shouldSucceed ? (paymentId || `pay_${Date.now()}`) : 'pay_fail_declined',
-        }),
+      const data = await apiClient.post<any>('/api/v1/payments/verify', {
+        orderId: orderId || `order_${bookingId}`,
+        paymentId: shouldSucceed ? (paymentId || `pay_${Date.now()}`) : 'pay_fail_declined',
       });
 
-      const data = await res.json();
-
-      if (res.ok && data.confirmed && data.status === 'SUCCEEDED') {
+      if (data?.confirmed && data?.status === 'SUCCEEDED') {
         setCheckoutState('SUCCESS');
         const rec = {
-          receiptNumber: data.receiptNumber || `REC-${Date.now()}-SIM`,
+          receiptNumber: data.receiptNumber || `REC-${Date.now()}-PROD`,
           bookingId,
-          amountPaise: booking?.totalPaise || 15000,
+          amountPaise: booking?.totalPaise || 0,
           issuedAt: new Date().toISOString(),
         };
         setReceipt(rec);
@@ -238,33 +199,21 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         if (onSuccess) onSuccess(rec);
       } else {
         setCheckoutState('FAILED');
-        setFailureReason(data.failureCode || data.error?.message || 'Payment was declined by simulator');
+        setFailureReason(data?.failureCode || 'Payment was declined by payment provider');
         toast({
           type: 'error',
           title: 'Payment Failed',
-          message: data.failureCode || 'Transaction could not be completed in test simulator.',
+          message: data?.failureCode || 'Transaction could not be completed.',
         });
       }
     } catch (err: any) {
-      if (shouldSucceed) {
-        // Local simulation fallback
-        setCheckoutState('SUCCESS');
-        const rec = {
-          receiptNumber: `REC-${Date.now()}-SIMULATED`,
-          bookingId,
-          amountPaise: booking?.totalPaise || 15000,
-          issuedAt: new Date().toISOString(),
-        };
-        setReceipt(rec);
-        toast({
-          type: 'success',
-          title: 'Payment Confirmed & Verified',
-          message: `Simulated receipt generated for ₹${formatPaise(booking?.totalPaise || 15000)}.`,
-        });
-      } else {
-        setCheckoutState('FAILED');
-        setFailureReason('Declined by user simulator test action');
-      }
+      setCheckoutState('FAILED');
+      setFailureReason(err?.message || err?.error?.message || 'Payment verification failed');
+      toast({
+        type: 'error',
+        title: 'Payment Verification Error',
+        message: err?.message || err?.error?.message || 'Payment verification failed.',
+      });
     }
   };
 
@@ -272,42 +221,22 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const handleRequestRefund = async () => {
     setIsRefunding(true);
     try {
-      const token = localStorage.getItem('eventora_auth_token');
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`/api/v1/bookings/${bookingId}/refund`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          reason: 'Student schedule conflict (Attendee cancellation)',
-          idempotencyKey: `ref_${bookingId}_${Date.now()}`,
-        }),
+      const data = await apiClient.post<any>(`/api/v1/bookings/${bookingId}/refunds`, {
+        reason: 'Student schedule conflict (Attendee cancellation)',
+        idempotencyKey: `ref_${bookingId}_${Date.now()}`,
       });
 
-      const data = await res.json();
-      if (res.ok) {
-        setRefundStatus(data.status || 'REQUESTED');
-        toast({
-          type: 'info',
-          title: 'Refund Requested',
-          message: 'Organizer review pending. Seat will be released upon approval.',
-        });
-      } else {
-        toast({
-          type: 'error',
-          title: 'Refund Error',
-          message: data.error?.message || 'Failed to submit refund request',
-        });
-      }
-    } catch (err: any) {
-      setRefundStatus('REQUESTED');
+      setRefundStatus(data?.refund?.status || 'REQUESTED');
       toast({
         type: 'info',
-        title: 'Refund Requested (Simulated)',
-        message: 'Refund recorded in test ledger.',
+        title: 'Refund Requested',
+        message: 'Organizer review pending. Seat will be released upon approval.',
+      });
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Refund Error',
+        message: err?.message || err?.error?.message || 'Failed to submit refund request',
       });
     } finally {
       setIsRefunding(false);

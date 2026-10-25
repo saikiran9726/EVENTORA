@@ -21,6 +21,7 @@ import { PROTOTYPE_EVENTS } from '@/prototype/data';
 import { formatINR } from '@/lib/utils';
 import { TicketSelector } from '@/components/booking/TicketSelector';
 import { VenueCard } from '@/components/venue/VenueCard';
+import { apiClient } from '@/lib/api-client';
 
 interface EventDetailsPageProps {
   eventId: string;
@@ -63,12 +64,9 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
   useEffect(() => {
     async function loadRatings() {
       try {
-        const res = await fetch(`/api/v1/events/${eventId}/ratings`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ratings) {
-            setRatingsData(data.ratings);
-          }
+        const data = await apiClient<any>(`/api/v1/events/${eventId}/ratings`);
+        if (data?.ratings) {
+          setRatingsData(data.ratings);
         }
       } catch {
         // Fallback to prototype rating state

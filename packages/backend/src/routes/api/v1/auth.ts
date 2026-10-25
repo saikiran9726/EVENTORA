@@ -27,6 +27,7 @@ const registerSchema = z.object({
   password: z
     .string()
     .min(8, 'Password must be at least 8 characters')
+    .max(128, 'Password cannot exceed 128 characters')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
     .regex(/[0-9]/, 'Password must contain at least one number'),
   displayName: z.string().min(2).max(100),
@@ -35,7 +36,7 @@ const registerSchema = z.object({
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(1),
+  password: z.string().min(1).max(128),
 });
 
 const forgotSchema = z.object({
@@ -47,12 +48,17 @@ const resetSchema = z.object({
   newPassword: z
     .string()
     .min(8, 'Password must be at least 8 characters')
+    .max(128, 'Password cannot exceed 128 characters')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
     .regex(/[0-9]/, 'Password must contain at least one number'),
 });
 
 const verifyEmailSchema = z.object({
   token: z.string().min(1),
+});
+
+const resendVerificationSchema = z.object({
+  email: z.string().email(),
 });
 
 export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -98,23 +104,16 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       const { email, password, displayName } = parseResult.data;
       const emailDomain = email.split('@')[1]?.toLowerCase();
 
-      // Find college by domain or ID
-      let college = await db.query.colleges.findFirst({
+      // Find college by domain
+      const college = await db.query.colleges.findFirst({
         where: eq(colleges.domain, emailDomain),
       });
 
-      if (!college) {
-        // Fallback to active college if test domain
-        college = await db.query.colleges.findFirst({
-          where: eq(colleges.status, 'active'),
-        });
-      }
-
-      if (!college) {
+      if (!college || college.status !== 'active') {
         return reply.code(400).send({
           error: {
             code: 'INVALID_COLLEGE_DOMAIN',
-            message: 'No registered college matches your email domain.',
+            message: 'No registered active campus matches your email domain. Please use your official institutional email.',
             details: { emailDomain },
             requestId: req.id,
           },
@@ -162,9 +161,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         locale: 'en-IN',
       });
 
-      // Generate verification token (stored in passwordResets or outbox for Phase 2)
+      // Generate verification token (stored in passwordResets with purpose prefix for separation)
       const verificationToken = generateOpaqueToken();
-      const tokenHash = hashStringToHex(verificationToken);
+      const tokenHash = hashStringToHex(`verify:${verificationToken}`);
 
       await db.insert(passwordResets).values({
         tokenHash,
@@ -190,7 +189,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           globalRole: newUser.globalRole,
           status: newUser.status,
         },
-        verificationToken, // Exposed in test/dev for automated verification
+        ...(process.env.NODE_ENV === 'test' ? { verificationToken } : {}),
         message: 'Registration successful. Please verify your email.',
       });
     }
@@ -327,7 +326,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           collegeId: user.collegeId,
         },
         csrfToken,
-        token, // For API client convenience in test/mobile
+        ...(process.env.NODE_ENV === 'test' ? { token } : {}),
       });
     }
   );
@@ -391,18 +390,23 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       }
 
       const { token } = parseResult.data;
-      const tokenHash = hashStringToHex(token);
+      const tokenHash = hashStringToHex(`verify:${token}`);
       const now = new Date();
 
-      const record = await db.query.passwordResets.findFirst({
-        where: and(
-          eq(passwordResets.tokenHash, tokenHash),
-          isNull(passwordResets.usedAt),
-          gt(passwordResets.expiresAt, now)
-        ),
-      });
+      // Atomic single-step consumption to prevent race conditions
+      const [consumedRecord] = await db
+        .update(passwordResets)
+        .set({ usedAt: now })
+        .where(
+          and(
+            eq(passwordResets.tokenHash, tokenHash),
+            isNull(passwordResets.usedAt),
+            gt(passwordResets.expiresAt, now)
+          )
+        )
+        .returning();
 
-      if (!record) {
+      if (!consumedRecord) {
         return reply.code(400).send({
           error: {
             code: 'INVALID_OR_EXPIRED_TOKEN',
@@ -413,22 +417,16 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         });
       }
 
-      // Mark token used and user active
-      await db
-        .update(passwordResets)
-        .set({ usedAt: now })
-        .where(eq(passwordResets.tokenHash, tokenHash));
-
       await db
         .update(users)
         .set({ status: 'active', emailVerifiedAt: now })
-        .where(eq(users.id, record.userId));
+        .where(eq(users.id, consumedRecord.userId));
 
       await logAuditEvent({
-        actorId: record.userId,
+        actorId: consumedRecord.userId,
         action: 'user.email_verified',
         resourceType: 'user',
-        resourceId: record.userId,
+        resourceId: consumedRecord.userId,
         ip: req.ip,
       });
 
@@ -485,7 +483,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
 
       if (user && user.status === 'active') {
         resetToken = generateOpaqueToken();
-        const tokenHash = hashStringToHex(resetToken);
+        const tokenHash = hashStringToHex(`reset:${resetToken}`);
 
         await db.insert(passwordResets).values({
           tokenHash,
@@ -508,7 +506,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       return reply.code(200).send({
         success: true,
         message: 'If that email address is associated with an account, a reset link has been dispatched.',
-        resetToken, // Present in development/test environments
+        ...(process.env.NODE_ENV === 'test' ? { resetToken } : {}),
       });
     }
   );
@@ -537,18 +535,23 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       }
 
       const { token, newPassword } = parseResult.data;
-      const tokenHash = hashStringToHex(token);
+      const tokenHash = hashStringToHex(`reset:${token}`);
       const now = new Date();
 
-      const record = await db.query.passwordResets.findFirst({
-        where: and(
-          eq(passwordResets.tokenHash, tokenHash),
-          isNull(passwordResets.usedAt),
-          gt(passwordResets.expiresAt, now)
-        ),
-      });
+      // Atomic single-step consumption to prevent race conditions
+      const [consumedRecord] = await db
+        .update(passwordResets)
+        .set({ usedAt: now })
+        .where(
+          and(
+            eq(passwordResets.tokenHash, tokenHash),
+            isNull(passwordResets.usedAt),
+            gt(passwordResets.expiresAt, now)
+          )
+        )
+        .returning();
 
-      if (!record) {
+      if (!consumedRecord) {
         return reply.code(400).send({
           error: {
             code: 'INVALID_OR_EXPIRED_TOKEN',
@@ -566,28 +569,95 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       await db
         .update(users)
         .set({ passwordHash: newHash })
-        .where(eq(users.id, record.userId));
-
-      // Mark reset token used
-      await db
-        .update(passwordResets)
-        .set({ usedAt: now })
-        .where(eq(passwordResets.tokenHash, tokenHash));
+        .where(eq(users.id, consumedRecord.userId));
 
       // Revoke all existing sessions for the user
-      await revokeAllUserSessions(record.userId);
+      await revokeAllUserSessions(consumedRecord.userId);
 
       await logAuditEvent({
-        actorId: record.userId,
+        actorId: consumedRecord.userId,
         action: 'user.password_reset_completed',
         resourceType: 'user',
-        resourceId: record.userId,
+        resourceId: consumedRecord.userId,
         ip: req.ip,
       });
 
       return reply.code(200).send({
         success: true,
         message: 'Password has been successfully reset. Please log in with your new credentials.',
+      });
+    }
+  );
+
+  // 7. POST /api/v1/auth/resend-verification
+  fastify.post(
+    '/resend-verification',
+    {
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const parseResult = resendVerificationSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid email address',
+            details: parseResult.error.flatten(),
+            requestId: req.id,
+          },
+        });
+      }
+
+      const { email } = parseResult.data;
+      const rateLimitKey = `resend:${email.toLowerCase()}`;
+      const rateLimit = await checkRateLimit(rateLimitKey, 3, 3600);
+      if (!rateLimit.allowed) {
+        return reply.code(429).send({
+          error: {
+            code: 'RATE_LIMIT_EXCEEDED',
+            message: 'Too many verification requests. Please check your inbox or wait 1 hour.',
+            details: { resetSeconds: rateLimit.resetSeconds },
+            requestId: req.id,
+          },
+        });
+      }
+
+      const user = await db.query.users.findFirst({
+        where: eq(users.email, email.toLowerCase()),
+      });
+
+      let verificationToken: string | undefined = undefined;
+
+      if (user && user.status === 'pending') {
+        verificationToken = generateOpaqueToken();
+        const tokenHash = hashStringToHex(`verify:${verificationToken}`);
+
+        await db.insert(passwordResets).values({
+          tokenHash,
+          userId: user.id,
+          expiresAt: new Date(Date.now() + 24 * 3600 * 1000), // 24 hours
+          usedAt: null,
+        });
+
+        await logAuditEvent({
+          actorId: user.id,
+          action: 'user.verification_resent',
+          resourceType: 'user',
+          resourceId: user.id,
+          collegeId: user.collegeId,
+          ip: req.ip,
+        });
+      }
+
+      // Always return identical success to prevent enumeration
+      return reply.code(200).send({
+        success: true,
+        message: 'If an unverified account exists for that email, a verification link has been dispatched.',
+        ...(process.env.NODE_ENV === 'test' ? { verificationToken } : {}),
       });
     }
   );

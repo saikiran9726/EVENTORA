@@ -228,23 +228,31 @@ export async function scanTicket(params: ScanTicketParams): Promise<ScanOutcomeR
       const tierName = metaRes.rows[0]?.tier_name || 'Standard Admission';
       const attendeeInitials = getInitials(attendeeName);
 
-      // Record Attendance Achievement (FR-PASS)
+      // Record Attendance Achievement (FR-PASS) isolated with SAVEPOINT
       try {
+        await client.query('SAVEPOINT ach_sp;');
         await client.query(
           `INSERT INTO student_achievements (user_id, type, source_event_id, source_ref_id, verification_status, visibility)
            VALUES ($1, 'ATTENDANCE', $2, $3, 'VERIFIED', 'public')
            ON CONFLICT (type, source_ref_id) DO NOTHING;`,
           [ticket.user_id, eventId, ticket.id]
         );
+        await client.query('RELEASE SAVEPOINT ach_sp;');
       } catch {
-        // Non-blocking
+        try {
+          await client.query('ROLLBACK TO SAVEPOINT ach_sp;');
+        } catch {}
       }
 
-      // Check certificate policy auto-issuance hook
+      // Check certificate policy auto-issuance hook isolated with SAVEPOINT
       try {
+        await client.query('SAVEPOINT cert_sp;');
         await issueCertificateIfEligibleInternal(ticket.user_id, eventId, client);
+        await client.query('RELEASE SAVEPOINT cert_sp;');
       } catch {
-        // Non-blocking for scan transaction
+        try {
+          await client.query('ROLLBACK TO SAVEPOINT cert_sp;');
+        } catch {}
       }
 
       await client.query('COMMIT');

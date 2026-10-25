@@ -12,6 +12,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
+import { apiClient } from '@/lib/api-client';
 
 export interface OpenShiftItem {
   id: string;
@@ -100,20 +101,11 @@ export const VolunteerHubPage: React.FC = () => {
   useEffect(() => {
     async function loadVolunteeringData() {
       try {
-        const token = localStorage.getItem('eventora_auth_token');
-        if (!token) return;
-
-        const res = await fetch('/api/v1/me/volunteering', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.volunteering) {
-            setTotalHours(data.volunteering.totalHours ?? 12.5);
-            if (Array.isArray(data.volunteering.applications) && data.volunteering.applications.length > 0) {
-              setMyShifts(data.volunteering.applications);
-            }
+        const data = await apiClient<any>('/api/v1/me/volunteering');
+        if (data?.volunteering) {
+          setTotalHours(data.volunteering.totalHours ?? 12.5);
+          if (Array.isArray(data.volunteering.applications) && data.volunteering.applications.length > 0) {
+            setMyShifts(data.volunteering.applications);
           }
         }
       } catch {
@@ -126,19 +118,10 @@ export const VolunteerHubPage: React.FC = () => {
   const handleApply = async (shift: OpenShiftItem) => {
     setIsApplying(shift.id);
     try {
-      const token = localStorage.getItem('eventora_auth_token');
-      if (token && !shift.id.startsWith('shift-demo')) {
-        const res = await fetch(`/api/v1/shifts/${shift.id}/applications`, {
+      if (!shift.id.startsWith('shift-demo')) {
+        await apiClient(`/api/v1/shifts/${shift.id}/applications`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
         });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err?.error?.message || 'Application failed');
-        }
       }
 
       toast({
@@ -176,19 +159,10 @@ export const VolunteerHubPage: React.FC = () => {
 
   const handleCheckIn = async (app: MyVolunteerShift) => {
     try {
-      const token = localStorage.getItem('eventora_auth_token');
-      if (token && !app.applicationId.startsWith('app-demo')) {
-        const res = await fetch(`/api/v1/applications/${app.applicationId}/check-in`, {
+      if (!app.applicationId.startsWith('app-demo')) {
+        await apiClient(`/api/v1/applications/${app.applicationId}/check-in`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
         });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err?.error?.message || 'Check-in failed');
-        }
       }
 
       toast({

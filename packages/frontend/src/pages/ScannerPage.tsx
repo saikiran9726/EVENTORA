@@ -30,6 +30,7 @@ import {
   getManifestFreshness,
 } from '@/lib/offline-sync';
 import { useToast } from '@/components/ui/Toast';
+import { apiClient, ApiError } from '@/lib/api-client';
 
 export interface ScanOutcome {
   outcome: 'ACCEPTED' | 'DUPLICATE' | 'INVALID' | 'WRONG_EVENT' | 'REVOKED' | 'OUTSIDE_WINDOW' | 'LOCALLY_VERIFIED';
@@ -163,11 +164,8 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-ev
 
   const fetchAttendanceData = async () => {
     try {
-      const res = await fetch(`/api/v1/events/${eventId}/attendance`, {
-        credentials: 'include',
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiClient<any>(`/api/v1/events/${eventId}/attendance`);
+      if (data) {
         setAttendance({
           summary: data.summary,
           sessions: data.sessions || [],
@@ -234,15 +232,10 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-ev
   const handleResolveConflict = async () => {
     if (!selectedConflict || !resolutionNote.trim()) return;
     setIsResolving(true);
-    const token = localStorage.getItem('eventora_auth_token');
 
     try {
-      await fetch(`/api/v1/conflicts/${selectedConflict.opId}/resolve`, {
+      await apiClient(`/api/v1/conflicts/${selectedConflict.opId}/resolve`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           resolutionNote: resolutionNote.trim(),
           chosenOpId: selectedConflict.opId,
@@ -350,10 +343,8 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-ev
 
     // Online path
     try {
-      const res = await fetch(`/api/v1/events/${eventId}/check-in/scan`, {
+      const data = await apiClient<ScanOutcome>(`/api/v1/events/${eventId}/check-in/scan`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           token: tokenToScan.trim(),
           sessionId: selectedSessionId || undefined,
@@ -361,35 +352,33 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-ev
         }),
       });
 
-      const data = await res.json();
-
-      if (res.ok) {
-        const outcome = data as ScanOutcome;
-        outcome.statusLabel = 'Synced';
-        setLastOutcome(outcome);
-        triggerHaptic(outcome.outcome);
-        fetchAttendanceData();
-      } else {
+      const outcome = data;
+      outcome.statusLabel = 'Synced';
+      setLastOutcome(outcome);
+      triggerHaptic(outcome.outcome);
+      fetchAttendanceData();
+    } catch (err: any) {
+      if (err instanceof ApiError) {
         const outcome: ScanOutcome = {
-          outcome: (data.error?.code?.replace('SCAN_', '') as any) || 'INVALID',
-          message: data.error?.message || 'Check-in scan rejected.',
+          outcome: (err.code?.replace('SCAN_', '') as any) || 'INVALID',
+          message: err.message || 'Check-in scan rejected.',
           statusLabel: 'Rejected',
         };
         setLastOutcome(outcome);
         triggerHaptic(outcome.outcome);
+      } else {
+        // Network dropped -> gracefully switch to local scan
+        const op = recordLocalScan(eventId, tokenToScan.trim());
+        refreshLocalOfflineData();
+        const outcome: ScanOutcome = {
+          outcome: 'LOCALLY_VERIFIED',
+          message: `Network offline. Locally Verified: ${op.displayHint} queued for sync.`,
+          statusLabel: 'Locally Verified',
+          displayHint: op.displayHint,
+        };
+        setLastOutcome(outcome);
+        triggerHaptic('LOCALLY_VERIFIED');
       }
-    } catch {
-      // Network dropped -> gracefully switch to local scan
-      const op = recordLocalScan(eventId, tokenToScan.trim());
-      refreshLocalOfflineData();
-      const outcome: ScanOutcome = {
-        outcome: 'LOCALLY_VERIFIED',
-        message: `Network offline. Locally Verified: ${op.displayHint} queued for sync.`,
-        statusLabel: 'Locally Verified',
-        displayHint: op.displayHint,
-      };
-      setLastOutcome(outcome);
-      triggerHaptic('LOCALLY_VERIFIED');
     } finally {
       setIsScanning(false);
       setManualToken('');

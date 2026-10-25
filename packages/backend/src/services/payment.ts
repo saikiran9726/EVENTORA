@@ -161,7 +161,7 @@ export async function initiateCheckout(params: InitiateCheckoutParams) {
  * Browser result is a hint only; never trust client parameters.
  */
 export async function verifyPayment(params: VerifyPaymentParams) {
-  const { orderId, paymentId, signature } = params;
+  const { orderId, paymentId, signature, userId } = params;
   const adapter = getPaymentAdapter();
 
   // Re-query the adapter
@@ -177,6 +177,7 @@ export async function verifyPayment(params: VerifyPaymentParams) {
     adapterSuccess: adapterResult.success,
     amountPaise: adapterResult.amountPaise,
     failureCode: adapterResult.failureCode,
+    expectedUserId: userId,
   });
 }
 
@@ -191,8 +192,9 @@ export async function executePaymentConfirmationTransaction(params: {
   adapterSuccess: boolean;
   amountPaise: number;
   failureCode?: string;
+  expectedUserId?: string;
 }) {
-  const { orderId, paymentId, adapterSuccess, amountPaise, failureCode } = params;
+  const { orderId, paymentId, adapterSuccess, amountPaise, failureCode, expectedUserId } = params;
   const client = await pool.connect();
 
   try {
@@ -213,6 +215,11 @@ export async function executePaymentConfirmationTransaction(params: {
     }
 
     const payment = pRes.rows[0];
+
+    // Ownership check: payment order must belong to the user
+    if (expectedUserId && payment.user_id !== expectedUserId) {
+      throw new PaymentError('FORBIDDEN', 'You do not have permission to verify this payment order', 403);
+    }
 
     // Idempotency: if already SUCCEEDED, return immediately
     if (payment.status === 'SUCCEEDED') {
@@ -443,8 +450,14 @@ export async function processWebhook(params: WebhookProcessParams) {
   }
 
   if (!isInserted) {
-    // Replay rejected via provider_event_id unique constraint -> safe no-op 200
-    return { duplicate: true, providerEventId, status: 'ALREADY_PROCESSED' };
+    // Check if previous attempt failed; if so, permit retry
+    const prevRes = await pool.query(
+      `SELECT processing_status FROM webhook_events WHERE provider_event_id = $1;`,
+      [providerEventId]
+    );
+    if (prevRes.rows.length > 0 && prevRes.rows[0].processing_status !== 'FAILED') {
+      return { duplicate: true, providerEventId, status: 'ALREADY_PROCESSED' };
+    }
   }
 
   if (!orderId) {
@@ -455,24 +468,32 @@ export async function processWebhook(params: WebhookProcessParams) {
     return { ignored: true, reason: 'NO_ORDER_ID' };
   }
 
-  // 4. Confirm payment atomically
-  const confirmation = await executePaymentConfirmationTransaction({
-    orderId,
-    paymentId,
-    adapterSuccess: true,
-    amountPaise,
-  });
+  try {
+    // 4. Confirm payment atomically
+    const confirmation = await executePaymentConfirmationTransaction({
+      orderId,
+      paymentId,
+      adapterSuccess: true,
+      amountPaise,
+    });
 
-  await pool.query(
-    `UPDATE webhook_events SET processing_status = 'PROCESSED', processed_at = NOW() WHERE provider_event_id = $1;`,
-    [providerEventId]
-  );
+    await pool.query(
+      `UPDATE webhook_events SET processing_status = 'PROCESSED', processed_at = NOW() WHERE provider_event_id = $1;`,
+      [providerEventId]
+    );
 
-  return {
-    success: true,
-    providerEventId,
-    confirmation,
-  };
+    return {
+      success: true,
+      providerEventId,
+      confirmation,
+    };
+  } catch (err: any) {
+    await pool.query(
+      `UPDATE webhook_events SET processing_status = 'FAILED', processed_at = NOW() WHERE provider_event_id = $1;`,
+      [providerEventId]
+    );
+    throw err;
+  }
 }
 
 /**
@@ -567,8 +588,38 @@ export async function decideRefund(params: DecideRefundParams) {
 
     const ref = refRes.rows[0];
 
+    // Authorization: User must be an administrator or active owner/manager of the organizer profile
+    const userRoleRes = await client.query(
+      `SELECT global_role FROM users WHERE id = $1;`,
+      [userId]
+    );
+    const isAdmin = userRoleRes.rows[0]?.global_role === 'admin';
+
+    let isOrganizerManager = false;
+    if (!isAdmin) {
+      const memberRes = await client.query(
+        `SELECT role FROM organizer_members
+         WHERE organizer_id = $1 AND user_id = $2 AND status = 'active';`,
+        [ref.organizer_id, userId]
+      );
+      isOrganizerManager = memberRes.rows.length > 0 && ['owner', 'manager'].includes(memberRes.rows[0].role);
+    }
+
+    if (!isAdmin && !isOrganizerManager) {
+      throw new PaymentError('FORBIDDEN', 'Only an organizer manager/owner or platform administrator can decide refunds', 403);
+    }
+
     if (ref.status !== 'REQUESTED') {
       throw new PaymentError('INVALID_STATE', `Refund is already in ${ref.status} state`, 409);
+    }
+
+    // Check if any tickets for this booking were already checked in
+    const checkedInCheck = await client.query(
+      `SELECT id FROM tickets WHERE booking_id = $1 AND status = 'CHECKED_IN';`,
+      [ref.booking_id]
+    );
+    if (checkedInCheck.rows.length > 0) {
+      throw new PaymentError('TICKET_CHECKED_IN', 'Cannot refund booking with tickets that have already been checked in', 400);
     }
 
     if (decision === 'REJECTED') {
@@ -608,7 +659,13 @@ export async function decideRefund(params: DecideRefundParams) {
       [ref.payment_id]
     );
 
-    // 3. Invalidate tickets
+    // 3. Update booking status
+    await client.query(
+      `UPDATE bookings SET status = 'CANCELLED' WHERE id = $1;`,
+      [ref.booking_id]
+    );
+
+    // 4. Invalidate tickets
     await client.query(
       `UPDATE tickets SET status = 'REVOKED' WHERE booking_id = $1;`,
       [ref.booking_id]

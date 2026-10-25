@@ -48,12 +48,15 @@ async function ensureDatabaseSchema() {
     needsSeed = true;
   }
 
-  // Ensure default college & seed entities exist so that registration and demo accounts work
-  if (needsSeed || process.env.AUTO_SEED === 'true') {
+  // Production startup must never automatically seed privileged accounts with default passwords
+  const isProduction = process.env.NODE_ENV === 'production';
+  const shouldSeed = isProduction ? process.env.AUTO_SEED === 'true' : (needsSeed || process.env.AUTO_SEED === 'true');
+
+  if (shouldSeed) {
     try {
-      console.log('[Eventora Backend] Verifying baseline seed data...');
+      console.log('[Eventora Backend] Running controlled database seed...');
       await seedDatabase();
-      console.log('[Eventora Backend] Baseline seed data verified.');
+      console.log('[Eventora Backend] Controlled database seed completed.');
     } catch (seedErr: any) {
       console.warn('[Eventora Backend] Seed warning (non-fatal):', seedErr?.message || seedErr);
     }

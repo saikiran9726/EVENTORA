@@ -27,6 +27,7 @@ import { PROTOTYPE_ORGANIZER_STATS, PROTOTYPE_ATTENDEES } from '@/prototype/data
 import { formatPaise } from '@/lib/utils';
 import { ExportDialog } from '@/components/analytics/ExportDialog';
 import { AlertComposer } from '@/components/organizer/AlertComposer';
+import { apiClient } from '@/lib/api-client';
 
 interface OrganizerDashboardPageProps {
   organizerId?: string;
@@ -304,17 +305,12 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
   useEffect(() => {
     async function loadLedger() {
       try {
-        const token = localStorage.getItem('eventora_auth_token');
-        if (!token) return;
-        const headers = { Authorization: `Bearer ${token}` };
-
-        const [salesRes, ledgerRes] = await Promise.all([
-          fetch(`/api/v1/organizers/${organizerId}/sales`, { headers }),
-          fetch(`/api/v1/organizers/${organizerId}/ledger`, { headers }),
+        const [sData, lData] = await Promise.all([
+          apiClient<any>(`/api/v1/organizers/${organizerId}/sales`),
+          apiClient<any>(`/api/v1/organizers/${organizerId}/ledger`),
         ]);
 
-        if (salesRes.ok) {
-          const sData = await salesRes.json();
+        if (sData) {
           setSalesSummary({
             grossPaise: sData.grossPaise ?? 0,
             refundsPaise: sData.refundsPaise ?? 0,
@@ -324,11 +320,8 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
           });
         }
 
-        if (ledgerRes.ok) {
-          const lData = await ledgerRes.json();
-          if (Array.isArray(lData.ledger)) {
-            setLedgerEntries(lData.ledger);
-          }
+        if (lData && Array.isArray(lData.ledger)) {
+          setLedgerEntries(lData.ledger);
         }
       } catch {
         // Retain prototype data if offline or non-live
@@ -343,27 +336,17 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
 
     async function loadInsights() {
       try {
-        const token = localStorage.getItem('eventora_auth_token');
-        if (!token) return;
-        const headers = { Authorization: `Bearer ${token}` };
-
-        const [analyticsRes, feedbackRes] = await Promise.all([
-          fetch(`/api/v1/organizer/events/${selectedEventId}/analytics`, { headers }),
-          fetch(`/api/v1/organizer/events/${selectedEventId}/feedback`, { headers }),
+        const [aData, fData] = await Promise.all([
+          apiClient<any>(`/api/v1/organizer/events/${selectedEventId}/analytics`),
+          apiClient<any>(`/api/v1/organizer/events/${selectedEventId}/feedback`),
         ]);
 
-        if (analyticsRes.ok) {
-          const aData = await analyticsRes.json();
-          if (aData.analytics) {
-            setAnalytics(aData.analytics);
-          }
+        if (aData?.analytics) {
+          setAnalytics(aData.analytics);
         }
 
-        if (feedbackRes.ok) {
-          const fData = await feedbackRes.json();
-          if (Array.isArray(fData.feedback)) {
-            setFeedbackList(fData.feedback);
-          }
+        if (fData && Array.isArray(fData.feedback)) {
+          setFeedbackList(fData.feedback);
         }
       } catch {
         // Retain fallback prototype analytics
@@ -375,7 +358,7 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
 
   const handleModerateFeedback = async (feedbackId: string, status: 'visible' | 'flagged' | 'hidden') => {
     try {
-      const token = localStorage.getItem('eventora_auth_token');
+      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('eventora_auth_token') : null;
 
       if (!token || feedbackId.startsWith('fb-')) {
         toast({
@@ -389,39 +372,24 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
         return;
       }
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      };
-
-      const res = await fetch(`/api/v1/feedback/${feedbackId}/moderate`, {
+      await apiClient(`/api/v1/feedback/${feedbackId}/moderate`, {
         method: 'POST',
-        headers,
-        credentials: 'include',
         body: JSON.stringify({ status }),
       });
 
-      if (res.ok) {
-        toast({
-          type: 'success',
-          title: 'Review Moderated',
-          message: `Feedback status set to ${status}.`,
-        });
-        setFeedbackList((prev) =>
-          prev.map((f) => (f.id === feedbackId ? { ...f, moderationStatus: status } : f))
-        );
-      } else {
-        toast({
-          type: 'error',
-          title: 'Moderation Error',
-          message: 'Could not update feedback moderation status.',
-        });
-      }
+      toast({
+        type: 'success',
+        title: 'Review Moderated',
+        message: `Feedback status set to ${status}.`,
+      });
+      setFeedbackList((prev) =>
+        prev.map((f) => (f.id === feedbackId ? { ...f, moderationStatus: status } : f))
+      );
     } catch {
       toast({
         type: 'error',
-        title: 'Network Error',
-        message: 'Could not connect to server.',
+        title: 'Moderation Error',
+        message: 'Could not update feedback moderation status.',
       });
     }
   };

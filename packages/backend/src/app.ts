@@ -2,6 +2,7 @@ import fastify, { FastifyInstance, FastifyServerOptions } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyCors from '@fastify/cors';
 import crypto from 'crypto';
+import { config } from './config.js';
 import { authPolicyPlugin, validateRouteSecurity } from './plugins/auth-policy.js';
 import { authRoutes } from './routes/api/v1/auth.js';
 import { meRoutes } from './routes/api/v1/me.js';
@@ -28,6 +29,7 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   verifyPaymentStartupGuard();
 
   const app = fastify({
+    trustProxy: true,
     genReqId: () => crypto.randomUUID(),
     logger: process.env.NODE_ENV === 'test' ? false : {
       level: 'info',
@@ -67,11 +69,28 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   // Strict Deny-by-default route validator
   app.addHook('onRoute', validateRouteSecurity);
 
-  // CORS
+  // CORS - Explicit configured origins + local development & Vercel
+  const configuredOrigins = (config.CORS_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
   app.register(fastifyCors, {
     origin: (origin, cb) => {
-      // Allow local development, mobile apps, and test runners
-      cb(null, true);
+      // Allow non-browser agents, local runners, mobile apps, or same-origin requests without Origin header
+      if (!origin) return cb(null, true);
+
+      const isAllowed =
+        configuredOrigins.includes(origin) ||
+        origin === 'https://eventora-jet.vercel.app' ||
+        origin.endsWith('.vercel.app') ||
+        origin.startsWith('http://localhost:') ||
+        origin.startsWith('http://127.0.0.1:');
+
+      if (isAllowed) {
+        return cb(null, true);
+      }
+      return cb(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -84,6 +103,8 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
       'idempotency-key',
       'If-Match',
       'if-match',
+      'X-Request-ID',
+      'x-request-id',
     ],
   });
 

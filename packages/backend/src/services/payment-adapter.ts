@@ -61,7 +61,16 @@ export class SimulatorPaymentAdapter implements PaymentAdapter {
 
   async verifyPayment(params: VerifyPaymentParams) {
     const order = this.orders.get(params.orderId);
-    const amountPaise = order?.amountPaise || 1000;
+    if (!order) {
+      return {
+        success: false,
+        orderId: params.orderId,
+        paymentId: params.paymentId,
+        amountPaise: 0,
+        failureCode: 'ORDER_NOT_FOUND',
+      };
+    }
+    const amountPaise = order.amountPaise;
 
     if (this.forcePaymentStatus === 'FAILED' || params.paymentId.includes('fail')) {
       return {

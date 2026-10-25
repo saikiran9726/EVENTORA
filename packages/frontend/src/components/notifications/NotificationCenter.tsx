@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Switch } from '@/components/ui/Switch';
 import { Card } from '@/components/ui/Card';
+import { apiClient } from '@/lib/api-client';
 
 export interface UserNotification {
   id: string;
@@ -60,15 +61,10 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   // Fetch notifications
   const fetchNotifications = useCallback(async () => {
     setLoading(true);
-    const token = localStorage.getItem('eventora_auth_token');
 
     try {
-      const res = await fetch('/api/v1/users/me/notifications', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiClient<any>('/api/v1/users/me/notifications');
+      if (data) {
         setNotifications(data.notifications || []);
         setUnreadCount(data.unreadCount || 0);
         if (onUnreadCountChange) onUnreadCountChange(data.unreadCount || 0);
@@ -127,34 +123,28 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   // Fetch preferences
   const fetchPreferences = useCallback(async () => {
-    const token = localStorage.getItem('eventora_auth_token');
     try {
-      const res = await fetch('/api/v1/users/me/notifications/preferences', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPreferences(data.preferences || preferences);
+      const data = await apiClient<any>('/api/v1/users/me/notifications/preferences');
+      if (data?.preferences) {
+        setPreferences(data.preferences);
       }
     } catch {
       // Prototype defaults
     }
-  }, [preferences]);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
       fetchNotifications();
       fetchPreferences();
     }
-  }, [isOpen]);
+  }, [isOpen, fetchNotifications, fetchPreferences]);
 
   // Mark single notification read
   const handleMarkRead = async (id: string) => {
-    const token = localStorage.getItem('eventora_auth_token');
     try {
-      await fetch(`/api/v1/users/me/notifications/${id}/read`, {
+      await apiClient(`/api/v1/users/me/notifications/${id}/read`, {
         method: 'PATCH',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
     } catch {
       // Local fallback
@@ -169,11 +159,9 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   // Mark all read
   const handleMarkAllRead = async () => {
-    const token = localStorage.getItem('eventora_auth_token');
     try {
-      await fetch('/api/v1/users/me/notifications/read-all', {
+      await apiClient('/api/v1/users/me/notifications/read-all', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
     } catch {
       // Local fallback
@@ -191,15 +179,10 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     const updated = { ...preferences, [key]: val };
     setPreferences(updated);
     setSavingPrefs(true);
-    const token = localStorage.getItem('eventora_auth_token');
 
     try {
-      await fetch('/api/v1/users/me/notifications/preferences', {
+      await apiClient('/api/v1/users/me/notifications/preferences', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify(updated),
       });
     } catch {

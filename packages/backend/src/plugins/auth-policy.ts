@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply, RouteOptions } from 'fastify';
 import fp from 'fastify-plugin';
 import { validateSession, SESSION_CONFIG, constantTimeCompare } from '../services/auth.js';
+import { config as appConfig } from '../config.js';
 import type { User, Session } from '../db/schema.js';
 
 export type PolicyName =
@@ -130,18 +131,21 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
       // Check Origin / Referer header if present
       const origin = req.headers.origin || req.headers.referer;
       const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-      if (origin && host) {
+      if (origin) {
         try {
           const originUrl = new URL(origin);
           const originHost = originUrl.host;
-          const hostNameOnly = host.split(':')[0];
-          const originNameOnly = originUrl.hostname;
+          const originHostname = originUrl.hostname;
 
           const isLocalDev =
-            (originNameOnly === 'localhost' || originNameOnly === '127.0.0.1') &&
-            (hostNameOnly === 'localhost' || hostNameOnly === '127.0.0.1');
+            originHostname === 'localhost' || originHostname === '127.0.0.1';
 
-          if (!isLocalDev && originHost !== host) {
+          const isVercel =
+            originHost === 'eventora-jet.vercel.app' || originHostname.endsWith('.vercel.app');
+
+          const isConfigured = (appConfig.CORS_ORIGIN || '').includes(originUrl.origin);
+
+          if (!isLocalDev && !isVercel && !isConfigured && host && originHost !== host) {
             return reply.code(403).send({
               error: {
                 code: 'CSRF_ORIGIN_MISMATCH',

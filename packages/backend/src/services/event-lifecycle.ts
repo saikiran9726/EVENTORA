@@ -6,10 +6,16 @@ import {
   venueBookings,
   organizerMembers,
   outbox,
+  bookings,
+  tickets,
+  ticketTypes,
+  payments,
+  refunds,
+  waitlistEntries,
   type Event,
   type EventStatus,
 } from '../db/schema.js';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, inArray } from 'drizzle-orm';
 import { logAuditEvent } from './audit.js';
 
 export interface TransitionGuardContext {
@@ -117,15 +123,72 @@ export async function transitionEventStatus(
       .set({ status: 'released' })
       .where(and(eq(venueBookings.eventId, eventId), eq(venueBookings.status, 'hold')));
   } else if (toStatus === 'cancelled') {
-    // Release confirmed or held venue booking
+    // 1. Release confirmed or held venue booking
     await db
       .update(venueBookings)
       .set({ status: 'released' })
       .where(eq(venueBookings.eventId, eventId));
 
-    // Cascade cancellation hook:
-    // In Phase 3: wire cascade stub and outbox event
-    // In Phases 4-5: bookings -> CANCELLED, tickets -> REVOKED, waitlist closed
+    // 2. Revoke all active tickets for this event
+    await db
+      .update(tickets)
+      .set({ status: 'REVOKED' })
+      .where(and(eq(tickets.eventId, eventId), sql`${tickets.status} != 'REVOKED'`));
+
+    // 3. Reset inventory on ticket tiers
+    await db
+      .update(ticketTypes)
+      .set({ sold: 0, held: 0 })
+      .where(eq(ticketTypes.eventId, eventId));
+
+    // 4. Fetch all active bookings for this event
+    const activeBookings = await db
+      .select({
+        id: bookings.id,
+        status: bookings.status,
+        totalPaise: bookings.totalPaise,
+        userId: bookings.userId,
+      })
+      .from(bookings)
+      .where(and(eq(bookings.eventId, eventId), sql`${bookings.status} != 'CANCELLED'`));
+
+    // 5. Cancel all active bookings
+    await db
+      .update(bookings)
+      .set({ status: 'CANCELLED' })
+      .where(and(eq(bookings.eventId, eventId), sql`${bookings.status} != 'CANCELLED'`));
+
+    // 6. Automatically queue refund requests for paid bookings with succeeded payment
+    for (const b of activeBookings) {
+      if (b.totalPaise > 0) {
+        const [paidPayment] = await db
+          .select({ id: payments.id, amountPaise: payments.amountPaise })
+          .from(payments)
+          .where(and(eq(payments.bookingId, b.id), eq(payments.status, 'SUCCEEDED')));
+
+        if (paidPayment) {
+          await db
+            .insert(refunds)
+            .values({
+              paymentId: paidPayment.id,
+              amountPaise: paidPayment.amountPaise,
+              reason: ctx.note || 'Event cancelled by organizer',
+              status: 'REQUESTED',
+              requestedBy: ctx.actorId,
+              idempotencyKey: `cancel_refund_${b.id}_${paidPayment.id}`,
+            })
+            .onConflictDoNothing();
+        }
+      }
+    }
+
+    // 7. Expire pending waitlist offers
+    await db
+      .update(waitlistEntries)
+      .set({ status: 'EXPIRED' })
+      .where(and(eq(waitlistEntries.eventId, eventId), inArray(waitlistEntries.status, ['WAITING', 'OFFERED'])));
+
+    // 8. Queue outbox notice
     await db.insert(outbox).values({
       eventType: 'event.cancelled',
       payload: {
@@ -133,6 +196,7 @@ export async function transitionEventStatus(
         cancelledAt: new Date().toISOString(),
         actorId: ctx.actorId,
         note: ctx.note,
+        cancelledBookingsCount: activeBookings.length,
       },
       status: 'pending',
       dedupeKey: `event_cancelled_${eventId}_${Date.now()}`,

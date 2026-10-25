@@ -3,6 +3,7 @@ import { Star, ShieldCheck, Clock, AlertCircle } from 'lucide-react';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
+import { apiClient, ApiError } from '@/lib/api-client';
 
 export interface FeedbackSheetProps {
   isOpen: boolean;
@@ -98,36 +99,14 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
         return;
       }
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      };
-
-      const res = await fetch(`/api/v1/events/${eventId}/feedback`, {
+      const data = await apiClient<any>(`/api/v1/events/${eventId}/feedback`, {
         method: 'POST',
-        headers,
-        credentials: 'include',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: JSON.stringify({
           rating,
           comment: comment.trim(),
         }),
       });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const code = data?.error?.code;
-        if (code === 'INELIGIBLE_NOT_ATTENDED' || res.status === 403) {
-          setErrorMessage('Only verified attendees who checked in can submit feedback.');
-        } else if (code === 'FEEDBACK_LOCKED' || res.status === 409) {
-          setErrorMessage('The 48-hour edit window for this review has expired.');
-        } else if (code === 'RATE_LIMITED' || res.status === 429) {
-          setErrorMessage('Too many submissions. Maximum 5 reviews per hour.');
-        } else {
-          setErrorMessage(data?.error?.message || 'Failed to submit feedback.');
-        }
-        return;
-      }
 
       toast({
         type: 'success',
@@ -141,8 +120,20 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
         onSuccess(data?.feedback || { rating, comment });
       }
       onClose();
-    } catch {
-      setErrorMessage('A network error occurred while submitting your review.');
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        if (err.code === 'INELIGIBLE_NOT_ATTENDED' || err.status === 403) {
+          setErrorMessage('Only verified attendees who checked in can submit feedback.');
+        } else if (err.code === 'FEEDBACK_LOCKED' || err.status === 409) {
+          setErrorMessage('The 48-hour edit window for this review has expired.');
+        } else if (err.code === 'RATE_LIMITED' || err.status === 429) {
+          setErrorMessage('Too many submissions. Maximum 5 reviews per hour.');
+        } else {
+          setErrorMessage(err.message || 'Failed to submit feedback.');
+        }
+      } else {
+        setErrorMessage('A network error occurred while submitting your review.');
+      }
     } finally {
       setIsSubmitting(false);
     }

@@ -2,6 +2,7 @@
  * Offline Turnstile Scanner Storage & Sync Manager (Phase 9 FR-OFFLINE)
  * Manages zero-PII manifests, AES-GCM encrypted local queue, and background reconciliation.
  */
+import { apiClient } from '@/lib/api-client';
 
 export interface OfflineManifestItem {
   ref: string;
@@ -57,16 +58,11 @@ export function getDeviceId(): string {
  * Downloads and caches offline check-in manifest from the server.
  */
 export async function fetchAndStoreManifest(eventId: string): Promise<OfflineManifestData> {
-  const token = localStorage.getItem('eventora_auth_token');
   const deviceId = getDeviceId();
 
   try {
-    const res = await fetch(`/api/v1/events/${eventId}/check-in/manifest?deviceId=${deviceId}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-
-    if (res.ok) {
-      const data: OfflineManifestData = await res.json();
+    const data = await apiClient<OfflineManifestData>(`/api/v1/events/${eventId}/check-in/manifest?deviceId=${deviceId}`);
+    if (data) {
       localStorage.setItem(getManifestKey(eventId), JSON.stringify(data));
       return data;
     }
@@ -208,17 +204,12 @@ export async function syncBatchNow(eventId: string): Promise<{ syncedCount: numb
     return { syncedCount: 0, conflictCount: 0 };
   }
 
-  const token = localStorage.getItem('eventora_auth_token');
   const deviceId = getDeviceId();
   const batchId = crypto.randomUUID ? crypto.randomUUID() : `batch_${Date.now()}`;
 
   try {
-    const res = await fetch(`/api/v1/events/${eventId}/check-in/sync-batch`, {
+    const data = await apiClient<any>(`/api/v1/events/${eventId}/check-in/sync-batch`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
       body: JSON.stringify({
         batchId,
         deviceId,
@@ -230,8 +221,7 @@ export async function syncBatchNow(eventId: string): Promise<{ syncedCount: numb
       }),
     });
 
-    if (res.ok) {
-      const data = await res.json();
+    if (data?.results) {
       const resultsMap = new Map<string, any>(data.results.map((r: any) => [r.opId, r]));
 
       let synced = 0;

@@ -355,17 +355,28 @@ export const paymentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     }
   );
 
-  // 9. POST /api/v1/simulator/payments (Simulator console controls)
+  // 9. POST /api/v1/simulator/payments (Simulator console controls, admin-only and disabled in production)
   fastify.post(
     '/simulator/payments',
     {
       config: {
-        auth: false,
-        policy: 'public',
+        auth: true,
+        policy: 'user:manage',
         objectCheck: false,
       },
     },
     async (req, reply) => {
+      if (process.env.NODE_ENV === 'production' && process.env.ENABLE_TEST_SIMULATOR !== 'true') {
+        return reply.code(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Simulator control endpoints are disabled in production.',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
+
       const { status } = (req.body as any) || {};
       if (['SUCCEEDED', 'FAILED', 'PENDING', 'AUTO'].includes(status)) {
         simulatorAdapter.forcePaymentStatus = status;

@@ -113,9 +113,30 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
     if (event.registration_closes_at && new Date(event.registration_closes_at) < now) {
       throw new BookingError('REGISTRATION_CLOSED', 'Registration window has closed', 400);
     }
+    if (event.starts_at && new Date(event.starts_at) <= now) {
+      throw new BookingError('EVENT_ALREADY_STARTED', 'Cannot book tickets for an event that has already started', 400);
+    }
 
-    // 3. Check existing non-cancelled booking for solo registrations
-    if (!teamRegistrationId) {
+    // 3. Validate Team Registration or Check active solo booking
+    if (teamRegistrationId) {
+      const trRes = await client.query(
+        `SELECT tr.id, tr.event_id, tm.status
+         FROM team_registrations tr
+         JOIN team_members tm ON tr.team_id = tm.team_id AND tm.user_id = $1 AND tm.status = 'active'
+         WHERE tr.id = $2;`,
+        [userId, teamRegistrationId]
+      );
+      if (trRes.rows.length === 0) {
+        throw new BookingError(
+          'INVALID_TEAM_REGISTRATION',
+          'Team registration not found or you are not an active member of this team',
+          403
+        );
+      }
+      if (trRes.rows[0].event_id !== eventId) {
+        throw new BookingError('MISMATCHED_EVENT', 'Team registration belongs to a different event', 400);
+      }
+    } else {
       const activeBookingCheck = await client.query(
         `SELECT id FROM bookings
          WHERE user_id = $1 AND event_id = $2 AND status != 'CANCELLED' AND team_registration_id IS NULL;`,
@@ -130,8 +151,19 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       }
     }
 
-    // 4. Sort ticketTypeIds in ascending order to prevent deadlocks across concurrent requests
-    const sortedItems = [...items].sort((a, b) => a.ticketTypeId.localeCompare(b.ticketTypeId));
+    // 4. Normalize duplicate ticket tier lines and sort in ascending order to prevent deadlocks
+    const normalizedMap = new Map<string, number>();
+    for (const it of items) {
+      if (it.quantity <= 0) {
+        throw new BookingError('INVALID_QUANTITY', 'Ticket quantity must be greater than zero', 400);
+      }
+      normalizedMap.set(it.ticketTypeId, (normalizedMap.get(it.ticketTypeId) || 0) + it.quantity);
+    }
+
+    const sortedItems = Array.from(normalizedMap.entries())
+      .map(([ticketTypeId, quantity]) => ({ ticketTypeId, quantity }))
+      .sort((a, b) => a.ticketTypeId.localeCompare(b.ticketTypeId));
+
     const ticketTypeIds = sortedItems.map((i) => i.ticketTypeId);
 
     // 5. Lock ticket_types rows with SELECT ... FOR UPDATE
@@ -149,6 +181,19 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       lockedTypesMap.set(row.id, row);
     }
 
+    // Check overall event capacity limit across all tiers
+    if (event.capacity) {
+      const bookedRes = await client.query(
+        `SELECT COALESCE(SUM(sold + held), 0) as total_booked FROM ticket_types WHERE event_id = $1;`,
+        [eventId]
+      );
+      const totalBooked = parseInt(bookedRes.rows[0]?.total_booked || '0', 10);
+      const requestedCount = sortedItems.reduce((acc, it) => acc + it.quantity, 0);
+      if (totalBooked + requestedCount > event.capacity) {
+        throw new SoldOutError(`Event "${event.title}" has reached overall capacity limit`, true);
+      }
+    }
+
     let calculatedTotalPaise = 0;
     const bookingItemsToInsert: { ticketTypeId: string; quantity: number; unitPricePaise: number }[] = [];
 
@@ -159,9 +204,6 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       }
       if (tt.event_id !== eventId) {
         throw new BookingError('MISMATCHED_EVENT', `Ticket tier does not belong to this event`, 400);
-      }
-      if (item.quantity <= 0) {
-        throw new BookingError('INVALID_QUANTITY', 'Ticket quantity must be greater than zero', 400);
       }
       if (item.quantity > tt.per_user_limit) {
         throw new BookingError('LIMIT_EXCEEDED', `Quantity exceeds per-user limit of ${tt.per_user_limit}`, 400);
@@ -186,26 +228,36 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       });
     }
 
-    // 6. Update sold counts on ticket_types rows
+    // 6. Update inventory counts:
+    // Free bookings immediately occupy 'sold'.
+    // Paid bookings reserve seats in 'held' until payment confirmation; expires in 15 mins.
+    const isFree = calculatedTotalPaise === 0;
+    const bookingStatus = isFree ? 'CONFIRMED' : 'PENDING_PAYMENT';
+    const expiresAt = isFree ? null : new Date(Date.now() + 15 * 60 * 1000);
+
     for (const item of bookingItemsToInsert) {
-      await client.query(
-        `UPDATE ticket_types
-         SET sold = sold + $1
-         WHERE id = $2;`,
-        [item.quantity, item.ticketTypeId]
-      );
+      if (isFree) {
+        await client.query(
+          `UPDATE ticket_types SET sold = sold + $1 WHERE id = $2;`,
+          [item.quantity, item.ticketTypeId]
+        );
+      } else {
+        await client.query(
+          `UPDATE ticket_types SET held = held + $1 WHERE id = $2;`,
+          [item.quantity, item.ticketTypeId]
+        );
+      }
     }
 
-    // 7. Insert Booking (Status: CONFIRMED for free bookings)
-    const bookingStatus = calculatedTotalPaise === 0 ? 'CONFIRMED' : 'PENDING_PAYMENT';
+    // 7. Insert Booking (Status: CONFIRMED for free, PENDING_PAYMENT for paid with expires_at)
     let booking: any;
     try {
       const bookingRes = await client.query(
         `INSERT INTO bookings (
-           user_id, event_id, team_registration_id, status, total_paise, idempotency_key
-         ) VALUES ($1, $2, $3, $4, $5, $6)
+           user_id, event_id, team_registration_id, status, total_paise, idempotency_key, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *;`,
-        [userId, eventId, teamRegistrationId || null, bookingStatus, calculatedTotalPaise, idempotencyKey]
+        [userId, eventId, teamRegistrationId || null, bookingStatus, calculatedTotalPaise, idempotencyKey, expiresAt]
       );
       booking = bookingRes.rows[0];
     } catch (insertErr: any) {

@@ -9,6 +9,7 @@ import { WaitlistOfferBanner } from '@/components/booking/WaitlistOfferBanner';
 import { FeedbackSheet } from '@/components/feedback/FeedbackSheet';
 import { Calendar, MapPin, Ticket, ArrowRight, MessageSquare } from 'lucide-react';
 import { formatINR } from '@/lib/utils';
+import { apiClient } from '@/lib/api-client';
 
 export interface BookingRecord {
   id: string;
@@ -38,29 +39,10 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
   const fetchBookings = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/v1/me/bookings', { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        setBookings(data.bookings || []);
-      } else {
-        // Fallback prototype state
-        setBookings([
-          {
-            id: 'mock-bk-1',
-            eventId: 'mock-evt-1',
-            eventTitle: 'AI & Robotics Annual Symposium',
-            status: 'CONFIRMED',
-            totalPaise: 0,
-            createdAt: new Date().toISOString(),
-            ticketCode: 'EVT-ROBOT-8921',
-            qrPayload: 'https://eventora.campus.edu/verify/EVT-ROBOT-8921',
-            startsAt: '2026-11-20T10:00:00Z',
-            venueName: 'Sir MV Auditorium',
-          },
-        ]);
-      }
+      const data = await apiClient.get<any>('/api/v1/me/bookings');
+      setBookings(data?.bookings || []);
     } catch {
-      // Offline fallback
+      setBookings([]);
     } finally {
       setIsLoading(false);
     }
@@ -75,34 +57,22 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
     setIsCancelling(true);
 
     try {
-      const res = await fetch(`/api/v1/bookings/${cancelBookingId}/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ reason: cancelReason }),
+      await apiClient.post(`/api/v1/bookings/${cancelBookingId}/cancel`, {
+        reason: cancelReason,
       });
 
-      if (res.ok) {
-        toast({
-          type: 'success',
-          title: 'Booking Cancelled',
-          message: 'Your ticket was released. Any waitlisted student has been promoted.',
-        });
-        setBookings((prev) => prev.filter((b) => b.id !== cancelBookingId));
-        setCancelBookingId(null);
-      } else {
-        const err = await res.json();
-        toast({
-          type: 'error',
-          title: 'Cancellation Error',
-          message: err.error?.message || 'Could not cancel booking.',
-        });
-      }
-    } catch {
+      toast({
+        type: 'success',
+        title: 'Booking Cancelled',
+        message: 'Your ticket was released. Any waitlisted student has been promoted.',
+      });
+      setBookings((prev) => prev.filter((b) => b.id !== cancelBookingId));
+      setCancelBookingId(null);
+    } catch (err: any) {
       toast({
         type: 'error',
-        title: 'Error',
-        message: 'Network issue while cancelling booking.',
+        title: 'Cancellation Error',
+        message: err?.message || err?.error?.message || 'Could not cancel booking.',
       });
     } finally {
       setIsCancelling(false);

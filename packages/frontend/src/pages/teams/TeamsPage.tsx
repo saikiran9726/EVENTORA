@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
+import { apiClient } from '@/lib/api-client';
 import {
   Users,
   UserPlus,
@@ -67,9 +68,8 @@ export const TeamsPage: React.FC = () => {
   const loadTeams = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/v1/teams/discover', { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiClient<any>('/api/v1/teams/discover');
+      if (data?.teams) {
         setDiscoverTeams(data.teams || []);
       }
     } catch {
@@ -108,10 +108,8 @@ export const TeamsPage: React.FC = () => {
     if (!newTeamName.trim()) return;
 
     try {
-      const res = await fetch('/api/v1/teams', {
+      const data = await apiClient<any>('/api/v1/teams', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           name: newTeamName,
           description: newTeamDesc,
@@ -122,18 +120,12 @@ export const TeamsPage: React.FC = () => {
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        toast({ type: 'success', title: 'Team Created', message: `Team "${newTeamName}" is ready.` });
-        setIsCreateOpen(false);
-        setMyTeams((prev) => [data.team, ...prev]);
-        setSelectedTeam(data.team);
-      } else {
-        const err = await res.json();
-        toast({ type: 'error', title: 'Error', message: err.error?.message || 'Failed to create team.' });
-      }
-    } catch {
-      toast({ type: 'error', title: 'Error', message: 'Network issue.' });
+      toast({ type: 'success', title: 'Team Created', message: `Team "${newTeamName}" is ready.` });
+      setIsCreateOpen(false);
+      setMyTeams((prev) => [data.team, ...prev]);
+      setSelectedTeam(data.team);
+    } catch (err: any) {
+      toast({ type: 'error', title: 'Error', message: err.message || 'Failed to create team.' });
     }
   };
 
@@ -142,23 +134,16 @@ export const TeamsPage: React.FC = () => {
     if (!selectedTeam || !inviteEmail.trim()) return;
 
     try {
-      const res = await fetch(`/api/v1/teams/${selectedTeam.id}/invitations`, {
+      await apiClient(`/api/v1/teams/${selectedTeam.id}/invitations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ email: inviteEmail }),
       });
 
-      if (res.ok) {
-        toast({ type: 'success', title: 'Invitation Sent', message: `Invited ${inviteEmail} to the squad.` });
-        setIsInviteOpen(false);
-        setInviteEmail('');
-      } else {
-        const err = await res.json();
-        toast({ type: 'error', title: 'Error', message: err.error?.message || 'Could not send invitation.' });
-      }
-    } catch {
-      toast({ type: 'error', title: 'Error', message: 'Network issue.' });
+      toast({ type: 'success', title: 'Invitation Sent', message: `Invited ${inviteEmail} to the squad.` });
+      setIsInviteOpen(false);
+      setInviteEmail('');
+    } catch (err: any) {
+      toast({ type: 'error', title: 'Error', message: err.message || 'Could not send invitation.' });
     }
   };
 

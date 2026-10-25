@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../../db/index.js';
 import { users, colleges } from '../../../db/schema.js';
-import { eq, desc, count } from 'drizzle-orm';
+import { eq, desc, count, and } from 'drizzle-orm';
 import { logAuditEvent } from '../../../services/audit.js';
 import { revokeAllUserSessions } from '../../../services/auth.js';
 
@@ -116,6 +116,53 @@ export const adminRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       }
 
       const { globalRole, status } = parseResult.data;
+
+      // 1. Safeguard against self-demotion or self-suspension
+      if (id === req.user!.id) {
+        if (globalRole && globalRole !== 'admin') {
+          return reply.code(400).send({
+            error: {
+              code: 'SELF_DEMOTION_PROHIBITED',
+              message: 'Administrators cannot demote their own account.',
+              details: {},
+              requestId: req.id,
+            },
+          });
+        }
+        if (status && status !== 'active') {
+          return reply.code(400).send({
+            error: {
+              code: 'SELF_SUSPENSION_PROHIBITED',
+              message: 'Administrators cannot suspend their own account.',
+              details: {},
+              requestId: req.id,
+            },
+          });
+        }
+      }
+
+      // 2. Safeguard against removing the last active administrator
+      if (
+        (globalRole && globalRole !== 'admin' && targetUser.globalRole === 'admin') ||
+        (status && status !== 'active' && targetUser.globalRole === 'admin' && targetUser.status === 'active')
+      ) {
+        const [adminCountRes] = await db
+          .select({ total: count() })
+          .from(users)
+          .where(and(eq(users.globalRole, 'admin'), eq(users.status, 'active')));
+        const activeAdmins = Number(adminCountRes?.total || 0);
+        if (activeAdmins <= 1) {
+          return reply.code(400).send({
+            error: {
+              code: 'LAST_ADMIN_PROTECTION',
+              message: 'Cannot demote or suspend the platform’s only active administrator.',
+              details: { activeAdmins },
+              requestId: req.id,
+            },
+          });
+        }
+      }
+
       const updates: Partial<typeof targetUser> = {};
 
       if (globalRole) updates.globalRole = globalRole;

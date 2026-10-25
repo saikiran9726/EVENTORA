@@ -3,6 +3,7 @@ import { Download, ShieldCheck, AlertCircle } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
+import { apiClient } from '@/lib/api-client';
 
 export interface ExportDialogProps {
   isOpen: boolean;
@@ -41,24 +42,10 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
         return;
       }
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      };
-
-      const res = await fetch(`/api/v1/organizer/events/${eventId}/exports`, {
+      const data = await apiClient<any>(`/api/v1/organizer/events/${eventId}/exports`, {
         method: 'POST',
-        headers,
-        credentials: 'include',
         body: JSON.stringify({ kind, format }),
       });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        setErrorMessage(data?.error?.message || 'Failed to start export job.');
-        return;
-      }
 
       const downloadUrl = data?.job?.downloadUrl;
       if (downloadUrl) {

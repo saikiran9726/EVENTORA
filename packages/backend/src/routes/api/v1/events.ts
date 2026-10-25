@@ -490,6 +490,11 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
       const updates: any = { ...parseResult.data };
       delete updates.version;
+      // Prevent transferring ownership or modifying tenant/creator metadata
+      delete updates.organizerId;
+      delete updates.collegeId;
+      delete updates.createdBy;
+      delete updates.id;
 
       if (updates.startsAt) updates.startsAt = new Date(updates.startsAt);
       if (updates.endsAt) updates.endsAt = new Date(updates.endsAt);

@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { formatINR } from '@/lib/utils';
 import { AlertTriangle, Clock, ShieldCheck, Ticket } from 'lucide-react';
+import { apiClient, ApiError } from '@/lib/api-client';
 
 export interface TicketTypeInfo {
   id: string;
@@ -45,17 +46,14 @@ export const TicketSelector: React.FC<TicketSelectorProps> = ({
   // Live polling (every 15s + refetch on window focus)
   const fetchAvailability = useCallback(async () => {
     try {
-      const res = await fetch(`/api/v1/events/${eventId}/ticket-types`, { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.ticketTypes && data.ticketTypes.length > 0) {
-          setTicketTypes(data.ticketTypes);
-          if (!selectedTicketId && data.ticketTypes.length > 0) {
-            setSelectedTicketId(data.ticketTypes[0].id);
-          }
+      const data = await apiClient<{ ticketTypes: TicketTypeInfo[] }>(`/api/v1/events/${eventId}/ticket-types`);
+      if (data?.ticketTypes && data.ticketTypes.length > 0) {
+        setTicketTypes(data.ticketTypes);
+        if (!selectedTicketId && data.ticketTypes.length > 0) {
+          setSelectedTicketId(data.ticketTypes[0].id);
         }
-        setLastRefreshed(new Date());
       }
+      setLastRefreshed(new Date());
     } catch {
       // Offline or network error handled quietly during background poll
     }
@@ -101,67 +99,65 @@ export const TicketSelector: React.FC<TicketSelectorProps> = ({
 
     try {
       const idempotencyKey = `book-${eventId}-${selectedTier.id}-${Date.now()}`;
-      const res = await fetch(`/api/v1/events/${eventId}/bookings`, {
+      const data = await apiClient<any>(`/api/v1/events/${eventId}/bookings`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Idempotency-Key': idempotencyKey,
         },
-        credentials: 'include',
         body: JSON.stringify({
           items: [{ ticketTypeId: selectedTier.id, quantity: 1 }],
           ignoreConflict,
         }),
       });
 
-      const data = await res.json();
-
-      if (res.status === 201 || res.status === 200) {
-        // Free flow confirmed immediately with 0 paise
-        toast({
-          type: 'success',
-          title: 'Ticket Confirmed!',
-          message: `Your booking for "${eventTitle}" is confirmed. No payment required.`,
-        });
-        if (conflictWarning) {
-          setConflictWarning(null);
+      // Free flow or zero-paise registration confirmed
+      toast({
+        type: 'success',
+        title: 'Ticket Confirmed!',
+        message: `Your booking for "${eventTitle}" is confirmed. No payment required.`,
+      });
+      if (conflictWarning) {
+        setConflictWarning(null);
+      }
+      if (onBookingSuccess) {
+        onBookingSuccess(data.booking);
+      }
+      fetchAvailability();
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          // Fallback simulated booking in prototype mode
+          toast({
+            type: 'success',
+            title: 'Ticket Confirmed!',
+            message: `Your pass for "${eventTitle}" is confirmed. Added to My Tickets.`,
+          });
+          if (onBookingSuccess) {
+            onBookingSuccess({ id: `proto-bk-${Date.now()}`, eventTitle });
+          }
+        } else if (err.status === 409 && err.code === 'SCHEDULE_CONFLICT' && !ignoreConflict) {
+          setConflictWarning(err.details?.conflicts || [{ title: 'Another registered event' }]);
+        } else if (err.status === 409 && err.code === 'SOLD_OUT') {
+          toast({
+            type: 'warning',
+            title: 'Sold Out',
+            message: 'This ticket tier just sold out. You can join the waitlist below.',
+          });
+          fetchAvailability();
+        } else {
+          toast({
+            type: 'error',
+            title: 'Booking Failed',
+            message: err.message || 'Could not complete registration.',
+          });
         }
-        if (onBookingSuccess) {
-          onBookingSuccess(data.booking);
-        }
-        fetchAvailability();
-      } else if (res.status === 401) {
-        // Fallback simulated booking in prototype mode
-        toast({
-          type: 'success',
-          title: 'Ticket Confirmed!',
-          message: `Your pass for "${eventTitle}" is confirmed. Added to My Tickets.`,
-        });
-        if (onBookingSuccess) {
-          onBookingSuccess({ id: `proto-bk-${Date.now()}`, eventTitle });
-        }
-      } else if (res.status === 409 && data.error?.code === 'SCHEDULE_CONFLICT' && !ignoreConflict) {
-        setConflictWarning(data.error.details?.conflicts || [{ title: 'Another registered event' }]);
-      } else if (res.status === 409 && data.error?.code === 'SOLD_OUT') {
-        toast({
-          type: 'warning',
-          title: 'Sold Out',
-          message: 'This ticket tier just sold out. You can join the waitlist below.',
-        });
-        fetchAvailability();
       } else {
         toast({
           type: 'error',
-          title: 'Booking Failed',
-          message: data.error?.message || 'Could not complete registration.',
+          title: 'Network Error',
+          message: 'Could not connect to the booking server.',
         });
       }
-    } catch (err: any) {
-      toast({
-        type: 'error',
-        title: 'Network Error',
-        message: 'Could not connect to the booking server.',
-      });
     } finally {
       setIsSubmitting(false);
     }
@@ -172,35 +168,23 @@ export const TicketSelector: React.FC<TicketSelectorProps> = ({
     setIsSubmitting(true);
 
     try {
-      const res = await fetch(`/api/v1/events/${eventId}/waitlist`, {
+      const data = await apiClient<any>(`/api/v1/events/${eventId}/waitlist`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ ticketTypeId: selectedTier.id }),
       });
 
-      const data = await res.json();
-
-      if (res.ok) {
-        setIsWaitlistModalOpen(false);
-        toast({
-          type: 'success',
-          title: 'Added to Waitlist',
-          message: `Position #${data.entry?.position || 1}. We will notify you if a seat opens.`,
-        });
-        fetchAvailability();
-      } else {
-        toast({
-          type: 'error',
-          title: 'Waitlist Error',
-          message: data.error?.message || 'Failed to join waitlist.',
-        });
-      }
-    } catch {
+      setIsWaitlistModalOpen(false);
+      toast({
+        type: 'success',
+        title: 'Added to Waitlist',
+        message: `Position #${data.entry?.position || 1}. We will notify you if a seat opens.`,
+      });
+      fetchAvailability();
+    } catch (err: any) {
       toast({
         type: 'error',
-        title: 'Error',
-        message: 'Could not connect to waitlist service.',
+        title: 'Waitlist Error',
+        message: err.message || 'Could not connect to waitlist service.',
       });
     } finally {
       setIsSubmitting(false);

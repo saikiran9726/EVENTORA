@@ -35,6 +35,7 @@ export type CurrentRole = 'student' | 'organizer' | 'reviewer' | 'admin' | 'chec
 const AppInner: React.FC = () => {
   const {
     user,
+    isLoading,
     isAuthenticated,
     isSessionExpiredModalOpen,
     setIsSessionExpiredModalOpen,
@@ -164,6 +165,7 @@ const AppInner: React.FC = () => {
   };
 
   const handleRequireAuth = (targetRoute: string) => {
+    if (isLoading) return false;
     if (!isAuthenticated) {
       setReturnPath(targetRoute);
       setActiveRoute('auth-login');
@@ -440,6 +442,17 @@ const AppInner: React.FC = () => {
         return <StudentShell {...shellProps} />;
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-bg text-text">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 rounded-full border-4 border-brand border-t-transparent animate-spin" />
+          <p className="text-sm font-medium text-text-muted">Loading Eventora session...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

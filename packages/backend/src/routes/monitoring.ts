@@ -1,6 +1,7 @@
 import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { pool } from '../db/index.js';
 import { config } from '../config.js';
+import { constantTimeCompare } from '../services/auth.js';
 
 // In-memory Prometheus metric counters for runtime aggregation
 const metricsStore = {
@@ -31,16 +32,26 @@ function isInternalNetwork(req: FastifyRequest): boolean {
   const ip = req.ip || req.socket.remoteAddress || '';
   const token = req.headers['x-metrics-token'] || req.headers['authorization']?.replace('Bearer ', '');
 
-  if (token === config.METRICS_SECRET) return true;
+  if (typeof token === 'string' && constantTimeCompare(token, config.METRICS_SECRET)) {
+    return true;
+  }
 
   // Local loopbacks
   if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip === 'localhost') {
     return true;
   }
 
-  // Docker internal bridge (172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16)
-  if (ip.startsWith('172.') || ip.startsWith('10.') || ip.startsWith('192.168.')) {
-    return true;
+  // RFC 1918 Private networks:
+  // 10.0.0.0/8
+  if (ip.startsWith('10.')) return true;
+  // 192.168.0.0/16
+  if (ip.startsWith('192.168.')) return true;
+  // 172.16.0.0/12 (172.16.x.x to 172.31.x.x)
+  if (ip.startsWith('172.')) {
+    const secondOctet = parseInt(ip.split('.')[1], 10);
+    if (!isNaN(secondOctet) && secondOctet >= 16 && secondOctet <= 31) {
+      return true;
+    }
   }
 
   return false;
