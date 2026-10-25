@@ -50,34 +50,31 @@ describe('Phase 11 Quality Gate: Production Hardening, Monitoring, Security & Op
     expect(body.checks.worker.status).toBe('ok');
   });
 
-  // 3. GET /metrics (Prometheus Format & Network Boundary)
-  it('3. GET /metrics exports Prometheus text format and enforces internal network isolation', async () => {
-    // A: Local/internal request succeeds with Prometheus metrics
+  // 3. GET /metrics (Prometheus Format & Authentication Enforcement)
+  it('3. GET /metrics exports Prometheus text format and enforces X-Metrics-Token authentication', async () => {
+    // A: Local/internal request without token is rejected with 401 UNAUTHORIZED
     const res = await app.inject({
       method: 'GET',
       url: '/metrics',
       remoteAddress: '127.0.0.1',
     });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-type']).toContain('text/plain');
-    expect(res.body).toContain('process_uptime_seconds');
-    expect(res.body).toContain('process_memory_heap_bytes');
-    expect(res.body).toContain('db_pool_total_connections');
-    expect(res.body).toContain('outbox_pending_count');
+    expect(res.statusCode).toBe(401);
+    const errBodyA = JSON.parse(res.body);
+    expect(errBodyA.error.code).toBe('UNAUTHORIZED');
 
-    // B: External unauthorized IP is rejected with 403 FORBIDDEN
-    const forbiddenRes = await app.inject({
+    // B: External unauthorized request is rejected with 401 UNAUTHORIZED
+    const unauthorizedRes = await app.inject({
       method: 'GET',
       url: '/metrics',
       remoteAddress: '203.0.113.195', // public IP
     });
 
-    expect(forbiddenRes.statusCode).toBe(403);
-    const errBody = JSON.parse(forbiddenRes.body);
-    expect(errBody.error.code).toBe('FORBIDDEN_NETWORK');
+    expect(unauthorizedRes.statusCode).toBe(401);
+    const errBodyB = JSON.parse(unauthorizedRes.body);
+    expect(errBodyB.error.code).toBe('UNAUTHORIZED');
 
-    // C: External IP with internal token succeeds
+    // C: Request with valid X-Metrics-Token succeeds with Prometheus metrics
     const tokenRes = await app.inject({
       method: 'GET',
       url: '/metrics',
@@ -87,6 +84,11 @@ describe('Phase 11 Quality Gate: Production Hardening, Monitoring, Security & Op
       },
     });
     expect(tokenRes.statusCode).toBe(200);
+    expect(tokenRes.headers['content-type']).toContain('text/plain');
+    expect(tokenRes.body).toContain('process_uptime_seconds');
+    expect(tokenRes.body).toContain('process_memory_heap_bytes');
+    expect(tokenRes.body).toContain('db_pool_total_connections');
+    expect(tokenRes.body).toContain('outbox_pending_count');
   });
 
   // 4. Security Headers (CSP, HSTS, MIME, Permissions)
@@ -116,7 +118,7 @@ describe('Phase 11 Quality Gate: Production Hardening, Monitoring, Security & Op
         method: 'POST',
         url: '/api/v1/auth/login',
         headers: {
-          'x-client-ip': testIp,
+          'x-forwarded-for': testIp,
         },
         payload: { email: 'bruteforce@example.com', password: 'bad-password-123' },
       });
@@ -129,7 +131,7 @@ describe('Phase 11 Quality Gate: Production Hardening, Monitoring, Security & Op
       method: 'POST',
       url: '/api/v1/auth/login',
       headers: {
-        'x-client-ip': testIp,
+        'x-forwarded-for': testIp,
       },
       payload: { email: 'bruteforce@example.com', password: 'bad-password-123' },
     });

@@ -28,35 +28,6 @@ export function recordWorkerHeartbeat() {
   lastWorkerHeartbeat = Date.now();
 }
 
-function isInternalNetwork(req: FastifyRequest): boolean {
-  const ip = req.ip || req.socket.remoteAddress || '';
-  const token = req.headers['x-metrics-token'] || req.headers['authorization']?.replace('Bearer ', '');
-
-  if (typeof token === 'string' && constantTimeCompare(token, config.METRICS_SECRET)) {
-    return true;
-  }
-
-  // Local loopbacks
-  if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip === 'localhost') {
-    return true;
-  }
-
-  // RFC 1918 Private networks:
-  // 10.0.0.0/8
-  if (ip.startsWith('10.')) return true;
-  // 192.168.0.0/16
-  if (ip.startsWith('192.168.')) return true;
-  // 172.16.0.0/12 (172.16.x.x to 172.31.x.x)
-  if (ip.startsWith('172.')) {
-    const secondOctet = parseInt(ip.split('.')[1], 10);
-    if (!isNaN(secondOctet) && secondOctet >= 16 && secondOctet <= 31) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 export const monitoringRoutes: FastifyPluginAsync = async (fastify) => {
   // 1. GET /health (Process alive, zero dependencies)
   fastify.get(
@@ -159,7 +130,7 @@ export const monitoringRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // 3. GET /metrics (Prometheus format; restricted to internal network)
+  // 3. GET /metrics (Prometheus format; restricted to authorized monitoring scraper via X-Metrics-Token)
   fastify.get(
     '/metrics',
     {
@@ -170,11 +141,20 @@ export const monitoringRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
-      if (!isInternalNetwork(req)) {
-        return reply.code(403).send({
+      const headerToken = req.headers['x-metrics-token'];
+      const token =
+        typeof headerToken === 'string'
+          ? headerToken
+          : typeof req.headers.authorization === 'string' && req.headers.authorization.startsWith('Bearer ')
+            ? req.headers.authorization.slice(7).trim()
+            : '';
+
+      if (!token || !constantTimeCompare(token, config.METRICS_SECRET)) {
+        return reply.code(401).send({
           error: {
-            code: 'FORBIDDEN_NETWORK',
-            message: 'Metrics endpoint is restricted to internal monitoring networks.',
+            code: 'UNAUTHORIZED',
+            message: 'Metrics endpoint requires valid X-Metrics-Token authentication.',
+            details: {},
             requestId: req.id,
           },
         });

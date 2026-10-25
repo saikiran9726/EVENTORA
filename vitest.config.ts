@@ -8,6 +8,7 @@ export default defineConfig({
     include: ['tests/unit/**/*.{test,spec}.ts', 'tests/security/**/*.{test,spec}.ts'],
     exclude: ['**/node_modules/**', 'tests/e2e/**'],
     hookTimeout: 30000,
+    fileParallelism: false,
   },
   resolve: {
     alias: {

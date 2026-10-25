@@ -3,6 +3,7 @@ import { buildApp } from '../../packages/backend/src/app.js';
 import { db, pool } from '../../packages/backend/src/db/index.js';
 import { FastifyInstance } from 'fastify';
 import crypto from 'node:crypto';
+import { createSession } from '../../packages/backend/src/services/auth.js';
 
 interface AuthSession {
   headers: {
@@ -377,13 +378,26 @@ describe('Phase 7 Security & Data Integrity Verification Suite', () => {
       );
       const tierId = ttRes.rows[0].id;
 
+      // Use dedicated student with isolated rate-limit budget for concurrency testing
+      const concUserRes = await pool.query(
+        `INSERT INTO users (college_id, email, password_hash, display_name, global_role, status, email_verified_at)
+         VALUES ($1, $2, 'hash', 'Concurrency Student', 'student', 'active', NOW())
+         RETURNING id;`,
+        [admin.user.collegeId, `conc.student.${Date.now()}@campus.edu`]
+      );
+      const concSession = await createSession(concUserRes.rows[0].id);
+      const concHeaders = {
+        cookie: `eventora_session=${concSession.token}; eventora_csrf=csrf_conc_test`,
+        'x-csrf-token': 'csrf_conc_test',
+      };
+
       // Fire 10 concurrent booking requests
       const promises = Array.from({ length: 10 }).map((_, i) =>
         app.inject({
           method: 'POST',
           url: `/api/v1/events/${eventId}/bookings`,
           headers: {
-            ...student1.headers,
+            ...concHeaders,
             'Idempotency-Key': `race-test-${i}-${Date.now()}`,
           },
           payload: {

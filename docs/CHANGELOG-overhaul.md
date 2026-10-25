@@ -102,3 +102,104 @@
   - TypeScript typecheck passed with 0 errors across `@eventora/shared`, `@eventora/backend`, and `@eventora/frontend`.
   - ESLint passed with 0 errors.
   - Production build succeeded for all packages.
+
+---
+
+## Phase P03 — Proxy, CORS, Rate Limiting, Headers & Metrics
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Reverse-Proxy & Client IP Trust
+
+- **Configured `fastify({ trustProxy: 1 })` (`packages/backend/src/app.ts`):**
+  - Configured proxy-addr to trust exactly 1 hop (the immediate upstream reverse proxy on Render / Vercel).
+  - Deleted all manual, vulnerable `x-forwarded-for` and `x-client-ip` parsing across the codebase.
+  - All route handlers and plugins now access `req.ip` directly.
+  - Verified immunity to prepended `X-Forwarded-For` IP rotation attacks (`1.1.1.1, realIp`, `2.2.2.2, realIp`); Fastify resolves `req.ip` strictly to the real client IP.
+
+---
+
+### 2. Strict CORS Allow-List
+
+- **Configured Strict Allow-List (`packages/backend/src/app.ts`):**
+  - Replaced insecure `.endsWith('.vercel.app')` pattern matching with a strict allow-list `Set` parsed from comma-separated `CORS_ORIGIN`.
+  - Calling `cb(null, false)` for unknown origins prevents `@fastify/cors` from reflecting foreign `Origin` headers into `Access-Control-Allow-Origin`.
+  - In non-production environments (development and test), `http://localhost:5173` and `http://127.0.0.1:5173` are permitted automatically.
+
+---
+
+### 3. Redis Distributed Rate Limiter & Scopes
+
+- **Redis-Backed Limiter Plugin (`packages/backend/src/plugins/rate-limiter.ts`):**
+  - Replaced the in-memory Map limiter and timer intervals with Redis-backed sliding-window rate limiting via `checkRateLimit` from `services/redis.ts`.
+  - Registered in `preHandler` hook after `authPolicyPlugin` so `req.user` is populated.
+  - Key derivation: `${rule.scope}:${req.ip}:${userId}`. Ensures campus/corporate shared-proxy NAT users have independent rate limit budgets.
+  - Implemented 12 protected scopes:
+    1. `register`: `POST /api/v1/auth/register` (max 10, window 60s)
+    2. `login`: `POST /api/v1/auth/login` (max 10, window 60s)
+    3. `forgot`: `POST /api/v1/auth/forgot-password` (max 5, window 60s)
+    4. `verify`: `POST /api/v1/auth/verify-email`, `POST /api/v1/auth/reset-password` (max 10, window 60s)
+    5. `booking`: `POST /api/v1/events/:id/bookings` (max 10, window 60s)
+    6. `checkout`: `POST /api/v1/bookings/:id/checkout` (max 20, window 60s)
+    7. `payments/verify`: `POST /api/v1/payments/verify`, `POST /api/v1/payments/checkout/verify` (max 20, window 60s)
+    8. `scan`: `POST /api/v1/events/:id/check-in/scan`, `POST /api/v1/events/:id/check-in/sync-batch` (max 120, window 60s)
+    9. `feedback`: `POST /api/v1/events/:id/feedback`, `POST /api/v1/events/:id/feedback/replies`, `POST /api/v1/events/:id/feedback/flag` (max 10, window 60s)
+    10. `alerts`: `POST /api/v1/events/:id/alerts`, `POST /api/v1/alerts/broadcast` (max 10, window 60s)
+    11. `exports`: `POST /api/v1/organizer/events/:id/exports`, `GET /api/v1/exports/download/:token` (max 10, window 60s)
+    12. `public verify/passport`: `GET /api/v1/verify/:code`, `GET /api/v1/p/:slug`, `GET /p/:slug`, `GET /api/v1/crosscollege-passport/:id` (max 30, window 60s)
+  - Emits standard `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers on all evaluated routes.
+  - Emits `Retry-After` header and uniform `{ error: { code: 'RATE_LIMIT_EXCEEDED', message, details, requestId } }` envelope on 429.
+- **Fixed Callers Treating checkRateLimit as Boolean:**
+  - Repaired `packages/backend/src/routes/api/v1/bookings.ts:52`: Changed `const allowed = await checkRateLimit(...); if (!allowed)` to `const rl = await checkRateLimit(...); if (!rl.allowed)`.
+  - Repaired `packages/backend/src/routes/api/v1/teams.ts:222`: Changed `const allowed = await checkRateLimit(...); if (!allowed)` to `const rl = await checkRateLimit(...); if (!rl.allowed)`.
+
+---
+
+### 4. Metrics Authentication & Cardinality Bounding
+
+- **Constant-Time Metrics Authentication (`packages/backend/src/routes/monitoring.ts`):**
+  - Removed insecure IP/CIDR heuristic checks (`isInternalNetwork`) that permitted unauthenticated access to Prometheus internals from local/RFC-1918 subnets.
+  - `/metrics` now exclusively validates `X-Metrics-Token` header using `constantTimeCompare(token, config.METRICS_SECRET)`. Missing or invalid tokens return 401 `UNAUTHORIZED`.
+- **Cardinality Explosion Defense (`packages/backend/src/app.ts`):**
+  - In `app.addHook('onResponse', ...)`, mapped unmatched routes and wildcard catch-all paths (`/*`) to `'__unmatched__'` label instead of raw URL paths, preventing bot scanners and 404 floods from causing metric memory explosion.
+
+---
+
+### 5. SPA Security Headers
+
+- **Updated `vercel.json` & `packages/frontend/vercel.json`:**
+  - Added `"headers"` configuration for `/(.*)` with production security headers:
+    - `Content-Security-Policy`: `"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://eventora-api-p35a.onrender.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';"`
+    - `Strict-Transport-Security`: `"max-age=31536000; includeSubDomains; preload"`
+    - `X-Content-Type-Options`: `"nosniff"`
+    - `X-Frame-Options`: `"DENY"`
+    - `Referrer-Policy`: `"strict-origin-when-cross-origin"`
+    - `Permissions-Policy`: `"camera=(self), microphone=(), geolocation=()"`
+
+---
+
+### 6. Verification & Automated Regression Coverage
+
+- **New Security Test Suite:**
+  - `tests/security/phase-p03-security.test.ts` (12 automated tests passing 100%):
+    - Spoofed XFF immunity: changing prepended IPs does not evade rate limits.
+    - Shared-proxy isolation: User A throttling does not affect User B on the same IP.
+    - Strict CORS rejection: foreign origins receive no allow headers; configured origins pass.
+    - Metrics authentication: 401 on missing/bad token, 200 with Prometheus text on valid token.
+    - Metric cardinality protection: unmatched 404 paths mapped to `__unmatched__`.
+    - Rate limit headers & 429 response verification across public and authenticated scopes.
+    - Vercel SPA security headers verification.
+- **Updated Existing Tests:**
+  - `tests/unit/phase11-gate.test.ts`: Updated test 3 to assert 401 `UNAUTHORIZED` when `X-Metrics-Token` is missing.
+- **Full Vitest Suite:**
+  - 31 test files, 253 tests passing (100%).
+- **Full Playwright Browser Suite:**
+  - 11 spec files, 75 tests passing across Mobile-375, Tablet-768, and Desktop-1280 (100%).
+- **Static Analysis & Builds:**
+  - TypeScript typecheck passed with 0 errors.
+  - ESLint passed with 0 errors.
+  - Production build passed for all workspace packages.

@@ -49,13 +49,13 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       const user = req.user!;
 
       // Enforce rate limit: 10 bookings per min per user
-      const allowed = await checkRateLimit(`rate:booking:${user.id}`, 10, 60);
-      if (!allowed) {
+      const rl = await checkRateLimit(`rate:booking:${user.id}`, 10, 60);
+      if (!rl.allowed) {
         return reply.code(429).send({
           error: {
             code: 'RATE_LIMIT_EXCEEDED',
             message: 'Too many booking attempts. Please wait a minute before retrying.',
-            details: { limit: 10, window: '60s' },
+            details: { limit: 10, window: '60s', resetSeconds: rl.resetSeconds },
             requestId: req.id,
           },
         });

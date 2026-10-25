@@ -1,93 +1,218 @@
 import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
+import { checkRateLimit } from '../services/redis.js';
 
-interface RateLimitConfig {
+export interface RateLimitRule {
+  scope: string;
+  methods: string[];
+  patterns: (string | RegExp)[];
   max: number;
-  timeWindowMs: number;
+  windowSeconds: number;
 }
 
-const ROUTE_RATE_LIMITS: Record<string, RateLimitConfig> = {
-  '/api/v1/auth/login': { max: 10, timeWindowMs: 60_000 },
-  '/api/v1/auth/register': { max: 10, timeWindowMs: 60_000 },
-  '/api/v1/bookings/:id/checkout': { max: 20, timeWindowMs: 60_000 },
-  '/api/v1/events/:id/check-in/scan': { max: 120, timeWindowMs: 60_000 },
-  '/api/v1/events/:id/feedback': { max: 10, timeWindowMs: 60_000 },
-};
+export const RATE_LIMIT_RULES: RateLimitRule[] = [
+  // 1. Register
+  {
+    scope: 'register',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/auth/register',
+      /^\/(api\/v1\/)?auth\/register\/?$/,
+    ],
+    max: 10,
+    windowSeconds: 60,
+  },
+  // 2. Login
+  {
+    scope: 'login',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/auth/login',
+      /^\/(api\/v1\/)?auth\/login\/?$/,
+    ],
+    max: 10,
+    windowSeconds: 60,
+  },
+  // 3. Forgot Password
+  {
+    scope: 'forgot',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/auth/forgot-password',
+      /^\/(api\/v1\/)?auth\/forgot-password\/?$/,
+    ],
+    max: 5,
+    windowSeconds: 60,
+  },
+  // 4. Verify Email & Reset Password
+  {
+    scope: 'verify',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/auth/verify-email',
+      '/api/v1/auth/reset-password',
+      /^\/(api\/v1\/)?auth\/(verify-email|reset-password)\/?$/,
+    ],
+    max: 10,
+    windowSeconds: 60,
+  },
+  // 5. Booking Creation
+  {
+    scope: 'booking',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/events/:id/bookings',
+      /^\/(api\/v1\/)?events\/[^/]+\/bookings\/?$/,
+    ],
+    max: 10,
+    windowSeconds: 60,
+  },
+  // 6. Checkout
+  {
+    scope: 'checkout',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/bookings/:id/checkout',
+      /^\/(api\/v1\/)?bookings\/[^/]+\/checkout\/?$/,
+    ],
+    max: 20,
+    windowSeconds: 60,
+  },
+  // 7. Payments Verify
+  {
+    scope: 'payments/verify',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/payments/verify',
+      '/api/v1/payments/checkout/verify',
+      /^\/(api\/v1\/)?payments\/(checkout\/)?verify\/?$/,
+    ],
+    max: 20,
+    windowSeconds: 60,
+  },
+  // 8. Staff QR Scan & Offline Check-in Batch
+  {
+    scope: 'scan',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/events/:id/check-in/scan',
+      '/api/v1/events/:id/check-in/sync-batch',
+      /^\/(api\/v1\/)?events\/[^/]+\/check-in\/(scan|sync-batch)\/?$/,
+    ],
+    max: 120,
+    windowSeconds: 60,
+  },
+  // 9. Feedback
+  {
+    scope: 'feedback',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/events/:id/feedback',
+      '/api/v1/events/:id/feedback/replies',
+      '/api/v1/events/:id/feedback/flag',
+      /^\/(api\/v1\/)?events\/[^/]+\/feedback(\/replies|\/flag)?\/?$/,
+    ],
+    max: 10,
+    windowSeconds: 60,
+  },
+  // 10. Alerts Broadcast
+  {
+    scope: 'alerts',
+    methods: ['POST'],
+    patterns: [
+      '/api/v1/events/:id/alerts',
+      '/api/v1/alerts/broadcast',
+      /^\/(api\/v1\/)?(events\/[^/]+\/alerts|alerts\/broadcast)\/?$/,
+    ],
+    max: 10,
+    windowSeconds: 60,
+  },
+  // 11. Data Exports
+  {
+    scope: 'exports',
+    methods: ['POST', 'GET'],
+    patterns: [
+      '/api/v1/organizer/events/:id/exports',
+      '/api/v1/exports/download/:token',
+      /^\/(api\/v1\/)?(organizer\/events\/[^/]+\/exports|exports\/download\/[^/]+)\/?$/,
+    ],
+    max: 10,
+    windowSeconds: 60,
+  },
+  // 12. Public Verify & Passport
+  {
+    scope: 'public verify/passport',
+    methods: ['GET'],
+    patterns: [
+      '/api/v1/verify/:code',
+      '/verify/:code',
+      '/api/v1/p/:slug',
+      '/p/:slug',
+      '/api/v1/crosscollege-passport/:id',
+      '/crosscollege-passport/:id',
+      /^\/(api\/v1\/)?(verify|p|crosscollege-passport)\/[^/]+\/?$/,
+    ],
+    max: 30,
+    windowSeconds: 60,
+  },
+];
 
-interface WindowEntry {
-  timestamps: number[];
-}
+export function findMatchingRateLimitRule(
+  method: string,
+  routeTemplate?: string,
+  pathname?: string
+): RateLimitRule | null {
+  for (const rule of RATE_LIMIT_RULES) {
+    if (!rule.methods.includes(method)) continue;
 
-const windowMap = new Map<string, WindowEntry>();
-
-// Clean up stale IP windows every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of windowMap.entries()) {
-    entry.timestamps = entry.timestamps.filter((t) => now - t < 600_000);
-    if (entry.timestamps.length === 0) windowMap.delete(key);
-  }
-}, 300_000);
-
-export function getRateLimitConfig(url: string): RateLimitConfig | null {
-  for (const [pattern, cfg] of Object.entries(ROUTE_RATE_LIMITS)) {
-    if (pattern.includes(':id')) {
-      const regex = new RegExp('^' + pattern.replace(/:[a-zA-Z0-9_]+/g, '[^/]+') + '$');
-      if (regex.test(url)) return cfg;
-    } else if (url === pattern) {
-      return cfg;
+    for (const pattern of rule.patterns) {
+      if (typeof pattern === 'string') {
+        if (routeTemplate && routeTemplate === pattern) return rule;
+        if (pathname && pathname === pattern) return rule;
+      } else if (pattern instanceof RegExp) {
+        if (routeTemplate && pattern.test(routeTemplate)) return rule;
+        if (pathname && pattern.test(pathname)) return rule;
+      }
     }
   }
   return null;
 }
 
 export const rateLimiterPlugin: FastifyPluginAsync = fp(async (fastify) => {
-  fastify.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
+  fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
     // Whitelist test environment if explicitly disabled
     if (process.env.DISABLE_RATE_LIMIT === 'true') return;
 
-    const url = req.url.split('?')[0];
-    const cfg = getRateLimitConfig(url);
-    if (!cfg) return;
+    const pathname = req.url.split('?')[0];
+    const rule = findMatchingRateLimitRule(req.method, req.routeOptions?.url, pathname);
+    if (!rule) return;
 
-    const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-      (req.headers['x-client-ip'] as string) ||
-      req.ip ||
-      req.socket.remoteAddress ||
-      'unknown';
-    const userId = (req as any).user?.id || '';
-    const key = `${url}:${ip}:${userId}`;
-    const now = Date.now();
+    // Fastify with trustProxy: 1 resolves req.ip to the client IP
+    const ip = req.ip || '127.0.0.1';
+    const userId = req.user?.id || 'anon';
+    const rateLimitKey = `${rule.scope}:${ip}:${userId}`;
 
-    let entry = windowMap.get(key);
-    if (!entry) {
-      entry = { timestamps: [] };
-      windowMap.set(key, entry);
-    }
+    const result = await checkRateLimit(rateLimitKey, rule.max, rule.windowSeconds);
 
-    // Retain only timestamps within the current window
-    entry.timestamps = entry.timestamps.filter((t) => now - t < cfg.timeWindowMs);
+    reply.header('X-RateLimit-Limit', rule.max);
+    reply.header('X-RateLimit-Remaining', result.remaining);
+    reply.header('X-RateLimit-Reset', result.resetSeconds);
 
-    const remaining = Math.max(0, cfg.max - entry.timestamps.length);
-    const resetSeconds = Math.ceil(cfg.timeWindowMs / 1000);
-
-    reply.header('X-RateLimit-Limit', cfg.max);
-    reply.header('X-RateLimit-Remaining', remaining);
-    reply.header('X-RateLimit-Reset', resetSeconds);
-
-    if (entry.timestamps.length >= cfg.max) {
-      reply.header('Retry-After', resetSeconds);
+    if (!result.allowed) {
+      reply.header('Retry-After', result.resetSeconds);
       return reply.code(429).send({
         error: {
           code: 'RATE_LIMIT_EXCEEDED',
-          message: `Too many requests to ${url}. Please retry after ${resetSeconds} seconds.`,
-          details: { limit: cfg.max, windowSeconds: resetSeconds },
+          message: `Too many requests for ${rule.scope}. Please retry after ${result.resetSeconds} seconds.`,
+          details: {
+            scope: rule.scope,
+            limit: rule.max,
+            windowSeconds: rule.windowSeconds,
+            resetSeconds: result.resetSeconds,
+          },
           requestId: req.id,
         },
       });
     }
-
-    entry.timestamps.push(now);
   });
 });

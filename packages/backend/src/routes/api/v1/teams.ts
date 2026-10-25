@@ -219,13 +219,13 @@ export const teamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       const { id: teamId } = req.params as { id: string };
       const user = req.user!;
 
-      const allowed = await checkRateLimit(`rate:invitations:${user.id}`, 20, 3600);
-      if (!allowed) {
+      const rl = await checkRateLimit(`rate:invitations:${user.id}`, 20, 3600);
+      if (!rl.allowed) {
         return reply.code(429).send({
           error: {
             code: 'RATE_LIMIT_EXCEEDED',
             message: 'Invitation limit exceeded (max 20 per hour).',
-            details: { limit: 20, window: '1h' },
+            details: { limit: 20, window: '1h', resetSeconds: rl.resetSeconds },
             requestId: req.id,
           },
         });

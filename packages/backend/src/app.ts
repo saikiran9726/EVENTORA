@@ -29,7 +29,7 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   verifyPaymentStartupGuard();
 
   const app = fastify({
-    trustProxy: true,
+    trustProxy: 1,
     genReqId: () => crypto.randomUUID(),
     logger: process.env.NODE_ENV === 'test' ? false : {
       level: 'info',
@@ -44,13 +44,13 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   // Security Headers (CSP, HSTS, X-Content-Type-Options, Permissions-Policy)
   app.register(securityHeadersPlugin);
 
-  // Rate Limiting (Sensitive Routes)
-  app.register(rateLimiterPlugin);
-
-  // Metrics hook
+  // Metrics hook (Bounded cardinality with __unmatched__ route mapping)
   app.addHook('onResponse', async (req, reply) => {
     const durationSec = (reply.elapsedTime || 0) / 1000;
-    const route = req.routeOptions?.url || req.url.split('?')[0];
+    const route =
+      req.routeOptions?.url && req.routeOptions.url !== '/*'
+        ? req.routeOptions.url
+        : '__unmatched__';
     recordMetricRequest(req.method, route, reply.statusCode, durationSec);
   });
 
@@ -70,25 +70,26 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   // Strict Deny-by-default route validator
   app.addHook('onRoute', validateRouteSecurity);
 
-  // CORS - Explicit configured origins + local development & Vercel
-  const configuredOrigins = (config.CORS_ORIGIN || 'http://localhost:5173')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
+  // CORS - Strict allow-list built from comma-separated CORS_ORIGIN (No untrusted origin reflection)
+  const allowedOrigins = new Set(
+    (config.CORS_ORIGIN || '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean)
+  );
+
+  // In non-production environments (development/test), also allow local development origins if not explicitly present
+  if (config.NODE_ENV !== 'production') {
+    allowedOrigins.add('http://localhost:5173');
+    allowedOrigins.add('http://127.0.0.1:5173');
+  }
 
   app.register(fastifyCors, {
     origin: (origin, cb) => {
-      // Allow non-browser agents, local runners, mobile apps, or same-origin requests without Origin header
+      // Allow non-browser agents, local test runners, mobile apps, or same-origin requests without Origin header
       if (!origin) return cb(null, true);
 
-      const isAllowed =
-        configuredOrigins.includes(origin) ||
-        origin === 'https://eventora-jet.vercel.app' ||
-        origin.endsWith('.vercel.app') ||
-        origin.startsWith('http://localhost:') ||
-        origin.startsWith('http://127.0.0.1:');
-
-      if (isAllowed) {
+      if (allowedOrigins.has(origin)) {
         return cb(null, true);
       }
       return cb(null, false);
@@ -106,6 +107,8 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
       'if-match',
       'X-Request-ID',
       'x-request-id',
+      'X-Metrics-Token',
+      'x-metrics-token',
     ],
   });
 
@@ -114,6 +117,9 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
 
   // Auth & Policy enforcement
   app.register(authPolicyPlugin);
+
+  // Rate Limiting (Redis-backed checkRateLimit; req.ip + user.id after auth policy)
+  app.register(rateLimiterPlugin);
 
   // Monitoring & Health (GET /health, GET /readiness, GET /metrics)
   app.register(monitoringRoutes);
