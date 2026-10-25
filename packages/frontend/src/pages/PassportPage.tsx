@@ -18,9 +18,12 @@ import {
   Users,
   CheckCircle2,
   Globe,
+  Ticket,
+  MapPin,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import { apiClient } from '@/lib/api-client';
+import { QRDisplay } from '@/components/ui/QRDisplay';
 
 export interface UserCertificate {
   id: string;
@@ -96,8 +99,9 @@ export const PassportPage: React.FC<{
   onNavigateToPublicPassport?: (slug: string) => void;
 }> = ({ onNavigateToVerify, onNavigateToPublicPassport }) => {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'timeline' | 'certificates' | 'settings'>('timeline');
+  const [activeTab, setActiveTab] = useState<'timeline' | 'passes' | 'certificates' | 'settings'>('timeline');
   const [achievements, setAchievements] = useState<StudentAchievement[]>(DEFAULT_PROTOTYPE_ACHIEVEMENTS);
+  const [activeTickets, setActiveTickets] = useState<any[]>([]);
   const [certificates, setCertificates] = useState<UserCertificate[]>([
     {
       id: 'cert-7h9k2m4n',
@@ -132,9 +136,10 @@ export const PassportPage: React.FC<{
     setIsLoading(true);
 
     try {
-      const [passData, certData] = await Promise.all([
+      const [passData, certData, ticketsData] = await Promise.all([
         apiClient<any>('/api/v1/me/passport'),
         apiClient<any>('/api/v1/me/certificates'),
+        apiClient<any>('/api/v1/me/tickets'),
       ]);
 
       if (passData) {
@@ -144,6 +149,10 @@ export const PassportPage: React.FC<{
 
       if (certData && Array.isArray(certData.certificates)) {
         setCertificates(certData.certificates);
+      }
+
+      if (ticketsData && Array.isArray(ticketsData.tickets)) {
+        setActiveTickets(ticketsData.tickets);
       }
     } catch {
       // Prototype fallback
@@ -365,6 +374,17 @@ export const PassportPage: React.FC<{
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('passes')}
+            className={`px-3 py-1.5 font-semibold rounded-md transition-colors ${
+              activeTab === 'passes'
+                ? 'bg-brand text-white shadow-xs'
+                : 'text-text-muted hover:text-text bg-surface-2'
+            }`}
+          >
+            Event Passes ({activeTickets.length})
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('certificates')}
             className={`px-3 py-1.5 font-semibold rounded-md transition-colors ${
               activeTab === 'certificates'
@@ -387,6 +407,79 @@ export const PassportPage: React.FC<{
           </button>
         </div>
       </Card>
+
+      {/* Tab: Active Event Passes */}
+      {activeTab === 'passes' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-text flex items-center gap-2">
+              <Ticket className="w-4 h-4 text-brand" />
+              <span>Registered Event Passes & Tickets</span>
+            </h2>
+            <Badge variant="brand" size="sm">
+              Live Verified QR Passes
+            </Badge>
+          </div>
+
+          {isLoading ? (
+            <div className="p-8 text-center text-text-muted text-xs">
+              Loading event passes...
+            </div>
+          ) : activeTickets.length === 0 ? (
+            <Card className="p-8 text-center text-text-muted space-y-2 border border-dashed border-border">
+              <Ticket className="w-10 h-10 mx-auto text-text-muted/40" />
+              <p className="text-sm font-semibold text-text">No Active Event Passes</p>
+              <p className="text-xs max-w-sm mx-auto">
+                Register for upcoming events in the Discovery feed to receive high-contrast digital QR passes.
+              </p>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {activeTickets.map((t) => (
+                <Card key={t.id} className="p-4 space-y-3 hover:border-brand/50 transition-colors text-xs flex flex-col justify-between border border-border">
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="text-sm font-bold text-text leading-snug">{t.event_title || 'Campus Event'}</h3>
+                      <Badge variant={t.status === 'VALID' ? 'success' : 'neutral'} size="sm">
+                        {t.status === 'VALID' ? 'CONFIRMED' : t.status}
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-1 text-text-muted text-[11px]">
+                      {t.event_starts_at && (
+                        <div className="flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-brand" />
+                          <span>{new Date(t.event_starts_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                        </div>
+                      )}
+                      {t.venue_name && (
+                        <div className="flex items-center gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-brand" />
+                          <span>{t.venue_name}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5">
+                        <Ticket className="w-3.5 h-3.5 text-brand" />
+                        <span>Pass Code: <strong className="font-mono text-text">{t.ticket_code}</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 bg-surface-2 rounded-lg flex items-center justify-center border border-border">
+                      <QRDisplay
+                        ticketId={t.ticket_code}
+                        qrPayloadPreview={`https://eventora-jet.vercel.app/verify/${t.ticket_code}`}
+                        status={t.status === 'VALID' ? 'VALID' : 'CANCELLED'}
+                        eventName={t.event_title || 'Campus Event'}
+                        attendeeName="Student Attendee"
+                      />
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tab 1: Timeline View */}
       {activeTab === 'timeline' && (

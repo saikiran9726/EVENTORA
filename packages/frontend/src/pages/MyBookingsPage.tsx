@@ -39,8 +39,69 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
   const fetchBookings = async () => {
     setIsLoading(true);
     try {
-      const data = await apiClient.get<any>('/api/v1/me/bookings');
-      setBookings(data?.bookings || []);
+      const [bookingsData, ticketsData] = await Promise.allSettled([
+        apiClient.get<any>('/api/v1/me/bookings'),
+        apiClient.get<any>('/api/v1/me/tickets'),
+      ]);
+
+      const rawBookings = bookingsData.status === 'fulfilled' ? (bookingsData.value?.bookings || []) : [];
+      const rawTickets = ticketsData.status === 'fulfilled' ? (ticketsData.value?.tickets || []) : [];
+
+      if (rawBookings.length > 0 || rawTickets.length > 0) {
+        const mapped: BookingRecord[] = rawBookings.map((b: any) => {
+          const associatedTicket = rawTickets.find((t: any) => t.booking_id === b.id || t.id === b.ticket_id);
+          const tCode = b.ticket_code || associatedTicket?.ticket_code || b.ticketCode;
+          return {
+            id: b.id,
+            eventId: b.event_id || b.eventId,
+            eventTitle: b.event_title || b.eventTitle || associatedTicket?.event_title || 'Campus Event',
+            status: b.status || (associatedTicket ? 'CONFIRMED' : 'PENDING'),
+            totalPaise: b.total_paise !== undefined ? b.total_paise : (b.totalPaise || 0),
+            createdAt: b.created_at || b.createdAt || new Date().toISOString(),
+            ticketCode: tCode,
+            qrPayload: tCode ? `https://eventora-jet.vercel.app/verify/${tCode}` : b.qrPayload,
+            startsAt: b.event_starts_at || b.startsAt || associatedTicket?.event_starts_at,
+            venueName: b.venue_name || b.venueName || associatedTicket?.venue_name || 'Campus Venue',
+            isCheckedIn: b.ticket_status === 'USED' || associatedTicket?.status === 'USED',
+          };
+        });
+
+        // Add any tickets that might not be mapped in bookings
+        for (const t of rawTickets) {
+          if (!mapped.some((m) => m.id === t.booking_id || m.ticketCode === t.ticket_code)) {
+            mapped.push({
+              id: t.booking_id || t.id,
+              eventId: t.event_id,
+              eventTitle: t.event_title || 'Campus Event',
+              status: t.status === 'VALID' ? 'CONFIRMED' : t.status,
+              totalPaise: t.price_paise || 0,
+              createdAt: t.created_at || new Date().toISOString(),
+              ticketCode: t.ticket_code,
+              qrPayload: `https://eventora-jet.vercel.app/verify/${t.ticket_code}`,
+              startsAt: t.event_starts_at,
+              venueName: t.venue_name || 'Campus Venue',
+              isCheckedIn: t.status === 'USED',
+            });
+          }
+        }
+
+        setBookings(mapped);
+      } else {
+        setBookings([
+          {
+            id: 'mock-bk-1',
+            eventId: 'mock-evt-1',
+            eventTitle: 'AI & Robotics Annual Symposium',
+            status: 'CONFIRMED',
+            totalPaise: 0,
+            createdAt: new Date().toISOString(),
+            ticketCode: 'EVT-ROBOT-8921',
+            qrPayload: 'https://eventora.campus.edu/verify/EVT-ROBOT-8921',
+            startsAt: '2026-11-20T10:00:00Z',
+            venueName: 'Sir MV Auditorium',
+          },
+        ]);
+      }
     } catch {
       // Prototype fallback when unauthenticated
       setBookings([

@@ -162,19 +162,19 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSucc
           }
         } else {
           setVenues([
-            { id: 'v-auditorium', name: 'Sir MV Auditorium', building: 'Academic Block A', capacity: 800 },
-            { id: 'v-seminar-hall', name: 'Kalam Seminar Hall', building: 'Science Block C', capacity: 250 },
-            { id: 'v-turing-lab', name: 'Turing Computing Lab', building: 'CS Department', capacity: 90 },
-            { id: 'v-amphitheater', name: 'Central Amphitheater', building: 'Student Center', capacity: 1200 },
+            { id: '44d2a71e-f6af-4764-8793-b116f9439a30', name: 'Sir MV Auditorium', building: 'Main Administrative Block', capacity: 500 },
+            { id: '5a6a045e-f6f1-4ac7-aaed-ddfe186f7a04', name: 'Dr. APJ Abdul Kalam Seminar Hall', building: 'Science & Technology Block', capacity: 200 },
+            { id: '5a422e51-2330-4681-b913-a008328fe263', name: 'Turing Computing Lab', building: 'Computer Science Department', capacity: 80 },
+            { id: 'a5aa35ed-6177-418d-af68-46db8142662d', name: 'Campus Central Amphitheater', building: 'Student Activity Center', capacity: 1200 },
           ]);
         }
       } catch {
         // Fallback campus venues
         setVenues([
-          { id: 'v-auditorium', name: 'Sir MV Auditorium', building: 'Academic Block A', capacity: 800 },
-          { id: 'v-seminar-hall', name: 'Kalam Seminar Hall', building: 'Science Block C', capacity: 250 },
-          { id: 'v-turing-lab', name: 'Turing Computing Lab', building: 'CS Department', capacity: 90 },
-          { id: 'v-amphitheater', name: 'Central Amphitheater', building: 'Student Center', capacity: 1200 },
+          { id: '44d2a71e-f6af-4764-8793-b116f9439a30', name: 'Sir MV Auditorium', building: 'Main Administrative Block', capacity: 500 },
+          { id: '5a6a045e-f6f1-4ac7-aaed-ddfe186f7a04', name: 'Dr. APJ Abdul Kalam Seminar Hall', building: 'Science & Technology Block', capacity: 200 },
+          { id: '5a422e51-2330-4681-b913-a008328fe263', name: 'Turing Computing Lab', building: 'Computer Science Department', capacity: 80 },
+          { id: 'a5aa35ed-6177-418d-af68-46db8142662d', name: 'Campus Central Amphitheater', building: 'Student Activity Center', capacity: 1200 },
         ]);
       }
     };

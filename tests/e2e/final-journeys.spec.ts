@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import path from 'path';
+import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 11 E2E: Final Campus Master Journeys (NFR-UX, NFR-SEC, NFR-SCALE)', () => {
   // Journey 1: Full Lifecycle (Organizer -> Reviewer -> Student -> QR -> Scan -> Feedback -> Cert -> Analytics)
@@ -96,7 +97,7 @@ test.describe('Phase 11 E2E: Final Campus Master Journeys (NFR-UX, NFR-SEC, NFR-
     // Either renders public with Verified Student or private 404
     await expect(page.locator('main')).toBeVisible();
 
-    await page.screenshot({ path: path.resolve(`./docs/screenshots/phase11-06-journey-crosscollege-passport-${testInfo.project.name}.png`) });
+    await safeScreenshot(page, `./docs/screenshots/phase11-06-journey-crosscollege-passport-${testInfo.project.name}.png`, testInfo);
   });
 
   // Journey 7: Multi-Tenant Organizer Isolation
@@ -106,7 +107,7 @@ test.describe('Phase 11 E2E: Final Campus Master Journeys (NFR-UX, NFR-SEC, NFR-
     await roleSelect.selectOption('organizer');
 
     await expect(page.getByText(/Club Organizer Command Center/i).first()).toBeVisible();
-    await page.screenshot({ path: path.resolve(`./docs/screenshots/phase11-07-journey-tenant-isolation-${testInfo.project.name}.png`) });
+    await safeScreenshot(page, `./docs/screenshots/phase11-07-journey-tenant-isolation-${testInfo.project.name}.png`, testInfo);
   });
 
   // Journey 8: Urgent Alert Broadcast & Notification Center
@@ -122,7 +123,7 @@ test.describe('Phase 11 E2E: Final Campus Master Journeys (NFR-UX, NFR-SEC, NFR-
       await expect(page.getByText(/Broadcast Pipeline & Delivery Status/i).first()).toBeVisible();
     }
 
-    await page.screenshot({ path: path.resolve(`./docs/screenshots/phase11-08-journey-alert-broadcast-${testInfo.project.name}.png`) });
+    await safeScreenshot(page, `./docs/screenshots/phase11-08-journey-alert-broadcast-${testInfo.project.name}.png`, testInfo);
 
     // Accessibility Audit on Final Assembly
     const accessibilityScanResults = await new AxeBuilder({ page })

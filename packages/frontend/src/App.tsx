@@ -24,11 +24,11 @@ import { PassportPage } from '@/pages/PassportPage';
 import { PublicPassportPage } from '@/pages/PublicPassportPage';
 import { PublicVerifyPage } from '@/pages/PublicVerifyPage';
 import { VolunteerHubPage } from '@/pages/VolunteerHubPage';
+import { AdminPortalPage } from '@/pages/admin/AdminPortalPage';
 import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 import { ExpiredSessionModal } from '@/components/auth/ExpiredSessionModal';
 import { ToastProvider } from '@/components/ui/Toast';
-import { Card } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
+// Card and Badge used inside sub-pages
 
 export type CurrentRole = 'student' | 'organizer' | 'reviewer' | 'admin' | 'checkin_staff';
 
@@ -91,6 +91,16 @@ const AppInner: React.FC = () => {
       setActiveRoute('dashboard');
     } else if (path === '/verify') {
       setActiveRoute('verify');
+    } else if (path === '/admin' || path === '/admin/overview') {
+      setActiveRoute('admin-overview');
+    } else if (path === '/admin/users') {
+      setActiveRoute('admin-users');
+    } else if (path === '/admin/clubs') {
+      setActiveRoute('admin-clubs');
+    } else if (path === '/admin/events') {
+      setActiveRoute('admin-events');
+    } else if (path === '/admin/audit') {
+      setActiveRoute('admin-audit');
     } else if (path === '/components') {
       setActiveRoute('components');
     } else if (path === '/' || path === '/discover') {
@@ -349,39 +359,20 @@ const AppInner: React.FC = () => {
       return <ScannerPage eventId={selectedEventId || 'mock-event-id'} />;
     }
 
-    if (activeRoute === 'admin-overview') {
+    if (
+      activeRoute === 'admin-overview' ||
+      activeRoute === 'admin-users' ||
+      activeRoute === 'admin-clubs' ||
+      activeRoute === 'admin-events' ||
+      activeRoute === 'admin-audit'
+    ) {
       return (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text">
-                Campus System Administration
-              </h1>
-              <p className="text-xs sm:text-sm text-text-muted mt-1">
-                Platform health, role governance, and security audit log.
-              </p>
-            </div>
-            <Badge variant="error" size="sm">Policy: user:manage</Badge>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card>
-              <span className="text-xs text-text-muted font-medium">Database Node</span>
-              <p className="text-xl font-bold text-text mt-1">PostgreSQL 16</p>
-              <Badge variant="success" size="sm" className="mt-2">Healthy</Badge>
-            </Card>
-            <Card>
-              <span className="text-xs text-text-muted font-medium">Task Outbox Dispatcher</span>
-              <p className="text-xl font-bold text-text mt-1">BullMQ Worker</p>
-              <Badge variant="success" size="sm" className="mt-2">0 Lag</Badge>
-            </Card>
-            <Card>
-              <span className="text-xs text-text-muted font-medium">Security Boundary</span>
-              <p className="text-xl font-bold text-text mt-1">Deny By Default</p>
-              <Badge variant="brand" size="sm" className="mt-2">Active</Badge>
-            </Card>
-          </div>
-        </div>
+        <AdminPortalPage
+          initialTab={activeRoute}
+          onNavigateTab={(tab) => {
+            setActiveRoute(tab);
+          }}
+        />
       );
     }
 
@@ -414,6 +405,11 @@ const AppInner: React.FC = () => {
           dashboard: '/dashboard',
           components: '/components',
           verify: '/verify',
+          'admin-overview': '/admin',
+          'admin-users': '/admin/users',
+          'admin-clubs': '/admin/clubs',
+          'admin-events': '/admin/events',
+          'admin-audit': '/admin/audit',
         };
         const targetPath = pathMap[route];
         if (targetPath && window.location.pathname !== targetPath) {

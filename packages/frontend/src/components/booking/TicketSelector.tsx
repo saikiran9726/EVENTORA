@@ -46,11 +46,20 @@ export const TicketSelector: React.FC<TicketSelectorProps> = ({
   // Live polling (every 15s + refetch on window focus)
   const fetchAvailability = useCallback(async () => {
     try {
-      const data = await apiClient<{ ticketTypes: TicketTypeInfo[] }>(`/api/v1/events/${eventId}/ticket-types`);
+      const data = await apiClient<{ ticketTypes: any[] }>(`/api/v1/events/${eventId}/ticket-types`);
       if (data?.ticketTypes && data.ticketTypes.length > 0) {
-        setTicketTypes(data.ticketTypes);
-        if (!selectedTicketId && data.ticketTypes.length > 0) {
-          setSelectedTicketId(data.ticketTypes[0].id);
+        const mapped: TicketTypeInfo[] = data.ticketTypes.map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          pricePaise: t.price_paise !== undefined ? t.price_paise : (t.pricePaise || 0),
+          capacity: t.capacity,
+          sold: t.sold,
+          held: t.held,
+          available: t.available !== undefined ? t.available : Math.max(0, t.capacity - (t.sold + t.held)),
+        }));
+        setTicketTypes(mapped);
+        if (!selectedTicketId && mapped.length > 0) {
+          setSelectedTicketId(mapped[0].id);
         }
       }
       setLastRefreshed(new Date());

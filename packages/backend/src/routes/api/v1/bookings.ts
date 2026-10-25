@@ -265,7 +265,10 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         const res = await client.query(
           `SELECT b.*, e.title as event_title, e.slug as event_slug, e.starts_at as event_starts_at,
                   e.ends_at as event_ends_at, v.name as venue_name,
-                  COUNT(t.id)::int as ticket_count
+                  COUNT(t.id)::int as ticket_count,
+                  MAX(t.ticket_code) as ticket_code,
+                  MAX(t.id) as ticket_id,
+                  MAX(t.status) as ticket_status
            FROM bookings b
            JOIN events e ON b.event_id = e.id
            LEFT JOIN venues v ON e.venue_id = v.id

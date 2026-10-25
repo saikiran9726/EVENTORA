@@ -44,7 +44,10 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
   onProceedToCheckout,
 }) => {
   const { toast } = useToast();
-  const event = PROTOTYPE_EVENTS.find((e) => e.id === eventId) || PROTOTYPE_EVENTS[0];
+  const prototypeEvent = PROTOTYPE_EVENTS.find((e) => e.id === eventId) || PROTOTYPE_EVENTS[0];
+  const [loadedEvent, setLoadedEvent] = useState<any>(null);
+  const [ticketTiers, setTicketTiers] = useState<any[]>([]);
+  const [selectedTierId, setSelectedTierId] = useState<string>('');
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [selectedTicketType, setSelectedTicketType] = useState('regular');
   const [attendeeName, setAttendeeName] = useState('');
@@ -60,6 +63,67 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
     responseRatePct: 42,
     formattedSummary: '4.6 ★ (38 of 90 attended · 42% responded)',
   });
+
+  // Effective event merges backend API data over prototype baseline
+  const event = loadedEvent ? {
+    id: loadedEvent.id,
+    title: loadedEvent.title,
+    description: loadedEvent.description,
+    category: loadedEvent.category || prototypeEvent.category,
+    department: loadedEvent.department || prototypeEvent.department,
+    venue: loadedEvent.venue?.name || loadedEvent.venueName || prototypeEvent.venue,
+    venueName: loadedEvent.venue?.name || loadedEvent.venueName || prototypeEvent.venue,
+    venueBuilding: loadedEvent.venue?.building || loadedEvent.venueBuilding || 'Main Campus',
+    dateStr: loadedEvent.startsAt ? new Date(loadedEvent.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : prototypeEvent.dateStr,
+    timeStr: loadedEvent.startsAt ? `${new Date(loadedEvent.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${new Date(loadedEvent.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : prototypeEvent.timeStr,
+    capacity: loadedEvent.capacity || prototypeEvent.capacity,
+    registeredCount: loadedEvent.registeredCount ?? prototypeEvent.registeredCount,
+    isPaid: ticketTiers.some((t: any) => (t.price_paise || t.pricePaise || 0) > 0),
+    pricePaise: ticketTiers.find((t: any) => (t.price_paise || t.pricePaise || 0) > 0)?.price_paise || 0,
+    imageUrl: loadedEvent.imageUrl || prototypeEvent.imageUrl,
+    tags: Array.isArray(loadedEvent.tags) && loadedEvent.tags.length > 0 ? (loadedEvent.tags as string[]) : prototypeEvent.tags,
+    organizer: loadedEvent.organizer?.displayName || loadedEvent.organizerName || prototypeEvent.organizer,
+    organizerName: loadedEvent.organizer?.displayName || loadedEvent.organizerName || prototypeEvent.organizer,
+    faqs: loadedEvent.faqs && loadedEvent.faqs.length > 0 ? loadedEvent.faqs : [],
+    announcements: loadedEvent.announcements || [],
+  } : {
+    ...prototypeEvent,
+    venueName: prototypeEvent.venue,
+    venueBuilding: 'Main Campus',
+    organizerName: prototypeEvent.organizer,
+    faqs: [] as any[],
+    announcements: [] as any[],
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadEventDetails() {
+      try {
+        const res = await apiClient.get<any>(`/api/v1/events/${eventId}`);
+        const eventObj = res?.event || res;
+        if (isMounted && eventObj?.id) {
+          setLoadedEvent(eventObj);
+        }
+      } catch {
+        // Prototype event fallback
+      }
+
+      try {
+        const tierRes = await apiClient.get<any>(`/api/v1/events/${eventId}/ticket-types`);
+        const tiers = tierRes?.ticketTypes || [];
+        if (isMounted && tiers.length > 0) {
+          setTicketTiers(tiers);
+          setSelectedTierId(tiers[0].id);
+        }
+      } catch {
+        // Fallback
+      }
+    }
+
+    loadEventDetails();
+    return () => { isMounted = false; };
+  }, [eventId]);
 
   useEffect(() => {
     async function loadRatings() {
@@ -77,7 +141,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
 
   const isSoldOut = event.registeredCount >= event.capacity;
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!attendeeName.trim() || !attendeeRoll.trim()) {
       toast({
@@ -98,26 +162,68 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      setIsRegisterOpen(false);
-      if (event.isPaid) {
-        toast({
-          type: 'success',
-          title: 'Seat Hold Created (Test Mode)',
-          message: `Proceeding to test simulator checkout for ${formatINR(event.pricePaise)}.`,
+    try {
+      const activeTierId = selectedTierId || ticketTiers[0]?.id || 'tier-standard';
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeTierId);
+      const isEventUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId);
+      const idempotencyKey = `book-${eventId}-${activeTierId}-${Date.now()}`;
+
+      if (isUuid && isEventUuid) {
+        const res = await apiClient.post<any>(`/api/v1/events/${eventId}/bookings`, {
+          items: [{ ticketTypeId: activeTierId, quantity: 1 }],
+          answers: [
+            { questionId: 'attendee-name', answer: attendeeName.trim() },
+            { questionId: 'attendee-roll', answer: attendeeRoll.trim() },
+          ],
+        }, {
+          headers: { 'Idempotency-Key': idempotencyKey },
         });
-        if (onProceedToCheckout) {
-          onProceedToCheckout(`bkg_demo_${Date.now()}`);
+
+        setIsRegisterOpen(false);
+
+        if (res?.booking?.status === 'CONFIRMED' || res?.booking?.total_paise === 0) {
+          toast({
+            type: 'success',
+            title: 'Registration Confirmed!',
+            message: `Your pass for "${event.title}" has been issued and added to Tickets & Passport.`,
+          });
+        } else if (res?.booking?.status === 'PENDING_PAYMENT' && onProceedToCheckout) {
+          toast({
+            type: 'success',
+            title: 'Seat Hold Created (Test Mode)',
+            message: `Proceeding to test simulator checkout for ${formatINR(res.booking.total_paise || event.pricePaise || 0)}.`,
+          });
+          onProceedToCheckout(res.booking.id);
         }
       } else {
-        toast({
-          type: 'success',
-          title: 'Registration Confirmed!',
-          message: 'Your digital QR ticket has been generated and added to My Events.',
-        });
+        // Prototype fallback simulation
+        setIsRegisterOpen(false);
+        if (event.isPaid) {
+          toast({
+            type: 'success',
+            title: 'Seat Hold Created (Test Mode)',
+            message: `Proceeding to test simulator checkout for ${formatINR(event.pricePaise)}.`,
+          });
+          if (onProceedToCheckout) {
+            onProceedToCheckout(`bkg_demo_${Date.now()}`);
+          }
+        } else {
+          toast({
+            type: 'success',
+            title: 'Registration Confirmed!',
+            message: 'Your digital QR ticket has been generated and added to My Events.',
+          });
+        }
       }
-    }, 600);
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Booking Error',
+        message: err.error?.message || err.message || 'Could not complete registration. Please check availability or sign in.',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const RegistrationFormContent = (
@@ -146,14 +252,20 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
 
       <Select
         label="Ticket Category"
-        options={[
+        options={ticketTiers.length > 0 ? ticketTiers.map((t: any) => ({
+          value: t.id,
+          label: `${t.name} (${(t.price_paise || t.pricePaise) ? formatINR(t.price_paise || t.pricePaise) : 'Free'})`,
+        })) : [
           {
             value: 'regular',
             label: `Student Standard Pass (${event.isPaid ? formatINR(event.pricePaise) : 'Free'})`,
           },
         ]}
-        value={selectedTicketType}
-        onChange={(e) => setSelectedTicketType(e.target.value)}
+        value={selectedTierId || selectedTicketType}
+        onChange={(e) => {
+          setSelectedTierId(e.target.value);
+          setSelectedTicketType(e.target.value);
+        }}
       />
 
       <Checkbox
@@ -290,7 +402,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
             </p>
 
             <div className="flex flex-wrap gap-1.5 mt-4 pt-4 border-t border-border">
-              {event.tags.map((tag) => (
+              {event.tags.map((tag: string) => (
                 <span
                   key={tag}
                   className="text-xs bg-surface-2 text-text-muted px-2.5 py-1 rounded-sm border border-border"
@@ -444,7 +556,15 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
               startsAt={event.dateStr}
               endsAt={event.timeStr}
               onOpenCheckoutModal={() => setIsRegisterOpen(true)}
-              initialTicketTypes={[
+              initialTicketTypes={ticketTiers.length > 0 ? ticketTiers.map((t: any) => ({
+                id: t.id,
+                name: t.name,
+                pricePaise: t.price_paise !== undefined ? t.price_paise : (t.pricePaise || 0),
+                capacity: t.capacity,
+                sold: t.sold,
+                held: t.held,
+                available: t.available !== undefined ? t.available : Math.max(0, t.capacity - (t.sold + t.held)),
+              })) : [
                 {
                   id: 'tier-standard',
                   name: 'Student Admission',
