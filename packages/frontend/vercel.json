@@ -1,17 +1,18 @@
+
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://YOUR_RENDER_SERVICE_URL.onrender.com/api/:path*"
+      "destination": "https://eventora-api-p35a.onrender.com/api/:path*"
     },
     {
       "source": "/health",
-      "destination": "https://YOUR_RENDER_SERVICE_URL.onrender.com/health"
+      "destination": "https://eventora-api-p35a.onrender.com/health"
     },
     {
       "source": "/readiness",
-      "destination": "https://YOUR_RENDER_SERVICE_URL.onrender.com/readiness"
+      "destination": "https://eventora-api-p35a.onrender.com/readiness"
     },
     {
       "source": "/(.*)",
