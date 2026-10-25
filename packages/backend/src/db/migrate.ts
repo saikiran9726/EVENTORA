@@ -1300,7 +1300,8 @@ export async function runMigrations() {
         (8, 'Phase 8: Volunteers, Venue Navigator, Equipment & Issue Desk'),
         (9, 'Phase 9: Alerts, Notification Pipeline & Offline Check-in'),
         (10, 'Phase 10: Cross-College Discovery & Student Event Passport'),
-        (11, 'Phase 11: Production Hardening, ops_runs & Monthly Partitioning')
+        (11, 'Phase 11: Production Hardening, ops_runs & Monthly Partitioning'),
+        (12, 'Phase 12: Auth Token Purpose Separation & Session Hardening')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1310,6 +1311,14 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_checkins_perf_dedupe ON checkins(ticket_id, session_id);
       CREATE INDEX IF NOT EXISTS idx_ledger_perf_analytics ON organizer_ledger_entries(organizer_id, entry_type, created_at);
       CREATE INDEX IF NOT EXISTS idx_feedback_perf_event ON event_feedback(event_id, moderation_status);
+
+      -- Phase 12: Auth Token Purpose Separation & Session Hardening
+      ALTER TABLE password_resets ADD COLUMN IF NOT EXISTS purpose VARCHAR(50) DEFAULT 'reset_password' NOT NULL;
+      DO $$ BEGIN
+        ALTER TABLE password_resets ADD CONSTRAINT chk_password_resets_purpose CHECK (purpose IN ('verify_email', 'reset_password'));
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

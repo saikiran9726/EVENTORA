@@ -166,11 +166,13 @@ export async function validateSession(
     return null;
   }
 
-  // 5. Update lastSeenAt (sliding idle window)
-  await db
-    .update(sessions)
-    .set({ lastSeenAt: now })
-    .where(eq(sessions.idHash, idHash));
+  // 5. Update lastSeenAt (sliding idle window throttled to >= 60s)
+  if (idleElapsed >= 60 * 1000) {
+    await db
+      .update(sessions)
+      .set({ lastSeenAt: now })
+      .where(eq(sessions.idHash, idHash));
+  }
 
   return { user, session };
 }

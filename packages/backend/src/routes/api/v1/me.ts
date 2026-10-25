@@ -1,9 +1,17 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../../db/index.js';
-import { users, userPreferences, organizerMembers, eventStaffAssignments, organizerProfiles } from '../../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import {
+  users,
+  userPreferences,
+  organizerMembers,
+  eventStaffAssignments,
+  organizerProfiles,
+  sessions,
+} from '../../../db/schema.js';
+import { eq, and, ne, isNull, gt, desc } from 'drizzle-orm';
 import { logAuditEvent } from '../../../services/audit.js';
+import { SESSION_CONFIG, revokeAllUserSessions } from '../../../services/auth.js';
 
 const updateProfileSchema = z.object({
   displayName: z.string().min(2).max(100).optional(),
@@ -235,6 +243,174 @@ export const meRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => 
       return reply.code(200).send({
         preferences: updatedPrefs,
         message: 'Preferences updated successfully.',
+      });
+    }
+  );
+
+  // 5. GET /api/v1/me/sessions (list active devices)
+  fastify.get(
+    '/sessions',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const user = req.user!;
+      const currentIdHash = req.session?.idHash;
+      const now = new Date();
+
+      const userSessions = await db
+        .select()
+        .from(sessions)
+        .where(
+          and(
+            eq(sessions.userId, user.id),
+            isNull(sessions.revokedAt),
+            gt(sessions.expiresAt, now)
+          )
+        )
+        .orderBy(desc(sessions.lastSeenAt));
+
+      const deviceList = userSessions.map((s) => ({
+        id: s.idHash.toString('hex'),
+        createdAt: s.createdAt,
+        lastSeenAt: s.lastSeenAt,
+        expiresAt: s.expiresAt,
+        isCurrent: currentIdHash ? Buffer.compare(s.idHash, currentIdHash) === 0 : false,
+      }));
+
+      return reply.code(200).send({
+        sessions: deviceList,
+      });
+    }
+  );
+
+  // 6. DELETE /api/v1/me/sessions (revoke other sessions or all sessions)
+  fastify.delete(
+    '/sessions',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const user = req.user!;
+      const currentIdHash = req.session?.idHash;
+      const { all } = (req.query as { all?: string }) || {};
+
+      const now = new Date();
+
+      if (all === 'true') {
+        // Revoke all sessions including current
+        await revokeAllUserSessions(user.id);
+        reply.clearCookie(SESSION_CONFIG.cookieName, { path: '/' });
+        reply.clearCookie(SESSION_CONFIG.csrfCookieName, { path: '/' });
+      } else {
+        // Revoke all other sessions, preserving current
+        if (currentIdHash) {
+          await db
+            .update(sessions)
+            .set({ revokedAt: now })
+            .where(
+              and(
+                eq(sessions.userId, user.id),
+                isNull(sessions.revokedAt),
+                ne(sessions.idHash, currentIdHash)
+              )
+            );
+        } else {
+          await revokeAllUserSessions(user.id);
+        }
+      }
+
+      await logAuditEvent({
+        actorId: user.id,
+        action: 'user.sessions_revoked',
+        resourceType: 'session',
+        collegeId: user.collegeId,
+        ip: req.ip,
+      });
+
+      return reply.code(200).send({
+        success: true,
+        message: all === 'true' ? 'All sessions revoked.' : 'All other sessions revoked.',
+      });
+    }
+  );
+
+  // 7. DELETE /api/v1/me/sessions/:id (revoke a specific session device)
+  fastify.delete(
+    '/sessions/:id',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const user = req.user!;
+      const { id } = req.params as { id: string };
+
+      if (!id || !/^[0-9a-fA-F]{64}$/.test(id)) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid session identifier format',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
+
+      const targetIdHash = Buffer.from(id, 'hex');
+      const now = new Date();
+
+      const [revoked] = await db
+        .update(sessions)
+        .set({ revokedAt: now })
+        .where(
+          and(
+            eq(sessions.idHash, targetIdHash),
+            eq(sessions.userId, user.id),
+            isNull(sessions.revokedAt)
+          )
+        )
+        .returning();
+
+      if (!revoked) {
+        return reply.code(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Session not found or already revoked.',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
+
+      // If the revoked session was current, clear cookies
+      if (req.session?.idHash && Buffer.compare(targetIdHash, req.session.idHash) === 0) {
+        reply.clearCookie(SESSION_CONFIG.cookieName, { path: '/' });
+        reply.clearCookie(SESSION_CONFIG.csrfCookieName, { path: '/' });
+      }
+
+      await logAuditEvent({
+        actorId: user.id,
+        action: 'user.session_revoked',
+        resourceType: 'session',
+        collegeId: user.collegeId,
+        ip: req.ip,
+      });
+
+      return reply.code(200).send({
+        success: true,
+        message: 'Session successfully revoked.',
       });
     }
   );

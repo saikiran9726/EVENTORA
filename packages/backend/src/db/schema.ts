@@ -330,6 +330,7 @@ export const passwordResets = pgTable('password_resets', {
   userId: uuid('user_id')
     .references(() => users.id, { onDelete: 'cascade' })
     .notNull(),
+  purpose: varchar('purpose', { length: 50 }).default('reset_password').notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   usedAt: timestamp('used_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

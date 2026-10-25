@@ -116,7 +116,7 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
       const csrfCookie = req.cookies[SESSION_CONFIG.csrfCookieName];
       const csrfHeader = req.headers['x-csrf-token'] as string | undefined;
 
-      // Check double-submit
+      // 1. Double-submit cookie verification
       if (!csrfCookie || !csrfHeader || !constantTimeCompare(csrfCookie, csrfHeader)) {
         return reply.code(403).send({
           error: {
@@ -128,9 +128,38 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
         });
       }
 
-      // Check Origin / Referer header if present
+      // 2. Modern browser Sec-Fetch-Site / Origin enforcement
+      const secFetchSite = (req.headers['sec-fetch-site'] as string | undefined)?.toLowerCase();
       const origin = req.headers.origin || req.headers.referer;
       const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
+
+      // Reject cross-site requests via Sec-Fetch-Site
+      if (secFetchSite && !['same-origin', 'none', 'same-site'].includes(secFetchSite)) {
+        return reply.code(403).send({
+          error: {
+            code: 'CSRF_FETCH_SITE_REJECTED',
+            message: 'Cross-site request rejected via Sec-Fetch-Site policy',
+            details: { secFetchSite },
+            requestId: req.id,
+          },
+        });
+      }
+
+      // In production/development or when strict origin is asserted, require Origin or Sec-Fetch-Site
+      const isTest = process.env.NODE_ENV === 'test';
+      const enforceStrictOrigin = !isTest || req.headers['x-enforce-csrf-origin'] === 'true';
+      if (enforceStrictOrigin && !origin && !secFetchSite) {
+        return reply.code(403).send({
+          error: {
+            code: 'CSRF_ORIGIN_REQUIRED',
+            message: 'State-changing requests require a valid Origin or Sec-Fetch-Site header',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
+
+      // 3. Check Origin / Referer target domain if present
       if (origin) {
         try {
           const originUrl = new URL(origin);

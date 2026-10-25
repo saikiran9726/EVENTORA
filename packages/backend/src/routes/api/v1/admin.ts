@@ -181,8 +181,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
       await db.update(users).set(updates).where(eq(users.id, id));
 
-      // If user status changed to 'suspended', immediately revoke all active sessions
-      if (status === 'suspended') {
+      // Invalidate/rotate sessions on suspension or privilege (role) change
+      if (status === 'suspended' || (globalRole && globalRole !== targetUser.globalRole)) {
         await revokeAllUserSessions(id);
       }
 

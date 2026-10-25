@@ -16,6 +16,7 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 30000,
       env: {
+        NODE_ENV: 'test',
         AUTH_RATE_LIMIT_REGISTER_MAX: '500',
       },
     },

@@ -90,3 +90,76 @@ export async function checkRateLimit(
     return { allowed: true, remaining: 1, resetSeconds: windowSeconds };
   }
 }
+
+/**
+ * Checks whether a key has exceeded its failure limit WITHOUT incrementing it.
+ */
+export async function checkRateLimitThreshold(
+  key: string,
+  limit: number,
+  windowSeconds: number
+): Promise<RateLimitResult> {
+  const redis = getRedisClient();
+  const now = Date.now();
+  const windowStart = now - windowSeconds * 1000;
+  const setKey = `ratelimit:${key}`;
+
+  try {
+    // 1. Remove old timestamps outside sliding window
+    await redis.zremrangebyscore(setKey, 0, windowStart);
+    // 2. Count active failures in window
+    const count = await redis.zcard(setKey);
+
+    if (count >= limit) {
+      return {
+        allowed: false,
+        remaining: 0,
+        resetSeconds: windowSeconds,
+      };
+    }
+
+    return {
+      allowed: true,
+      remaining: Math.max(0, limit - count),
+      resetSeconds: windowSeconds,
+    };
+  } catch (err) {
+    console.error('[RateLimit] Error checking rate limit threshold:', err);
+    return { allowed: true, remaining: 1, resetSeconds: windowSeconds };
+  }
+}
+
+/**
+ * Records a failure event in the sliding window.
+ */
+export async function recordRateLimitFailure(
+  key: string,
+  windowSeconds: number
+): Promise<void> {
+  const redis = getRedisClient();
+  const now = Date.now();
+  const setKey = `ratelimit:${key}`;
+
+  try {
+    const multi = redis.multi();
+    multi.zadd(setKey, now, `${now}-${Math.random()}`);
+    multi.expire(setKey, windowSeconds);
+    await multi.exec();
+  } catch (err) {
+    console.error('[RateLimit] Error recording failure event:', err);
+  }
+}
+
+/**
+ * Clears recorded failures on successful operation.
+ */
+export async function clearRateLimit(key: string): Promise<void> {
+  const redis = getRedisClient();
+  const setKey = `ratelimit:${key}`;
+
+  try {
+    await redis.del(setKey);
+  } catch (err) {
+    console.error('[RateLimit] Error clearing rate limit:', err);
+  }
+}

@@ -14,7 +14,13 @@ import {
   hashStringToHex,
   SESSION_CONFIG,
 } from '../../../services/auth.js';
-import { checkRateLimit } from '../../../services/redis.js';
+import {
+  checkRateLimit,
+  checkRateLimitThreshold,
+  recordRateLimitFailure,
+  clearRateLimit,
+} from '../../../services/redis.js';
+import { isCommonPassword } from '../../../services/password-denylist.js';
 import { logAuditEvent } from '../../../services/audit.js';
 import { eq, and, gt, isNull } from 'drizzle-orm';
 
@@ -22,35 +28,37 @@ import { eq, and, gt, isNull } from 'drizzle-orm';
 const DUMMY_ARGON2_HASH =
   '$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHQxMjM0NTY3OA$YfRfxz8uVw/F1v4h46Xo3s48y8E05nL57N5X9g4Mv7s';
 
+const emailRule = z.string().trim().toLowerCase().email();
+
+const passwordRule = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .max(128, 'Password cannot exceed 128 characters')
+  .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+  .regex(/[0-9]/, 'Password must contain at least one number')
+  .refine((val) => !isCommonPassword(val), {
+    message: 'Password is too common or easily guessable. Please choose a stronger password.',
+  });
+
 const registerSchema = z.object({
-  email: z.string().email(),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(128, 'Password cannot exceed 128 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number'),
-  displayName: z.string().min(2).max(100),
+  email: emailRule,
+  password: passwordRule,
+  displayName: z.string().trim().min(2).max(100),
   collegeId: z.string().uuid().optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: emailRule,
   password: z.string().min(1).max(128),
 });
 
 const forgotSchema = z.object({
-  email: z.string().email(),
+  email: emailRule,
 });
 
 const resetSchema = z.object({
   token: z.string().min(16),
-  newPassword: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(128, 'Password cannot exceed 128 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number'),
+  newPassword: passwordRule,
 });
 
 const verifyEmailSchema = z.object({
@@ -58,7 +66,7 @@ const verifyEmailSchema = z.object({
 });
 
 const resendVerificationSchema = z.object({
-  email: z.string().email(),
+  email: emailRule,
 });
 
 export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -120,19 +128,21 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         });
       }
 
-      // Check if user already exists
+      // Check if user already exists - uniform response to prevent account enumeration
       const existingUser = await db.query.users.findFirst({
-        where: eq(users.email, email.toLowerCase()),
+        where: eq(users.email, email),
       });
 
       if (existingUser) {
-        return reply.code(400).send({
-          error: {
-            code: 'EMAIL_ALREADY_EXISTS',
-            message: 'An account with this email already exists.',
-            details: {},
-            requestId: req.id,
+        return reply.code(201).send({
+          user: {
+            id: existingUser.id,
+            email: existingUser.email,
+            displayName: existingUser.displayName,
+            globalRole: existingUser.globalRole,
+            status: existingUser.status,
           },
+          message: 'Registration successful. Please verify your email.',
         });
       }
 
@@ -143,7 +153,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         .insert(users)
         .values({
           collegeId: college.id,
-          email: email.toLowerCase(),
+          email,
           passwordHash: hashedPassword,
           displayName,
           globalRole: 'student',
@@ -161,13 +171,14 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         locale: 'en-IN',
       });
 
-      // Generate verification token (stored in passwordResets with purpose prefix for separation)
+      // Generate verification token with dedicated purpose column
       const verificationToken = generateOpaqueToken();
-      const tokenHash = hashStringToHex(`verify:${verificationToken}`);
+      const tokenHash = hashStringToHex(verificationToken);
 
       await db.insert(passwordResets).values({
         tokenHash,
         userId: newUser.id,
+        purpose: 'verify_email',
         expiresAt: new Date(Date.now() + 24 * 3600 * 1000), // 24 hours
         usedAt: null,
       });
@@ -189,7 +200,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           globalRole: newUser.globalRole,
           status: newUser.status,
         },
-        ...(process.env.NODE_ENV !== 'production' ? { verificationToken } : {}),
+        ...(process.env.NODE_ENV === 'test' ? { verificationToken } : {}),
         message: 'Registration successful. Please verify your email.',
       });
     }
@@ -222,31 +233,47 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       }
 
       const { email, password } = parseResult.data;
-      const rateLimitKey = `login:${clientIp}:${email.toLowerCase()}`;
+      const ipFailKey = `login:fail:ip:${clientIp}`;
+      const accountFailKey = `login:fail:account:${clientIp}:${email}`;
 
-      // Rate limit: 5 attempts per minute per IP + email
-      const rateLimit = await checkRateLimit(rateLimitKey, 5, 60);
-      if (!rateLimit.allowed) {
+      // Rate limit check: failures per IP (10/min) and per account per IP (5/min) checked separately
+      const ipLimit = await checkRateLimitThreshold(ipFailKey, 10, 60);
+      if (!ipLimit.allowed) {
         return reply.code(429).send({
           error: {
             code: 'RATE_LIMIT_EXCEEDED',
-            message: 'Too many failed login attempts. Please wait 1 minute before retrying.',
-            details: { resetSeconds: rateLimit.resetSeconds },
+            message: 'Too many failed login attempts from this network. Please wait 1 minute before retrying.',
+            details: { resetSeconds: ipLimit.resetSeconds },
+            requestId: req.id,
+          },
+        });
+      }
+
+      const accountLimit = await checkRateLimitThreshold(accountFailKey, 5, 60);
+      if (!accountLimit.allowed) {
+        return reply.code(429).send({
+          error: {
+            code: 'RATE_LIMIT_EXCEEDED',
+            message: 'Too many failed login attempts for this account. Please wait 1 minute before retrying.',
+            details: { resetSeconds: accountLimit.resetSeconds },
             requestId: req.id,
           },
         });
       }
 
       const user = await db.query.users.findFirst({
-        where: eq(users.email, email.toLowerCase()),
+        where: eq(users.email, email),
       });
 
       // Constant-time compare: execute Argon2 even if user not found to prevent timing attack
       const hashToVerify = user ? user.passwordHash : DUMMY_ARGON2_HASH;
       const isValid = await verifyPassword(hashToVerify, password);
 
-      // Uniform error message for unknown email vs wrong password
+      // Uniform error message for unknown email vs wrong password; increment failure budgets on error only
       if (!user || !isValid) {
+        await recordRateLimitFailure(ipFailKey, 60);
+        await recordRateLimitFailure(accountFailKey, 60);
+
         return reply.code(401).send({
           error: {
             code: 'INVALID_CREDENTIALS',
@@ -256,6 +283,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           },
         });
       }
+
+      // Successful verification: clear account failure counter for this IP so budget is preserved
+      await clearRateLimit(accountFailKey);
 
       // Check account status
       if (user.status === 'suspended') {
@@ -326,7 +356,6 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           collegeId: user.collegeId,
         },
         csrfToken,
-        ...(process.env.NODE_ENV !== 'production' ? { token } : {}),
       });
     }
   );
@@ -390,10 +419,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       }
 
       const { token } = parseResult.data;
-      const tokenHash = hashStringToHex(`verify:${token}`);
+      const tokenHash = hashStringToHex(token);
       const now = new Date();
 
-      // Atomic single-step consumption to prevent race conditions
+      // Atomic single-step consumption enforcing verify_email purpose
       const [consumedRecord] = await db
         .update(passwordResets)
         .set({ usedAt: now })
@@ -401,7 +430,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           and(
             eq(passwordResets.tokenHash, tokenHash),
             isNull(passwordResets.usedAt),
-            gt(passwordResets.expiresAt, now)
+            gt(passwordResets.expiresAt, now),
+            eq(passwordResets.purpose, 'verify_email')
           )
         )
         .returning();
@@ -483,11 +513,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
 
       if (user && user.status === 'active') {
         resetToken = generateOpaqueToken();
-        const tokenHash = hashStringToHex(`reset:${resetToken}`);
+        const tokenHash = hashStringToHex(resetToken);
 
         await db.insert(passwordResets).values({
           tokenHash,
           userId: user.id,
+          purpose: 'reset_password',
           expiresAt: new Date(Date.now() + 3600 * 1000), // 1 hour
           usedAt: null,
         });
@@ -506,7 +537,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       return reply.code(200).send({
         success: true,
         message: 'If that email address is associated with an account, a reset link has been dispatched.',
-        ...(process.env.NODE_ENV !== 'production' ? { resetToken } : {}),
+        ...(process.env.NODE_ENV === 'test' ? { resetToken } : {}),
       });
     }
   );
@@ -535,10 +566,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       }
 
       const { token, newPassword } = parseResult.data;
-      const tokenHash = hashStringToHex(`reset:${token}`);
+      const tokenHash = hashStringToHex(token);
       const now = new Date();
 
-      // Atomic single-step consumption to prevent race conditions
+      // Atomic single-step consumption enforcing reset_password purpose
       const [consumedRecord] = await db
         .update(passwordResets)
         .set({ usedAt: now })
@@ -546,7 +577,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           and(
             eq(passwordResets.tokenHash, tokenHash),
             isNull(passwordResets.usedAt),
-            gt(passwordResets.expiresAt, now)
+            gt(passwordResets.expiresAt, now),
+            eq(passwordResets.purpose, 'reset_password')
           )
         )
         .returning();
@@ -570,6 +602,18 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         .update(users)
         .set({ passwordHash: newHash })
         .where(eq(users.id, consumedRecord.userId));
+
+      // Mark all outstanding reset tokens used for this user
+      await db
+        .update(passwordResets)
+        .set({ usedAt: now })
+        .where(
+          and(
+            eq(passwordResets.userId, consumedRecord.userId),
+            eq(passwordResets.purpose, 'reset_password'),
+            isNull(passwordResets.usedAt)
+          )
+        );
 
       // Revoke all existing sessions for the user
       await revokeAllUserSessions(consumedRecord.userId);
@@ -633,12 +677,25 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       let verificationToken: string | undefined = undefined;
 
       if (user && user.status === 'pending') {
+        // Invalidate all old unconsumed verify_email tokens for this user
+        await db
+          .update(passwordResets)
+          .set({ usedAt: new Date() })
+          .where(
+            and(
+              eq(passwordResets.userId, user.id),
+              eq(passwordResets.purpose, 'verify_email'),
+              isNull(passwordResets.usedAt)
+            )
+          );
+
         verificationToken = generateOpaqueToken();
-        const tokenHash = hashStringToHex(`verify:${verificationToken}`);
+        const tokenHash = hashStringToHex(verificationToken);
 
         await db.insert(passwordResets).values({
           tokenHash,
           userId: user.id,
+          purpose: 'verify_email',
           expiresAt: new Date(Date.now() + 24 * 3600 * 1000), // 24 hours
           usedAt: null,
         });
@@ -657,7 +714,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       return reply.code(200).send({
         success: true,
         message: 'If an unverified account exists for that email, a verification link has been dispatched.',
-        ...(process.env.NODE_ENV !== 'production' ? { verificationToken } : {}),
+        ...(process.env.NODE_ENV === 'test' ? { verificationToken } : {}),
       });
     }
   );

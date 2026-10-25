@@ -24,6 +24,16 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 12 -> 11: Token Purpose
+    if (currentVersion >= 12 && targetVersion < 12) {
+      console.log('[Rollback] Rolling back version 12 (Phase 12)...');
+      await client.query(`
+        ALTER TABLE password_resets DROP CONSTRAINT IF EXISTS chk_password_resets_purpose;
+        ALTER TABLE password_resets DROP COLUMN IF EXISTS purpose;
+        DELETE FROM schema_migrations WHERE version = 12;
+      `);
+    }
+
     // Rollback step 11 -> 10: Drop perf indexes & ops tables
     if (currentVersion >= 11 && targetVersion < 11) {
       console.log('[Rollback] Rolling back version 11 (Phase 11)...');
