@@ -45,6 +45,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   const handleQuickLogin = (quickEmail: string) => {
     setEmail(quickEmail);
+    setPassword('Eventora#Test2026!');
     setErrorMessage(null);
   };
 

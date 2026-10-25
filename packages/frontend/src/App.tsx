@@ -50,18 +50,57 @@ const AppInner: React.FC = () => {
   const [verifyCode, setVerifyCode] = useState<string>('');
   const [publicPassportSlug, setPublicPassportSlug] = useState<string>('');
 
-  // Handle direct navigation to /p/:slug
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname;
-      if (path.startsWith('/p/')) {
-        const slug = path.replace('/p/', '').trim();
-        if (slug) {
-          setPublicPassportSlug(slug);
-          setActiveRoute('public-passport');
-        }
+  // Route-to-path and path-to-route synchronization
+  const syncRouteFromPath = () => {
+    if (typeof window === 'undefined') return;
+    const path = window.location.pathname;
+    if (path.startsWith('/p/')) {
+      const slug = path.replace('/p/', '').trim();
+      if (slug) {
+        setPublicPassportSlug(slug);
+        setActiveRoute('public-passport');
       }
+    } else if (path.startsWith('/events/')) {
+      const id = path.replace('/events/', '').trim();
+      if (id && id !== 'create') {
+        setSelectedEventId(id);
+        setActiveRoute('details');
+      } else if (id === 'create') {
+        setActiveRoute('create-event');
+      }
+    } else if (path === '/register' || path === '/auth/register') {
+      setActiveRoute('auth-register');
+    } else if (path === '/login' || path === '/auth/login') {
+      setActiveRoute('auth-login');
+    } else if (path === '/forgot' || path === '/auth/forgot') {
+      setActiveRoute('auth-forgot');
+    } else if (path === '/calendar') {
+      setActiveRoute('calendar');
+    } else if (path === '/tickets') {
+      setActiveRoute('tickets');
+    } else if (path === '/teams') {
+      setActiveRoute('teams');
+    } else if (path === '/volunteers') {
+      setActiveRoute('volunteers');
+    } else if (path === '/passport') {
+      setActiveRoute('passport');
+    } else if (path === '/profile') {
+      setActiveRoute('profile');
+    } else if (path === '/dashboard') {
+      setActiveRoute('dashboard');
+    } else if (path === '/verify') {
+      setActiveRoute('verify');
+    } else if (path === '/components') {
+      setActiveRoute('components');
+    } else if (path === '/' || path === '/discover') {
+      setActiveRoute('discover');
     }
+  };
+
+  useEffect(() => {
+    syncRouteFromPath();
+    window.addEventListener('popstate', syncRouteFromPath);
+    return () => window.removeEventListener('popstate', syncRouteFromPath);
   }, []);
 
   // Sync currentRole when user authenticates
@@ -358,6 +397,27 @@ const AppInner: React.FC = () => {
         if (!handleRequireAuth('profile')) return;
       }
       setActiveRoute(route);
+      if (typeof window !== 'undefined') {
+        const pathMap: Record<string, string> = {
+          discover: '/',
+          'auth-login': '/login',
+          'auth-register': '/register',
+          'auth-forgot': '/forgot',
+          calendar: '/calendar',
+          tickets: '/tickets',
+          teams: '/teams',
+          volunteers: '/volunteers',
+          passport: '/passport',
+          profile: '/profile',
+          dashboard: '/dashboard',
+          components: '/components',
+          verify: '/verify',
+        };
+        const targetPath = pathMap[route];
+        if (targetPath && window.location.pathname !== targetPath) {
+          window.history.pushState(null, '', targetPath);
+        }
+      }
     },
     isDarkMode,
     onToggleDarkMode: () => setIsDarkMode(!isDarkMode),

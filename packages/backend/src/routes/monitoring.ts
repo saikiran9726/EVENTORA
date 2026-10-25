@@ -103,16 +103,22 @@ export const monitoringRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Check B: Schema Migration Version
       try {
-        const migRes = await pool.query('SELECT MAX(version) as current_version FROM schema_migrations;');
+        const migRes = await pool.query<{ current_version: number | null }>(
+          'SELECT MAX(version) as current_version FROM schema_migrations;'
+        );
         const version = migRes.rows[0]?.current_version || 0;
         checks.migration = {
-          status: version >= 10 ? 'ok' : 'pending',
+          status: version >= 11 ? 'ok' : 'pending',
           version,
         };
-        if (version < 1) isReady = false;
-      } catch {
-        // Fallback if schema_migrations table is being bootstrapped
-        checks.migration = { status: 'ok', version: 11 };
+        if (version < 11) isReady = false;
+      } catch (err: any) {
+        isReady = false;
+        checks.migration = {
+          status: 'failed',
+          version: 0,
+          error: err.message || 'schema_migrations relation does not exist',
+        };
       }
 
       // Check C: Redis / Queue connection
