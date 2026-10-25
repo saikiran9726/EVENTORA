@@ -82,9 +82,10 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
 
     try {
       const token = localStorage.getItem('eventora_auth_token');
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId);
 
       // Graceful fallback for prototype mode / mock events
-      if (!token || eventId.startsWith('mock-')) {
+      if (!isUuid || eventId.startsWith('mock-')) {
         toast({
           type: 'success',
           title: isEdit ? 'Feedback Updated' : 'Thank You for Your Feedback!',
@@ -99,9 +100,14 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
         return;
       }
 
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const data = await apiClient<any>(`/api/v1/events/${eventId}/feedback`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
         body: JSON.stringify({
           rating,
           comment: comment.trim(),

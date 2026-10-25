@@ -63,7 +63,10 @@ interface CreateEventPageProps {
 
 export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSuccess }) => {
   const { toast } = useToast();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, login } = useAuth();
+  const isOrganizerOrAdmin = Boolean(
+    user && (user.globalRole === 'admin' || (user.organizerMemberships && user.organizerMemberships.length > 0))
+  );
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [venues, setVenues] = useState<VenueOption[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -340,6 +343,43 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSucc
           </div>
           <Button size="sm" variant="primary" onClick={() => window.location.href = '/login'}>
             Sign In
+          </Button>
+        </div>
+      )}
+
+      {/* Authenticated Student Notice */}
+      {isAuthenticated && !isOrganizerOrAdmin && (
+        <div role="alert" className="p-3.5 rounded-lg bg-warning/10 border border-warning/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <ShieldAlert className="w-4 h-4 text-warning shrink-0" />
+            <div>
+              <p className="font-semibold text-text">Organizer Club Membership Required</p>
+              <p className="text-text-muted">
+                You are currently signed in as <span className="font-mono text-text">{user?.email}</span> (Student). Event proposals require an active club organizer role.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={async () => {
+              const res = await login('organizer.ras@campus.edu', 'Organizer@123');
+              if (res.success) {
+                toast({
+                  title: 'Switched to Organizer Account',
+                  message: 'Logged in as Robotics & Automation Society Organizer.',
+                  type: 'success',
+                });
+              } else {
+                toast({
+                  title: 'Switch Failed',
+                  message: res.error || 'Please login with organizer credentials manually.',
+                  type: 'error',
+                });
+              }
+            }}
+          >
+            Switch to Organizer
           </Button>
         </div>
       )}

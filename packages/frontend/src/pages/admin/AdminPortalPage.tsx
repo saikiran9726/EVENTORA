@@ -277,7 +277,7 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
   const handleToggleClubVerification = async (clubId: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'VERIFIED' ? 'REJECTED' : 'VERIFIED';
     try {
-      await apiClient.post(`/api/v1/organizers/${clubId}/verification`, {
+      await apiClient.post(`/api/v1/admin/organizers/${clubId}/verify`, {
         status: nextStatus,
         evidenceRef: 'Official Campus Dean Charter Approval 2026',
       });

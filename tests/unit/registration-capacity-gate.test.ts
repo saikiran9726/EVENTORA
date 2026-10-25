@@ -82,7 +82,7 @@ describe('Phase 4 Quality Gate: Registration, Capacity, Waitlists & Teams', () =
     } finally {
       client.release();
     }
-  });
+  }, 60000);
 
   afterAll(async () => {
     const client = await pool.connect();
@@ -122,7 +122,7 @@ describe('Phase 4 Quality Gate: Registration, Capacity, Waitlists & Teams', () =
     } finally {
       client.release();
     }
-  });
+  }, 60000);
 
   // Gate Test (a): 200 concurrent bookings for 10 seats -> exactly 10 CONFIRMED, 190 get 409 SOLD_OUT, sold=10
   it('(a) 200 concurrent bookings for 10 seats -> exactly 10 CONFIRMED, 190 get 409, sold=10', async () => {

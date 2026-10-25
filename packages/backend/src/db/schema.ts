@@ -1310,6 +1310,41 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   announcements: many(eventAnnouncements),
 }));
 
+export const eventFaqsRelations = relations(eventFaqs, ({ one }) => ({
+  event: one(events, {
+    fields: [eventFaqs.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const eventAnnouncementsRelations = relations(eventAnnouncements, ({ one }) => ({
+  event: one(events, {
+    fields: [eventAnnouncements.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const eventStatusHistoryRelations = relations(eventStatusHistory, ({ one }) => ({
+  event: one(events, {
+    fields: [eventStatusHistory.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const eventApprovalsRelations = relations(eventApprovals, ({ one }) => ({
+  event: one(events, {
+    fields: [eventApprovals.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const venueBookingsRelations = relations(venueBookings, ({ one }) => ({
+  event: one(events, {
+    fields: [venueBookings.eventId],
+    references: [events.id],
+  }),
+}));
+
 // Inferred Types
 export type College = typeof colleges.$inferSelect;
 export type User = typeof users.$inferSelect;

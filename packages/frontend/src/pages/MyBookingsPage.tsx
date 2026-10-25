@@ -62,7 +62,7 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
             qrPayload: tCode ? `https://eventora-jet.vercel.app/verify/${tCode}` : b.qrPayload,
             startsAt: b.event_starts_at || b.startsAt || associatedTicket?.event_starts_at,
             venueName: b.venue_name || b.venueName || associatedTicket?.venue_name || 'Campus Venue',
-            isCheckedIn: b.ticket_status === 'USED' || associatedTicket?.status === 'USED',
+            isCheckedIn: b.ticket_status === 'CHECKED_IN' || b.ticket_status === 'USED' || associatedTicket?.status === 'CHECKED_IN' || associatedTicket?.status === 'USED',
           };
         });
 
@@ -80,7 +80,7 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
               qrPayload: `https://eventora-jet.vercel.app/verify/${t.ticket_code}`,
               startsAt: t.event_starts_at,
               venueName: t.venue_name || 'Campus Venue',
-              isCheckedIn: t.status === 'USED',
+              isCheckedIn: t.status === 'CHECKED_IN' || t.status === 'USED',
             });
           }
         }

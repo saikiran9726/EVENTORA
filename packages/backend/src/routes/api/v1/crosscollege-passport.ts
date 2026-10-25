@@ -180,6 +180,41 @@ export async function crossCollegePassportRoutes(fastify: FastifyInstance) {
     }
   );
 
+  // 5b. POST /organizers/:id/verification (Compatibility alias for admin organizer verification)
+  fastify.post(
+    '/organizers/:id/verification',
+    {
+      config: {
+        auth: true,
+        policy: 'user:manage',
+        objectCheck: false,
+      },
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const { id: organizerId } = req.params as { id: string };
+      const parsed = VerifyOrganizerSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid organizer verification payload',
+            details: parsed.error.format(),
+            requestId: req.id,
+          },
+        });
+      }
+
+      const verification = await verifyOrganizer({
+        organizerId,
+        status: parsed.data.status,
+        evidenceRef: parsed.data.evidenceRef || 'Verified official campus club charter',
+        adminId: req.user!.id,
+      });
+
+      return reply.send({ verification });
+    }
+  );
+
   // 6. GET /me/passport (Authenticated student passport settings & summary)
   const handleGetMyPassport = async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = req.user!.id;

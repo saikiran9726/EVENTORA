@@ -22,6 +22,7 @@ import { formatINR } from '@/lib/utils';
 import { TicketSelector } from '@/components/booking/TicketSelector';
 import { VenueCard } from '@/components/venue/VenueCard';
 import { apiClient } from '@/lib/api-client';
+import { useAuth } from '@/context/AuthContext';
 
 interface EventDetailsPageProps {
   eventId: string;
@@ -44,16 +45,36 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
   onProceedToCheckout,
 }) => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const prototypeEvent = PROTOTYPE_EVENTS.find((e) => e.id === eventId) || PROTOTYPE_EVENTS[0];
   const [loadedEvent, setLoadedEvent] = useState<any>(null);
   const [ticketTiers, setTicketTiers] = useState<any[]>([]);
   const [selectedTierId, setSelectedTierId] = useState<string>('');
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [selectedTicketType, setSelectedTicketType] = useState('regular');
-  const [attendeeName, setAttendeeName] = useState('');
-  const [attendeeRoll, setAttendeeRoll] = useState('');
+  const [attendeeName, setAttendeeName] = useState(() => {
+    try {
+      return localStorage.getItem('eventora_attendee_name') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [attendeeRoll, setAttendeeRoll] = useState(() => {
+    try {
+      return localStorage.getItem('eventora_attendee_roll') || '';
+    } catch {
+      return '';
+    }
+  });
   const [agreedToTerms, setAgreedToTerms] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Auto-populate attendee name from user profile when available
+  useEffect(() => {
+    if (user?.displayName && !attendeeName) {
+      setAttendeeName(user.displayName);
+    }
+  }, [user?.displayName, attendeeName]);
   const [imageError, setImageError] = useState(false);
   const [ratingsData, setRatingsData] = useState<PublicRatingData>({
     feedbackCount: 38,
@@ -161,6 +182,13 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
       return;
     }
 
+    try {
+      localStorage.setItem('eventora_attendee_name', attendeeName.trim());
+      localStorage.setItem('eventora_attendee_roll', attendeeRoll.trim());
+    } catch {
+      // ignore localStorage quota errors
+    }
+
     setIsSubmitting(true);
     try {
       const activeTierId = selectedTierId || ticketTiers[0]?.id || 'tier-standard';
@@ -169,13 +197,10 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
       const idempotencyKey = `book-${eventId}-${activeTierId}-${Date.now()}`;
 
       if (isUuid && isEventUuid) {
-        const res = await apiClient.post<any>(`/api/v1/events/${eventId}/bookings`, {
+        const payload: { items: { ticketTypeId: string; quantity: number }[]; answers?: any[] } = {
           items: [{ ticketTypeId: activeTierId, quantity: 1 }],
-          answers: [
-            { questionId: 'attendee-name', answer: attendeeName.trim() },
-            { questionId: 'attendee-roll', answer: attendeeRoll.trim() },
-          ],
-        }, {
+        };
+        const res = await apiClient.post<any>(`/api/v1/events/${eventId}/bookings`, payload, {
           headers: { 'Idempotency-Key': idempotencyKey },
         });
 
@@ -235,6 +260,9 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
       )}
 
       <Input
+        id="reg-attendee-name"
+        name="attendeeName"
+        autoComplete="name"
         label="Full Name"
         required
         placeholder="e.g. Aarav Sharma"
@@ -243,6 +271,9 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
       />
 
       <Input
+        id="reg-attendee-roll"
+        name="attendeeRoll"
+        autoComplete="off"
         label="College Roll / ID Number"
         required
         placeholder="e.g. CS22B1042"

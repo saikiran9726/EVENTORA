@@ -440,8 +440,8 @@ export const PassportPage: React.FC<{
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <h3 className="text-sm font-bold text-text leading-snug">{t.event_title || 'Campus Event'}</h3>
-                      <Badge variant={t.status === 'VALID' ? 'success' : 'neutral'} size="sm">
-                        {t.status === 'VALID' ? 'CONFIRMED' : t.status}
+                      <Badge variant={t.status === 'VALID' ? 'success' : t.status === 'CHECKED_IN' ? 'brand' : 'neutral'} size="sm">
+                        {t.status === 'VALID' ? 'CONFIRMED' : t.status === 'CHECKED_IN' ? 'ATTENDED' : t.status}
                       </Badge>
                     </div>
 

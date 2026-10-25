@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/Input';
 import { Dialog } from '@/components/ui/Dialog';
 import { useToast } from '@/components/ui/Toast';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { useAuth } from '@/context/AuthContext';
 
 export interface ProposalItem {
   id: string;
@@ -36,6 +37,9 @@ export interface ProposalItem {
 
 export const ReviewQueuePage: React.FC = () => {
   const { toast } = useToast();
+  const { user, login } = useAuth();
+  const isAuthorizedReviewer = Boolean(user && (user.globalRole === 'reviewer' || user.globalRole === 'admin'));
+
   const [proposals, setProposals] = useState<ProposalItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -129,6 +133,27 @@ export const ReviewQueuePage: React.FC = () => {
 
   const submitDecision = async () => {
     if (!selectedProposal || !decisionType) return;
+
+    if (!isAuthorizedReviewer) {
+      toast({
+        title: 'Reviewer Authorization Required',
+        message: 'Your current account does not have faculty review privileges. Please sign in as a faculty reviewer (e.g. reviewer.faculty@campus.edu) to record official decisions.',
+        type: 'error',
+      });
+      return;
+    }
+
+    if (selectedProposal.id.startsWith('mock-')) {
+      toast({
+        title: 'Prototype Demo Event',
+        message: 'This is a sample demo event. Submit a live proposal from the Organizer Dashboard to review real database events.',
+        type: 'info',
+      });
+      setSelectedProposal(null);
+      setDecisionType(null);
+      return;
+    }
+
     if (!reviewerComment.trim()) {
       toast({
         title: 'Reviewer Comment Required',
@@ -209,6 +234,48 @@ export const ReviewQueuePage: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {/* Role Notice & Faculty Login Shortcut */}
+      {!isAuthorizedReviewer && (
+        <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-text">
+                Faculty Reviewer Privileges Required for Approval Decisions
+              </p>
+              <p className="text-text-muted mt-0.5">
+                You are currently signed in as {user ? `${user.displayName} (${user.email} - role: ${user.globalRole})` : 'an unauthenticated guest'}. 
+                To record official review decisions for audit compliance, sign in with a faculty reviewer account.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={async () => {
+              const res = await login('reviewer.faculty@campus.edu', 'Eventora#Test2026!');
+              if (res.success) {
+                toast({
+                  type: 'success',
+                  title: 'Authenticated as Faculty Reviewer',
+                  message: 'Signed in as Dr. S. Ramanujan (HOD CSE).',
+                });
+                await fetchProposals();
+              } else {
+                toast({
+                  type: 'error',
+                  title: 'Login Failed',
+                  message: res.error || 'Could not authenticate reviewer.',
+                });
+              }
+            }}
+            className="shrink-0 font-medium"
+          >
+            Sign In as Faculty (Dr. Ramanujan)
+          </Button>
+        </div>
+      )}
 
       {/* Reviewer Independence Notice */}
       <div className="p-3 bg-brand/5 border border-brand/20 rounded-lg text-xs flex items-center justify-between">
@@ -362,6 +429,15 @@ export const ReviewQueuePage: React.FC = () => {
                 className="w-full bg-surface border border-border rounded-md p-3 text-xs text-text focus:outline-none focus:ring-2 focus:ring-brand"
               />
             </div>
+
+            {!isAuthorizedReviewer && (
+              <div className="p-2.5 rounded bg-error/10 border border-error/20 text-error text-[11px] flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 shrink-0" />
+                <span>
+                  Unauthorized: You must be signed in as a faculty reviewer (reviewer.faculty@campus.edu) or administrator to submit this decision.
+                </span>
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
               <Button
