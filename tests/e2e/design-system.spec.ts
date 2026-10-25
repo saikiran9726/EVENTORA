@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import path from 'path';
+import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Eventora Phase 1 Design System & Application Shell', () => {
   test('Discovery Page responsive layout, chips, and no horizontal overflow', async ({
@@ -26,7 +27,7 @@ test.describe('Eventora Phase 1 Design System & Application Shell', () => {
     const screenshotPath = path.resolve(
       `./docs/screenshots/discovery-${projectName}-20261021.png`
     );
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await safeScreenshot(page, screenshotPath, testInfo);
   });
 
   test('Event Details with 16:9 aspect box, sticky bottom CTA, and focus trap in modal/sheet', async ({
@@ -56,7 +57,7 @@ test.describe('Eventora Phase 1 Design System & Application Shell', () => {
     const screenshotPath = path.resolve(
       `./docs/screenshots/event-details-${projectName}-20261021.png`
     );
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await safeScreenshot(page, screenshotPath, testInfo);
 
     // Open registration dialog / bottom sheet
     const registerBtn = page.locator('button:has-text("Register"), button:has-text("Proceed to Test Checkout")').first();
@@ -95,7 +96,7 @@ test.describe('Eventora Phase 1 Design System & Application Shell', () => {
     const screenshotPath = path.resolve(
       `./docs/screenshots/organizer-dashboard-${projectName}-20261021.png`
     );
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await safeScreenshot(page, screenshotPath, testInfo);
   });
 
   test('Component Gallery, State Matrix & Dark Mode Persistence', async ({ page }, testInfo) => {
@@ -128,7 +129,7 @@ test.describe('Eventora Phase 1 Design System & Application Shell', () => {
     const screenshotPath = path.resolve(
       `./docs/screenshots/component-gallery-dark-${projectName}-20261021.png`
     );
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await safeScreenshot(page, screenshotPath, testInfo);
   });
 
   test('Axe-Core Accessibility Scan (WCAG 2.2 AA zero serious/critical)', async ({ page }) => {

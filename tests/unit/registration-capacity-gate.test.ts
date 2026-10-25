@@ -288,7 +288,7 @@ describe('Phase 4 Quality Gate: Registration, Capacity, Waitlists & Teams', () =
   it('(d) two users claim one offer -> exactly one wins, other gets 409', async () => {
     const client = await pool.connect();
     let offerEntryId: string;
-    let user1 = createdUserIds[10];
+    let user1 = createdUserIds[220];
     let dTicketTypeId: string;
 
     try {
