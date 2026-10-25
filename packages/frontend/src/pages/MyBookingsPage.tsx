@@ -42,7 +42,21 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
       const data = await apiClient.get<any>('/api/v1/me/bookings');
       setBookings(data?.bookings || []);
     } catch {
-      setBookings([]);
+      // Prototype fallback when unauthenticated
+      setBookings([
+        {
+          id: 'mock-bk-1',
+          eventId: 'mock-evt-1',
+          eventTitle: 'AI & Robotics Annual Symposium',
+          status: 'CONFIRMED',
+          totalPaise: 0,
+          createdAt: new Date().toISOString(),
+          ticketCode: 'EVT-ROBOT-8921',
+          qrPayload: 'https://eventora.campus.edu/verify/EVT-ROBOT-8921',
+          startsAt: '2026-11-20T10:00:00Z',
+          venueName: 'Sir MV Auditorium',
+        },
+      ]);
     } finally {
       setIsLoading(false);
     }

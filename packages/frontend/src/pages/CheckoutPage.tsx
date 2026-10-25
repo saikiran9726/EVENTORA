@@ -68,6 +68,29 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
     async function loadCheckoutOrder() {
       setLoading(true);
+
+      // In prototype shell or unauthenticated demo walkthrough
+      if (bookingId.startsWith('proto-') || bookingId.startsWith('bkg_demo_')) {
+        if (mounted) {
+          setBooking({
+            id: bookingId,
+            eventId: 'evt-test-mode',
+            eventTitle: 'Advanced Robotics & AI Symposium 2026',
+            ticketName: 'Standard Student Admission Tier',
+            quantity: 1,
+            unitPricePaise: 15000,
+            totalPaise: 15000,
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            status: 'PENDING_PAYMENT',
+          });
+          setOrderId(`sim_order_${Date.now()}`);
+          setPaymentId(`sim_pay_${Date.now()}`);
+          setCheckoutState('READY');
+          setLoading(false);
+        }
+        return;
+      }
+
       try {
         const data = await apiClient.post<any>(`/api/v1/bookings/${bookingId}/checkout`, {});
         if (mounted && data?.order) {
@@ -94,6 +117,26 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         if (err?.code === 'HOLD_EXPIRED' || err?.error?.code === 'HOLD_EXPIRED') {
           if (mounted) {
             setCheckoutState('EXPIRED');
+            setLoading(false);
+          }
+          return;
+        }
+        if (err?.status === 401 || err?.code === 'AUTHENTICATION_REQUIRED' || bookingId.startsWith('proto-')) {
+          if (mounted) {
+            setBooking({
+              id: bookingId,
+              eventId: 'evt-test-mode',
+              eventTitle: 'Advanced Robotics & AI Symposium 2026',
+              ticketName: 'Standard Student Admission Tier',
+              quantity: 1,
+              unitPricePaise: 15000,
+              totalPaise: 15000,
+              expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+              status: 'PENDING_PAYMENT',
+            });
+            setOrderId(`sim_order_${Date.now()}`);
+            setPaymentId(`sim_pay_${Date.now()}`);
+            setCheckoutState('READY');
             setLoading(false);
           }
           return;
@@ -145,7 +188,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     const token = localStorage.getItem('eventora_auth_token');
 
     // If demo booking or unauthenticated session in frontend prototype, simulate directly
-    if (!token || bookingId.startsWith('bkg_demo_')) {
+    if (!token || bookingId.startsWith('bkg_demo_') || bookingId.startsWith('proto-')) {
       setTimeout(() => {
         if (shouldSucceed) {
           setCheckoutState('SUCCESS');

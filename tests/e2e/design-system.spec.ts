@@ -147,6 +147,7 @@ test.describe('Eventora Phase 1 Design System & Application Shell', () => {
 
   test('Keyboard-Only Pass (Tab Navigation & Focus Visibility)', async ({ page }) => {
     await page.goto('/');
+    await expect(page.locator('button').first()).toBeVisible();
 
     // Press Tab multiple times to verify focus is active and visible
     await page.keyboard.press('Tab');

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import path from 'path';
+import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 10 E2E: Cross-College Discovery & Student Event Passport (FR-XCOL, FR-PASS)', () => {
   test('Complete Flow: Cross-College Discovery -> Student Milestone Passport -> Public Verification & Zero PII -> Instant Privacy Revocation', async ({ page }, testInfo) => {
@@ -21,7 +22,7 @@ test.describe('Phase 10 E2E: Cross-College Discovery & Student Event Passport (F
     // Verify Eligibility Explainer chip
     await expect(page.getByText(/Open to All Participating Colleges|Open to CSE & Engineering Students/).first()).toBeVisible();
 
-    await page.screenshot({ path: path.resolve(`./docs/screenshots/phase10-01-cross-college-discovery-${testInfo.project.name}.png`) });
+    await safeScreenshot(page, `./docs/screenshots/phase10-01-cross-college-discovery-${testInfo.project.name}.png`, testInfo);
 
     // 2. Navigate to Student Event Passport (FR-PASS)
     const passportNavBtn = page.locator('button:has-text("Passport"):visible').first();
@@ -66,7 +67,7 @@ test.describe('Phase 10 E2E: Cross-College Discovery & Student Event Passport (F
     await expect(page.getByText('Public Passport Active')).toBeVisible();
     await expect(page.getByText('Public URL Handle (Slug)')).toBeVisible();
 
-    await page.screenshot({ path: path.resolve(`./docs/screenshots/phase10-02-passport-timeline-settings-${testInfo.project.name}.png`) });
+    await safeScreenshot(page, `./docs/screenshots/phase10-02-passport-timeline-settings-${testInfo.project.name}.png`, testInfo);
 
     // 5. Toggle Public Passport On & View Public Page
     const makePublicBtn = page.locator('button:has-text("Make Public"):visible').first();
@@ -100,7 +101,7 @@ test.describe('Phase 10 E2E: Cross-College Discovery & Student Event Passport (F
     // Verify verified achievements are rendered
     await expect(page.getByText(/Verified Certificate|Event Check-in Admitted/i).first()).toBeVisible();
 
-    await page.screenshot({ path: path.resolve(`./docs/screenshots/phase10-03-public-passport-view-${testInfo.project.name}.png`) });
+    await safeScreenshot(page, `./docs/screenshots/phase10-03-public-passport-view-${testInfo.project.name}.png`, testInfo);
 
     // 7. Instant Privacy Toggle / "Hide Everything"
     const backBtn = page.locator('button:has-text("Back to Student Hub"):visible').first();
@@ -123,7 +124,7 @@ test.describe('Phase 10 E2E: Cross-College Discovery & Student Event Passport (F
     await expect(page.getByText('Passport Not Found or Private')).toBeVisible();
     await expect(page.getByText(/This student passport is either private, does not exist, or has been temporarily hidden/i)).toBeVisible();
 
-    await page.screenshot({ path: path.resolve(`./docs/screenshots/phase10-04-passport-private-hidden-${testInfo.project.name}.png`) });
+    await safeScreenshot(page, `./docs/screenshots/phase10-04-passport-private-hidden-${testInfo.project.name}.png`, testInfo);
 
     // 9. Axe Accessibility Audit (WCAG 2.2 AA zero serious/critical)
     const accessibilityScanResults = await new AxeBuilder({ page })

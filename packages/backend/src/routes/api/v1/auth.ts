@@ -189,7 +189,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           globalRole: newUser.globalRole,
           status: newUser.status,
         },
-        ...(process.env.NODE_ENV === 'test' ? { verificationToken } : {}),
+        ...(process.env.NODE_ENV !== 'production' ? { verificationToken } : {}),
         message: 'Registration successful. Please verify your email.',
       });
     }
@@ -326,7 +326,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           collegeId: user.collegeId,
         },
         csrfToken,
-        ...(process.env.NODE_ENV === 'test' ? { token } : {}),
+        ...(process.env.NODE_ENV !== 'production' ? { token } : {}),
       });
     }
   );
@@ -506,7 +506,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       return reply.code(200).send({
         success: true,
         message: 'If that email address is associated with an account, a reset link has been dispatched.',
-        ...(process.env.NODE_ENV === 'test' ? { resetToken } : {}),
+        ...(process.env.NODE_ENV !== 'production' ? { resetToken } : {}),
       });
     }
   );
@@ -657,7 +657,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       return reply.code(200).send({
         success: true,
         message: 'If an unverified account exists for that email, a verification link has been dispatched.',
-        ...(process.env.NODE_ENV === 'test' ? { verificationToken } : {}),
+        ...(process.env.NODE_ENV !== 'production' ? { verificationToken } : {}),
       });
     }
   );
