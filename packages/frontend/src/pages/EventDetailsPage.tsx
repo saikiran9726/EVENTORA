@@ -24,6 +24,11 @@ import { TicketSelector } from '@/components/booking/TicketSelector';
 import { VenueCard } from '@/components/venue/VenueCard';
 import { apiClient } from '@/lib/api-client';
 import { useAuth } from '@/context/AuthContext';
+import {
+  DynamicRegistrationForm,
+  validateDynamicForm,
+} from '@/components/form-builder/DynamicRegistrationForm';
+import { FormFieldItem } from '@/lib/utils';
 
 interface EventDetailsPageProps {
   eventId?: string;
@@ -75,6 +80,9 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
   });
   const [agreedToTerms, setAgreedToTerms] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formFields, setFormFields] = useState<FormFieldItem[]>([]);
+  const [customAnswers, setCustomAnswers] = useState<Record<string, any>>({});
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   // Auto-populate attendee name from user profile when available
   useEffect(() => {
@@ -132,6 +140,18 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
         const eventObj = res?.event || res;
         if (isMounted && eventObj?.id) {
           setLoadedEvent(eventObj);
+          if (Array.isArray(eventObj.formFields) && eventObj.formFields.length > 0) {
+            setFormFields(eventObj.formFields);
+          } else {
+            try {
+              const formRes = await apiClient.get<any>(`/api/v1/events/${eventId}/form`);
+              if (isMounted && formRes?.form?.fields) {
+                setFormFields(formRes.form.fields);
+              }
+            } catch {
+              // No custom form fields
+            }
+          }
         }
       } catch {
         // Prototype event fallback
@@ -189,6 +209,19 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
       return;
     }
 
+    if (formFields.length > 0) {
+      const { isValid, errors } = validateDynamicForm(formFields, customAnswers, 1);
+      if (!isValid) {
+        setFormErrors(errors);
+        toast({
+          type: 'error',
+          title: 'Required Information Missing',
+          message: 'Please complete all mandatory questions before proceeding.',
+        });
+        return;
+      }
+    }
+
     try {
       localStorage.setItem('eventora_attendee_name', attendeeName.trim());
       localStorage.setItem('eventora_attendee_roll', attendeeRoll.trim());
@@ -204,8 +237,25 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
       const idempotencyKey = `book-${eventId}-${activeTierId}-${Date.now()}`;
 
       if (isUuid && isEventUuid) {
+        const answersPayload: Array<{ fieldId: string; value: any; attendeeIndex: number }> = [];
+        if (formFields.length > 0) {
+          for (const field of formFields) {
+            const key = `0_${field.id}`;
+            const val =
+              customAnswers[key] !== undefined ? customAnswers[key] : customAnswers[field.id || ''];
+            if (val !== undefined && val !== null && val !== '') {
+              answersPayload.push({
+                fieldId: field.id!,
+                value: val,
+                attendeeIndex: 0,
+              });
+            }
+          }
+        }
+
         const payload: { items: { ticketTypeId: string; quantity: number }[]; answers?: any[] } = {
           items: [{ ticketTypeId: activeTierId, quantity: 1 }],
+          ...(answersPayload.length > 0 ? { answers: answersPayload } : {}),
         };
         const res = await apiClient.post<any>(`/api/v1/events/${eventId}/bookings`, payload, {
           headers: { 'Idempotency-Key': idempotencyKey },
@@ -305,6 +355,34 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
           setSelectedTicketType(e.target.value);
         }}
       />
+
+      {formFields.length > 0 && (
+        <div className="pt-3 border-t border-border space-y-2">
+          <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+            Registration Questionnaire
+          </h4>
+          <DynamicRegistrationForm
+            fields={formFields}
+            answers={customAnswers}
+            onAnswerChange={(fieldId, val, attendeeIndex = 0) => {
+              const key = `${attendeeIndex}_${fieldId}`;
+              setCustomAnswers((prev) => ({
+                ...prev,
+                [key]: val,
+                [fieldId]: val,
+              }));
+              setFormErrors((prev) => {
+                const next = { ...prev };
+                delete next[key];
+                delete next[fieldId];
+                return next;
+              });
+            }}
+            errors={formErrors}
+            ticketQuantity={1}
+          />
+        </div>
+      )}
 
       <Checkbox
         label="I agree to campus attendance code and check-in policy"

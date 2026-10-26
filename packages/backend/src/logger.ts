@@ -24,6 +24,12 @@ export const REDACT_PATHS = [
   'email',
   '*.email',
   'body.email',
+  'answers',
+  '*.answers',
+  'body.answers',
+  'registrationAnswers',
+  '*.registrationAnswers',
+  'body.registrationAnswers',
 ];
 
 export function maskEmail(email?: string): string {

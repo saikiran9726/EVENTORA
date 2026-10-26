@@ -13,16 +13,22 @@ const bookingItemSchema = z.object({
   quantity: z.number().int().min(1).max(10),
 });
 
+const answerItemSchema = z.union([
+  z.object({
+    fieldId: z.string().uuid(),
+    value: z.any(),
+    attendeeIndex: z.number().int().min(0).default(0),
+  }),
+  z.object({
+    questionId: z.string().uuid(),
+    answer: z.any(),
+    attendeeIndex: z.number().int().min(0).optional(),
+  }),
+]);
+
 const createBookingSchema = z.object({
   items: z.array(bookingItemSchema).min(1),
-  answers: z
-    .array(
-      z.object({
-        questionId: z.string().uuid(),
-        answer: z.any(),
-      })
-    )
-    .optional(),
+  answers: z.array(answerItemSchema).optional(),
   teamRegistrationId: z.string().uuid().optional(),
 });
 
@@ -104,9 +110,10 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           .map((it) => ({ ticketTypeId: it.ticketTypeId, quantity: it.quantity }))
           .sort((a, b) => a.ticketTypeId.localeCompare(b.ticketTypeId)),
         teamRegistrationId: parseResult.data.teamRegistrationId || null,
-        answers: (parseResult.data.answers || []).map((a) => ({
-          questionId: a.questionId,
-          answer: a.answer,
+        answers: (parseResult.data.answers || []).map((a: any) => ({
+          fieldId: a.fieldId || a.questionId,
+          value: a.value !== undefined ? a.value : a.answer,
+          attendeeIndex: a.attendeeIndex || 0,
         })),
       };
       const payloadHash = crypto
@@ -241,10 +248,21 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           [bookingId]
         );
 
+        const answersRes = await client.query(
+          `SELECT ra.id, ra.field_id, ra.field_version, ra.value, ra.attendee_index,
+                  eff.label as field_label, eff.type as field_type
+           FROM registration_answers ra
+           LEFT JOIN event_form_fields eff ON ra.field_id = eff.id
+           WHERE ra.booking_id = $1
+           ORDER BY ra.attendee_index ASC, eff.position ASC;`,
+          [bookingId]
+        );
+
         return reply.code(200).send({
           booking,
           items: itemsRes.rows,
           tickets: ticketsRes.rows,
+          answers: answersRes.rows,
         });
       } finally {
         client.release();

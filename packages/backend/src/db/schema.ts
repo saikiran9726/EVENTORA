@@ -68,6 +68,19 @@ export const eventStatusEnum = pgEnum('event_status', [
 ]);
 export const eventVisibilityEnum = pgEnum('event_visibility', ['college', 'public']);
 export const eventPricingTypeEnum = pgEnum('event_pricing_type', ['free', 'paid']);
+export const eventFormFieldTypeEnum = pgEnum('event_form_field_type', [
+  'short_text',
+  'long_text',
+  'dropdown',
+  'radio',
+  'checkbox',
+  'multi_checkbox',
+  'phone',
+  'email',
+  'number',
+  'date',
+  'dietary',
+]);
 export const teamModeEnum = pgEnum('team_mode', ['none', 'optional', 'required']);
 export const eventApprovalDecisionEnum = pgEnum('event_approval_decision', [
   'approved',
@@ -756,7 +769,7 @@ export const tickets = pgTable('tickets', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
-// 28. Registration Form Questions
+// 28. Registration Form Questions (Legacy)
 export const registrationFormQuestions = pgTable('registration_form_questions', {
   id: uuid('id').defaultRandom().primaryKey(),
   eventId: uuid('event_id')
@@ -769,17 +782,52 @@ export const registrationFormQuestions = pgTable('registration_form_questions', 
   sort: integer('sort').default(0).notNull(),
 });
 
+// 28b. Event Form Fields (Phase 16 Custom Registration Form Builder)
+export const eventFormFields = pgTable(
+  'event_form_fields',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    eventId: uuid('event_id')
+      .references(() => events.id, { onDelete: 'cascade' })
+      .notNull(),
+    position: integer('position').default(0).notNull(),
+    type: eventFormFieldTypeEnum('type').default('short_text').notNull(),
+    label: text('label').notNull(),
+    helpText: text('help_text'),
+    required: boolean('required').default(false).notNull(),
+    options: jsonb('options').$type<string[]>().default([]).notNull(),
+    validation: jsonb('validation').$type<Record<string, any>>().default({}).notNull(),
+    version: integer('version').default(1).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    eventPosIdx: index('idx_event_form_fields_event_pos').on(table.eventId, table.position),
+  })
+);
+
 // 29. Registration Answers
-export const registrationAnswers = pgTable('registration_answers', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  bookingId: uuid('booking_id')
-    .references(() => bookings.id, { onDelete: 'cascade' })
-    .notNull(),
-  questionId: uuid('question_id')
-    .references(() => registrationFormQuestions.id, { onDelete: 'cascade' })
-    .notNull(),
-  answer: jsonb('answer').notNull(),
-});
+export const registrationAnswers = pgTable(
+  'registration_answers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    bookingId: uuid('booking_id')
+      .references(() => bookings.id, { onDelete: 'cascade' })
+      .notNull(),
+    questionId: uuid('question_id')
+      .references(() => registrationFormQuestions.id, { onDelete: 'cascade' }),
+    answer: jsonb('answer'),
+    fieldId: uuid('field_id')
+      .references(() => eventFormFields.id, { onDelete: 'cascade' }),
+    fieldVersion: integer('field_version').default(1),
+    value: jsonb('value'),
+    attendeeIndex: integer('attendee_index').default(0).notNull(),
+  },
+  (table) => ({
+    bookingIdx: index('idx_registration_answers_booking').on(table.bookingId),
+    fieldIdx: index('idx_registration_answers_field').on(table.fieldId),
+  })
+);
 
 // 30. Waitlist Entries
 export const waitlistEntries = pgTable('waitlist_entries', {
@@ -1316,6 +1364,7 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   faqs: many(eventFaqs),
   announcements: many(eventAnnouncements),
   ticketTypes: many(ticketTypes),
+  formFields: many(eventFormFields),
 }));
 
 export const eventFaqsRelations = relations(eventFaqs, ({ one }) => ({
@@ -1360,6 +1409,25 @@ export const ticketTypesRelations = relations(ticketTypes, ({ one }) => ({
   }),
 }));
 
+export const eventFormFieldsRelations = relations(eventFormFields, ({ one, many }) => ({
+  event: one(events, {
+    fields: [eventFormFields.eventId],
+    references: [events.id],
+  }),
+  answers: many(registrationAnswers),
+}));
+
+export const registrationAnswersRelations = relations(registrationAnswers, ({ one }) => ({
+  booking: one(bookings, {
+    fields: [registrationAnswers.bookingId],
+    references: [bookings.id],
+  }),
+  field: one(eventFormFields, {
+    fields: [registrationAnswers.fieldId],
+    references: [eventFormFields.id],
+  }),
+}));
+
 // Inferred Types
 export type College = typeof colleges.$inferSelect;
 export type User = typeof users.$inferSelect;
@@ -1370,6 +1438,9 @@ export type OrganizerProfile = typeof organizerProfiles.$inferSelect;
 export type OrganizerMember = typeof organizerMembers.$inferSelect;
 export type EventStaffAssignment = typeof eventStaffAssignments.$inferSelect;
 export type UserPreference = typeof userPreferences.$inferSelect;
+export type EventFormField = typeof eventFormFields.$inferSelect;
+export type NewEventFormField = typeof eventFormFields.$inferInsert;
+export type EventFormFieldType = typeof eventFormFieldTypeEnum.enumValues[number];
 export type AuditLog = typeof auditLogs.$inferSelect;
 
 export type Venue = typeof venues.$inferSelect;

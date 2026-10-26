@@ -825,3 +825,51 @@
   - Production build succeeded in 4.53s.
 
 
+
+
+---
+
+## Phase P11: Custom Registration Form Builder & Submissions
+
+### 1. Database Schema & Migration 16
+- **Additive Migration 16 (`Phase 16: Custom Registration Form Builder & Versioned Fields`):**
+  - Created `event_form_field_type` enum: `['short_text','long_text','dropdown','radio','checkbox','multi_checkbox','phone','email','number','date','dietary']`.
+  - Created `event_form_fields` table (`id`, `event_id`, `position`, `type`, `label`, `help_text`, `required`, `options jsonb`, `validation jsonb`, `version`).
+  - Added indexed constraint on `(event_id, position)`.
+  - Added additive columns to `registration_answers`: `field_id`, `field_version`, `value jsonb`, `attendee_index`. Dropped `NOT NULL` on legacy `question_id` / `answer`.
+  - Down-migration (16 $\to$ 15) implemented and tested.
+
+### 2. Form Builder Service & API Endpoints
+- **Service (`packages/backend/src/services/form-builder.ts`):**
+  - HTML tag and script stripping (`stripHtml`) to protect against stored XSS.
+  - Length capping $\le 1000$ characters.
+  - ReDoS protection with `isSafeRegex` to reject catastrophic backtracking patterns.
+  - Validation across all 11 field types (email, phone, numeric min/max, option membership for dropdown/radio/multi_checkbox/dietary, safe regex pattern matching).
+  - Optimistic locking check (`expectedVersion`) on `saveEventForm`. Returns `409 VERSION_CONFLICT` on mismatch.
+  - Frozen form field guard: Once registrations exist for an event (`registrationCount > 0`), fields cannot be deleted or have their types modified. Returns `400 FORM_FROZEN`.
+  - `getEventFormSubmissions`: Retrieves attendee custom answers grouped by booking ID and attendee index.
+- **Endpoints (`packages/backend/src/routes/api/v1/events.ts`):**
+  - `GET /api/v1/events/:id/form` (`event:manage:owned`).
+  - `PUT /api/v1/events/:id/form` (`event:manage:owned`).
+  - `GET /api/v1/events/:id/form/submissions` (`event:manage:owned`, visible only to event organizer).
+  - Updated `GET /api/v1/events/:slug` to include `formFields` ordered by position.
+- **Booking Flow (`packages/backend/src/services/booking.ts`):**
+  - Validates custom answers during booking creation.
+  - Rejects unknown `fieldId` (`UNKNOWN_FORM_FIELD`).
+  - Persists answers with `field_id`, `field_version`, `value`, and `attendee_index`.
+
+### 3. Log Redaction
+- Updated `REDACT_PATHS` in `packages/backend/src/logger.ts` to redact `answers`, `*.answers`, `body.answers`, `registrationAnswers`, and `*.registrationAnswers`.
+
+### 4. Frontend Components
+- **`DynamicRegistrationForm.tsx`:** Dynamic rendering of all 11 field types with client-side validation (`validateDynamicForm`), error badges, and multi-ticket attendee tabs.
+- **`FormBuilder.tsx`:** Complete visual form builder with field type palette, drag-and-drop / keyboard reordering (`Move Up`, `Move Down`), duplicate field, delete field, per-type settings (options list editor, min/max limits, custom regex), version badge, frozen notice banner, and live interactive attendee preview.
+- **`FormSubmissionsView.tsx`:** Organizer response dashboard with search filter, per-attendee answers display, and CSV export.
+- **Dashboard & Event Details Integration:**
+  - `OrganizerDashboardPage.tsx`: Added "Registration Forms (P11)" tab with Form Builder & Responses sub-tabs, plus direct "View Custom Answers" action in Attendee Roster.
+  - `EventDetailsPage.tsx`: Loads custom form fields and dynamically renders questionnaire during booking, sending structured per-attendee answers.
+
+### 5. Verification & Testing
+- **Unit & Integration Suite (`tests/unit/phase-p11-form-builder.test.ts`):** 25 automated tests covering HTML stripping, 1000 char limit, required rules, option membership, dietary defaults, safe regex, ReDoS protection, log redaction, optimistic locking (409), frozen form guard (400), unknown field rejection, multi-ticket answer persistence, and organizer-only submissions access. All 25 passed.
+- **Playwright E2E Suite (`tests/e2e/phase-p11-custom-form.spec.ts`):** E2E test verifying organizer form design, live preview, save, and submission inspection.
+- **Typecheck:** Passed with 0 errors across `@eventora/shared`, `@eventora/backend`, and `@eventora/frontend`.

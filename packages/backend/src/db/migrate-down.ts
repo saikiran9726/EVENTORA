@@ -24,6 +24,22 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 16 -> 15: Custom Registration Form Builder
+    if (currentVersion >= 16 && targetVersion < 16) {
+      console.log('[Rollback] Rolling back version 16 (Phase 16)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_registration_answers_field;
+        DROP INDEX IF EXISTS idx_registration_answers_booking;
+        ALTER TABLE registration_answers DROP COLUMN IF EXISTS attendee_index;
+        ALTER TABLE registration_answers DROP COLUMN IF EXISTS value;
+        ALTER TABLE registration_answers DROP COLUMN IF EXISTS field_version;
+        ALTER TABLE registration_answers DROP COLUMN IF EXISTS field_id;
+        DROP TABLE IF EXISTS event_form_fields CASCADE;
+        DROP TYPE IF EXISTS event_form_field_type CASCADE;
+        DELETE FROM schema_migrations WHERE version = 16;
+      `);
+    }
+
     // Rollback step 15 -> 14: Event Pricing Type, Currency & Tier Backfill
     if (currentVersion >= 15 && targetVersion < 15) {
       console.log('[Rollback] Rolling back version 15 (Phase 15)...');

@@ -26,6 +26,12 @@ import { bookVenueWindow, VenueConflictError } from '../../../services/venue.js'
 import { generateIcsCalendar } from '../../../services/calendar.js';
 import { logAuditEvent } from '../../../services/audit.js';
 import { generateUniqueSlug } from '../../../services/slug.js';
+import {
+  getEventForm,
+  saveEventForm,
+  getEventFormSubmissions,
+  FormBuilderError,
+} from '../../../services/form-builder.js';
 import { ALLOWED_CURRENCIES } from '@eventora/shared';
 
 const listEventsQuerySchema = z.object({
@@ -438,6 +444,9 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           },
           announcements: {
             orderBy: (a, { desc }) => [desc(a.createdAt)],
+          },
+          formFields: {
+            orderBy: (f, { asc }) => [asc(f.position)],
           },
         },
       });
@@ -1526,6 +1535,119 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         .returning();
 
       return reply.code(201).send({ announcement: newAnnouncement });
+    }
+  );
+
+  // 12. Registration Form Builder: GET /api/v1/events/:id/form
+  fastify.get(
+    '/:id/form',
+    {
+      config: {
+        auth: true,
+        policy: 'event:manage:owned',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const formData = await getEventForm(id);
+      return reply.code(200).send({ form: formData });
+    }
+  );
+
+  // 13. Registration Form Builder: PUT /api/v1/events/:id/form (Optimistic locking & Frozen fields)
+  const formFieldItemSchema = z.object({
+    id: z.string().uuid().optional(),
+    position: z.number().int().min(0).default(0),
+    type: z.enum([
+      'short_text',
+      'long_text',
+      'dropdown',
+      'radio',
+      'checkbox',
+      'multi_checkbox',
+      'phone',
+      'email',
+      'number',
+      'date',
+      'dietary',
+    ]),
+    label: z.string().min(1, 'Field label is required').max(255),
+    helpText: z.string().max(1000).nullable().optional(),
+    required: z.boolean().default(false),
+    options: z.array(z.string().max(255)).default([]),
+    validation: z.record(z.any()).default({}),
+  });
+
+  const updateEventFormSchema = z.object({
+    version: z.number().int().optional(),
+    expectedVersion: z.number().int().optional(),
+    fields: z.array(formFieldItemSchema),
+  });
+
+  fastify.put(
+    '/:id/form',
+    {
+      config: {
+        auth: true,
+        policy: 'event:manage:owned',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const parseResult = updateEventFormSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid form builder payload',
+            details: parseResult.error.flatten(),
+            requestId: req.id,
+          },
+        });
+      }
+
+      const ifMatchHeader = req.headers['if-match'];
+      const expectedVersion = ifMatchHeader
+        ? parseInt(ifMatchHeader, 10)
+        : parseResult.data.expectedVersion !== undefined
+        ? parseResult.data.expectedVersion
+        : parseResult.data.version;
+
+      try {
+        const updatedForm = await saveEventForm(id, parseResult.data.fields, expectedVersion);
+        return reply.code(200).send({ form: updatedForm });
+      } catch (err: any) {
+        if (err instanceof FormBuilderError) {
+          return reply.code(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              details: err.details,
+              requestId: req.id,
+            },
+          });
+        }
+        throw err;
+      }
+    }
+  );
+
+  // 14. Form Submissions: GET /api/v1/events/:id/form/submissions (Visible to Organizer Only)
+  fastify.get(
+    '/:id/form/submissions',
+    {
+      config: {
+        auth: true,
+        policy: 'event:manage:owned',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const submissions = await getEventFormSubmissions(id);
+      return reply.code(200).send(submissions);
     }
   );
 };

@@ -16,6 +16,7 @@ import {
   LifeBuoy,
   CheckSquare,
   UserCheck,
+  ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -27,6 +28,8 @@ import { PROTOTYPE_ORGANIZER_STATS, PROTOTYPE_ATTENDEES } from '@/prototype/data
 import { formatPaise } from '@/lib/utils';
 import { ExportDialog } from '@/components/analytics/ExportDialog';
 import { AlertComposer } from '@/components/organizer/AlertComposer';
+import { FormBuilder } from '@/components/form-builder/FormBuilder';
+import { FormSubmissionsView } from '@/components/form-builder/FormSubmissionsView';
 import { apiClient } from '@/lib/api-client';
 import { reportError } from '@/lib/error-reporter';
 
@@ -114,13 +117,18 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
   onProposeEvent,
 }) => {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights' | 'volunteers' | 'alerts'>('roster');
+  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights' | 'volunteers' | 'alerts' | 'form'>('roster');
+  const [formSubTab, setFormSubTab] = useState<'builder' | 'submissions'>('builder');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'studentName' | 'rollNumber' | 'checkInStatus'>('studentName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState('mock-evt-1');
   const [selectedEventTitle, setSelectedEventTitle] = useState('Smart Campus AI & Robotics Symposium');
+  const [organizerEvents, setOrganizerEvents] = useState<Array<{ id: string; title: string }>>([
+    { id: 'mock-evt-1', title: 'Smart Campus AI & Robotics Symposium' },
+    { id: 'mock-evt-2', title: 'Annual Autonomous Drone Derby' },
+  ]);
 
   // Volunteers & Operations State (Phase 8 FR-VOL, FR-OPS)
   const [applicants, setApplicants] = useState<VolunteerApplicant[]>([
@@ -301,6 +309,28 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
       createdAt: '2026-10-21T20:15:00Z',
     },
   ]);
+
+  // Fetch real events for organizer
+  useEffect(() => {
+    async function loadEvents() {
+      try {
+        const res = await apiClient.get<any>('/api/v1/events?limit=50');
+        const evts = res?.events || (Array.isArray(res) ? res : []);
+        if (evts.length > 0) {
+          const mapped = evts.map((e: any) => ({
+            id: e.id,
+            title: e.title || 'Untitled Event',
+          }));
+          setOrganizerEvents(mapped);
+          setSelectedEventId(mapped[0].id);
+          setSelectedEventTitle(mapped[0].title);
+        }
+      } catch {
+        // Retain fallback prototype events
+      }
+    }
+    loadEvents();
+  }, []);
 
   // Fetch real ledger from backend if authenticated
   useEffect(() => {
@@ -570,6 +600,16 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
             >
               Alerts & Broadcasts (FR-ALERT)
             </button>
+            <button
+              onClick={() => setActiveTab('form')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                activeTab === 'form'
+                  ? 'bg-surface text-text shadow-sm'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Registration Forms (P11)
+            </button>
           </div>
 
           <Button
@@ -692,14 +732,28 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
                 </p>
               </div>
 
-              <div className="w-full sm:w-64">
-                <Input
-                  placeholder="Search attendee or ticket..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="text-xs py-1.5"
-                  aria-label="Filter attendees"
-                />
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setActiveTab('form');
+                    setFormSubTab('submissions');
+                  }}
+                  className="flex items-center gap-1.5 text-xs whitespace-nowrap"
+                >
+                  <ClipboardList className="w-3.5 h-3.5 text-brand" />
+                  View Custom Answers
+                </Button>
+                <div className="w-full sm:w-64">
+                  <Input
+                    placeholder="Search attendee or ticket..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="text-xs py-1.5"
+                    aria-label="Filter attendees"
+                  />
+                </div>
               </div>
             </div>
           </CardHeader>
@@ -1561,6 +1615,73 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
           eventId={selectedEventId}
           eventTitle={selectedEventTitle}
         />
+      )}
+
+      {/* Tab 6: Custom Registration Form Builder & Submissions (Phase P11) */}
+      {activeTab === 'form' && (
+        <div className="space-y-4">
+          {/* Sub-tab navigation: Form Builder vs Submissions */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-surface p-3.5 rounded-lg border border-border">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-muted font-semibold">Active Event:</span>
+              <select
+                id="form-event-selector"
+                value={selectedEventId}
+                onChange={(e) => {
+                  setSelectedEventId(e.target.value);
+                  setSelectedEventTitle(e.target.options[e.target.selectedIndex].text);
+                }}
+                className="text-xs p-1.5 rounded border border-border bg-surface text-text font-medium"
+              >
+                {organizerEvents.map((evt) => (
+                  <option key={evt.id} value={evt.id}>
+                    {evt.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex bg-surface-2 p-1 rounded-md border border-border text-xs">
+              <button
+                type="button"
+                onClick={() => setFormSubTab('builder')}
+                className={`px-3 py-1 font-semibold rounded transition-colors ${
+                  formSubTab === 'builder'
+                    ? 'bg-surface text-text shadow-sm'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                Design Form Fields
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormSubTab('submissions')}
+                className={`px-3 py-1 font-semibold rounded transition-colors ${
+                  formSubTab === 'submissions'
+                    ? 'bg-surface text-text shadow-sm'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                View Responses & Answers
+              </button>
+            </div>
+          </div>
+
+          {formSubTab === 'builder' ? (
+            <FormBuilder
+              eventId={selectedEventId}
+              onSaveSuccess={() => {
+                toast({
+                  type: 'success',
+                  title: 'Form Updated',
+                  message: 'Registration form saved and live for attendees.',
+                });
+              }}
+            />
+          ) : (
+            <FormSubmissionsView eventId={selectedEventId} />
+          )}
+        </div>
       )}
 
       {/* Export Dialog Modal */}

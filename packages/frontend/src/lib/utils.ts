@@ -29,5 +29,12 @@ export {
   rupeeToPaise,
   paiseToRupee,
   formatPaiseToRupee,
+  FORM_FIELD_TYPES,
+  type FormFieldType,
+  DEFAULT_DIETARY_OPTIONS,
+  type FormFieldItem,
+  type FormFieldValidation,
+  type EventFormConfig,
+  type RegistrationAnswerItem,
 } from '@eventora/shared';
 

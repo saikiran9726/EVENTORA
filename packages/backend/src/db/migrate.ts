@@ -1304,7 +1304,8 @@ export async function runMigrations() {
         (12, 'Phase 12: Auth Token Purpose Separation & Session Hardening'),
         (13, 'Phase 13: Active Solo Booking Partial Unique Index & Hold Reconciliation'),
         (14, 'Phase 14: Event Status History System Actor, Completion Index & Scan Outcome'),
-        (15, 'Phase 15: Event Pricing Type, Currency & Tier Backfill')
+        (15, 'Phase 15: Event Pricing Type, Currency & Tier Backfill'),
+        (16, 'Phase 16: Custom Registration Form Builder & Versioned Fields')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1352,6 +1353,53 @@ export async function runMigrations() {
         SELECT 1 FROM ticket_types tt
         WHERE tt.event_id = e.id AND tt.price_paise > 0
       );
+
+      -- Phase 16: Custom Registration Form Builder & Versioned Fields
+      DO $$ BEGIN
+        CREATE TYPE event_form_field_type AS ENUM (
+          'short_text',
+          'long_text',
+          'dropdown',
+          'radio',
+          'checkbox',
+          'multi_checkbox',
+          'phone',
+          'email',
+          'number',
+          'date',
+          'dietary'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+
+      CREATE TABLE IF NOT EXISTS event_form_fields (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        position INT NOT NULL DEFAULT 0,
+        type event_form_field_type NOT NULL DEFAULT 'short_text',
+        label TEXT NOT NULL,
+        help_text TEXT,
+        required BOOLEAN NOT NULL DEFAULT false,
+        options JSONB NOT NULL DEFAULT '[]'::jsonb,
+        validation JSONB NOT NULL DEFAULT '{}'::jsonb,
+        version INT NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_event_form_fields_event_pos ON event_form_fields(event_id, position);
+
+      ALTER TABLE registration_answers ADD COLUMN IF NOT EXISTS field_id UUID REFERENCES event_form_fields(id) ON DELETE CASCADE;
+      ALTER TABLE registration_answers ADD COLUMN IF NOT EXISTS field_version INT DEFAULT 1;
+      ALTER TABLE registration_answers ADD COLUMN IF NOT EXISTS value JSONB;
+      ALTER TABLE registration_answers ADD COLUMN IF NOT EXISTS attendee_index INT NOT NULL DEFAULT 0;
+
+      ALTER TABLE registration_answers ALTER COLUMN question_id DROP NOT NULL;
+      ALTER TABLE registration_answers ALTER COLUMN answer DROP NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_registration_answers_booking ON registration_answers(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_registration_answers_field ON registration_answers(field_id);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

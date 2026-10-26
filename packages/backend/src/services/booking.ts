@@ -1,5 +1,6 @@
 import { pool } from '../db/index.js';
 import crypto from 'crypto';
+import { validateAnswerValue, FormBuilderError } from './form-builder.js';
 
 export class BookingError extends Error {
   public readonly code: string;
@@ -31,10 +32,13 @@ export interface CreateBookingParams {
   idempotencyKey: string;
   payloadHash?: string;
   teamRegistrationId?: string | null;
-  answers?: {
-    questionId: string;
+  answers?: Array<{
+    fieldId?: string;
+    questionId?: string;
+    value?: any;
     answer?: any;
-  }[];
+    attendeeIndex?: number;
+  }>;
 }
 
 export interface BookingResult {
@@ -192,62 +196,152 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       }
     }
 
-    // 4. Validate Custom Registration Form Questions
-    const questionsRes = await client.query(
-      `SELECT id, label, type, required, options
-       FROM registration_form_questions
+    // 4. Validate Custom Registration Form Fields & Legacy Questions
+    const fieldsRes = await client.query(
+      `SELECT id, event_id, position, type, label, help_text, required, options, validation, version
+       FROM event_form_fields
        WHERE event_id = $1
-       ORDER BY sort ASC, id ASC;`,
+       ORDER BY position ASC, id ASC;`,
       [eventId]
     );
 
-    if (questionsRes.rows.length > 0) {
-      const questionMap = new Map<string, any>(
-        questionsRes.rows.map((q) => [q.id, q])
-      );
+    const validatedAnswersToInsert: Array<{
+      fieldId?: string;
+      fieldVersion?: number;
+      value?: any;
+      questionId?: string;
+      answer?: any;
+      attendeeIndex: number;
+    }> = [];
 
-      // Verify answers only refer to questions of this event
+    if (fieldsRes.rows.length > 0) {
+      const fieldMap = new Map<string, any>(fieldsRes.rows.map((f) => [f.id, f]));
+      const totalTicketsCount = items.reduce((sum, it) => sum + it.quantity, 0);
+
+      // Verify answers only refer to fields of this event
       if (answers && answers.length > 0) {
         for (const ans of answers) {
-          if (!questionMap.has(ans.questionId)) {
+          const fid = ans.fieldId || ans.questionId;
+          if (fid && !fieldMap.has(fid)) {
             throw new BookingError(
-              'INVALID_QUESTION',
-              `Question ${ans.questionId} does not belong to this event`,
-              400
+              'UNKNOWN_FORM_FIELD',
+              `Field ${fid} does not belong to this event`,
+              400,
+              { fieldId: fid }
             );
           }
         }
       }
 
-      // Check required questions and valid option choices
-      const answersMap = new Map<string, any>(
-        (answers || []).map((a) => [a.questionId, a.answer])
+      // Group incoming answers by attendeeIndex
+      const answersByAttendee = new Map<number, Map<string, any>>();
+      if (answers && answers.length > 0) {
+        for (const ans of answers) {
+          const attIdx = typeof ans.attendeeIndex === 'number' ? ans.attendeeIndex : 0;
+          if (!answersByAttendee.has(attIdx)) {
+            answersByAttendee.set(attIdx, new Map());
+          }
+          const fid = ans.fieldId || ans.questionId!;
+          const val = ans.value !== undefined ? ans.value : ans.answer;
+          answersByAttendee.get(attIdx)!.set(fid, val);
+        }
+      }
+
+      // For each attendee index (from 0 to totalTicketsCount - 1):
+      const attendeeLimit = Math.max(1, totalTicketsCount);
+      for (let attIdx = 0; attIdx < attendeeLimit; attIdx++) {
+        const attAnswers = answersByAttendee.get(attIdx) || answersByAttendee.get(0) || new Map();
+
+        for (const field of fieldsRes.rows) {
+          const rawVal = attAnswers.get(field.id);
+          try {
+            const { valid, value } = validateAnswerValue(field, rawVal);
+            if (valid && value !== null && value !== undefined) {
+              validatedAnswersToInsert.push({
+                fieldId: field.id,
+                fieldVersion: field.version,
+                value,
+                attendeeIndex: attIdx,
+              });
+            }
+          } catch (valErr: any) {
+            if (valErr instanceof FormBuilderError) {
+              throw new BookingError(valErr.code, valErr.message, valErr.statusCode, {
+                ...valErr.details,
+                attendeeIndex: attIdx,
+              });
+            }
+            throw valErr;
+          }
+        }
+      }
+    } else {
+      // Legacy fallback: Validate registration_form_questions if any
+      const questionsRes = await client.query(
+        `SELECT id, label, type, required, options
+         FROM registration_form_questions
+         WHERE event_id = $1
+         ORDER BY sort ASC, id ASC;`,
+        [eventId]
       );
 
-      for (const q of questionsRes.rows) {
-        const ansVal = answersMap.get(q.id);
-        const isEmpty =
-          ansVal === undefined ||
-          ansVal === null ||
-          (typeof ansVal === 'string' && ansVal.trim() === '');
+      if (questionsRes.rows.length > 0) {
+        const questionMap = new Map<string, any>(
+          questionsRes.rows.map((q) => [q.id, q])
+        );
 
-        if (q.required && isEmpty) {
-          throw new BookingError(
-            'MISSING_REQUIRED_QUESTION',
-            `Answer is required for question: "${q.label}"`,
-            400,
-            { questionId: q.id }
-          );
+        if (answers && answers.length > 0) {
+          for (const ans of answers) {
+            const qid = ans.questionId || ans.fieldId;
+            if (qid && !questionMap.has(qid)) {
+              throw new BookingError(
+                'INVALID_QUESTION',
+                `Question ${qid} does not belong to this event`,
+                400
+              );
+            }
+          }
         }
 
-        if (!isEmpty && (q.type === 'select' || q.type === 'radio') && Array.isArray(q.options)) {
-          if (!q.options.includes(ansVal)) {
+        const answersMap = new Map<string, any>(
+          (answers || [])
+            .filter((a) => Boolean(a.questionId || a.fieldId))
+            .map((a) => [(a.questionId || a.fieldId) as string, a.answer !== undefined ? a.answer : a.value])
+        );
+
+        for (const q of questionsRes.rows) {
+          const ansVal = answersMap.get(q.id);
+          const isEmpty =
+            ansVal === undefined ||
+            ansVal === null ||
+            (typeof ansVal === 'string' && ansVal.trim() === '');
+
+          if (q.required && isEmpty) {
             throw new BookingError(
-              'INVALID_QUESTION_OPTION',
-              `Selected option is invalid for question: "${q.label}"`,
+              'MISSING_REQUIRED_QUESTION',
+              `Answer is required for question: "${q.label}"`,
               400,
-              { questionId: q.id, allowedOptions: q.options }
+              { questionId: q.id }
             );
+          }
+
+          if (!isEmpty && (q.type === 'select' || q.type === 'radio') && Array.isArray(q.options)) {
+            if (!q.options.includes(ansVal)) {
+              throw new BookingError(
+                'INVALID_QUESTION_OPTION',
+                `Selected option is invalid for question: "${q.label}"`,
+                400,
+                { questionId: q.id, allowedOptions: q.options }
+              );
+            }
+          }
+
+          if (!isEmpty) {
+            validatedAnswersToInsert.push({
+              questionId: q.id,
+              answer: ansVal,
+              attendeeIndex: 0,
+            });
           }
         }
       }
@@ -457,12 +551,20 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
     }
 
     // 11. Save Registration Answers if provided
-    if (answers && answers.length > 0) {
-      for (const ans of answers) {
+    if (validatedAnswersToInsert.length > 0) {
+      for (const ans of validatedAnswersToInsert) {
         await client.query(
-          `INSERT INTO registration_answers (booking_id, question_id, answer)
-           VALUES ($1, $2, $3);`,
-          [booking.id, ans.questionId, JSON.stringify(ans.answer)]
+          `INSERT INTO registration_answers (booking_id, field_id, field_version, value, question_id, answer, attendee_index)
+           VALUES ($1, $2, $3, $4, $5, $6, $7);`,
+          [
+            booking.id,
+            ans.fieldId || null,
+            ans.fieldVersion || 1,
+            ans.value !== undefined ? JSON.stringify(ans.value) : null,
+            ans.questionId || null,
+            ans.answer !== undefined ? JSON.stringify(ans.answer) : null,
+            ans.attendeeIndex || 0,
+          ]
         );
       }
     }
