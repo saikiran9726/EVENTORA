@@ -28,6 +28,7 @@ import { formatPaise } from '@/lib/utils';
 import { ExportDialog } from '@/components/analytics/ExportDialog';
 import { AlertComposer } from '@/components/organizer/AlertComposer';
 import { apiClient } from '@/lib/api-client';
+import { reportError } from '@/lib/error-reporter';
 
 interface OrganizerDashboardPageProps {
   organizerId?: string;
@@ -358,9 +359,7 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
 
   const handleModerateFeedback = async (feedbackId: string, status: 'visible' | 'flagged' | 'hidden') => {
     try {
-      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('eventora_auth_token') : null;
-
-      if (!token || feedbackId.startsWith('fb-')) {
+      if (feedbackId.startsWith('fb-mock-') || feedbackId.startsWith('fb-demo-')) {
         toast({
           type: 'success',
           title: 'Review Moderated',
@@ -372,10 +371,7 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
         return;
       }
 
-      await apiClient(`/api/v1/feedback/${feedbackId}/moderate`, {
-        method: 'POST',
-        body: JSON.stringify({ status }),
-      });
+      await apiClient.post(`/api/v1/feedback/${feedbackId}/moderate`, { status });
 
       toast({
         type: 'success',
@@ -385,7 +381,8 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
       setFeedbackList((prev) =>
         prev.map((f) => (f.id === feedbackId ? { ...f, moderationStatus: status } : f))
       );
-    } catch {
+    } catch (err: any) {
+      reportError(err, { context: 'handleModerateFeedback', feedbackId });
       toast({
         type: 'error',
         title: 'Moderation Error',

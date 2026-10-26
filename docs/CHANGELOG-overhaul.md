@@ -1,5 +1,67 @@
 # Eventora Overhaul Changelog
 
+## Phase P05 — Frontend Foundation A: API Client, Auth State & Error Handling
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Eliminating Raw Network Calls & LocalStorage Tokens
+- **Zero Raw Fetch Calls:** Migrated `PublicPassportPage.tsx` and `PublicVerifyPage.tsx` from raw browser `fetch()` to typed `apiClient.get<T>()`.
+- **Zero LocalStorage Auth Token Reads:** Removed legacy `localStorage.getItem('eventora_auth_token')` reads and manual `Authorization: Bearer` injections from `ExportDialog.tsx`, `FeedbackSheet.tsx`, `CheckoutPage.tsx`, and `OrganizerDashboardPage.tsx`. Auth now relies strictly on HTTP-only session cookies with double-submit CSRF protection.
+- **ESLint Rule Enforcement:** Configured `no-restricted-syntax` in `eslint.config.js` targeting `packages/frontend/src/**/*.{ts,tsx}`:
+  - Prohibits `CallExpression[callee.name='fetch']` (except in `api-client.ts`).
+  - Prohibits `Literal[value='eventora_auth_token']`.
+  - Verified 0 errors across codebase via `pnpm lint`.
+
+---
+
+### 2. API Client Hardening (`packages/frontend/src/lib/api-client.ts`)
+- **Global Unauthorized Callback:** Added `apiClient.setOnUnauthorized(cb)` called whenever the server responds with HTTP 401.
+- **Abort Listener Leak Prevention:** Explicitly detached external `signal` event listeners in `finally` block using `removeEventListener('abort', ...)`.
+- **Abort vs Timeout Differentiation:**
+  - External abort signal produces `ApiError('USER_ABORTED', 'Request was aborted by user', ..., status: 499)`.
+  - Request timeout produces `ApiError('REQUEST_TIMEOUT', 'The operation timed out...', ..., status: 408)`.
+- **Idempotent Retry with Exponential Backoff:**
+  - Idempotent HTTP methods (`GET`, `HEAD`, `OPTIONS`) automatically retry on 502, 503, 504 and transient network errors with exponential backoff and jitter.
+  - State-changing methods (`POST`, `PUT`, `PATCH`, `DELETE`) are strictly excluded from retries.
+- **Render Cold-Start Detection:**
+  - Requests exceeding 3000ms trigger `onColdStartHandler(true)` and dispatch `eventora:server-waking` custom event.
+  - Upon completion, `onColdStartHandler(false)` is invoked and dispatches `eventora:server-ready`.
+  - Connected to a banner in `App.tsx` notifying users of server spin-up.
+- **Type-Safe Convenience Methods:** Added `apiClient.get`, `apiClient.post`, `apiClient.put`, `apiClient.patch`, and `apiClient.delete`.
+
+---
+
+### 3. TanStack Query Integration & Error Reporting
+- **Query Client Setup:** Added `@tanstack/react-query` to `@eventora/frontend`, configured `packages/frontend/src/lib/query-client.ts` with `staleTime: 30s`, `gcTime: 5m`, and status-aware error retry heuristics (skips 400/401/403/404/409/422).
+- **QueryClientProvider:** Wrapped application root in `App.tsx` with `<QueryClientProvider client={queryClient}>`.
+- **Error Reporter:** Added `packages/frontend/src/lib/error-reporter.ts` (`reportError`) with structured diagnostic metadata.
+- **Global Handlers:** Registered `window.addEventListener('unhandledrejection')` and `window.addEventListener('error')` in `packages/frontend/src/main.tsx`.
+
+---
+
+### 4. AuthContext State Hardening (`packages/frontend/src/context/AuthContext.tsx`)
+- **Stale Closure Elimination:** Utilized `userRef` synchronized synchronously with `setUser` to prevent stale closure bugs in `refreshUser` and unauthorized handlers.
+- **Strict Login Verification:** Login calls `/api/v1/auth/login` and immediately verifies the session authoritatively via `/api/v1/me`. If `/me` fails, login aborts, clears state, and reports verification error instead of leaving the client in a broken half-authenticated state.
+- **Session Expiration & Return Path Restoration:** Registered `apiClient.setOnUnauthorized`:
+  - When unauthorized event fires for an authenticated user, saves current route in `returnPath`, clears user state, and opens `ExpiredSessionModal`.
+  - When re-logging in, restores user immediately to the original `returnPath`.
+
+---
+
+### 5. Automated Verification & Regression Gates
+- **Unit Tests:**
+  - `tests/unit/api-client.test.ts`: 10 tests verifying CSRF injection, envelope parsing, unauthorized callbacks, cold start, timeout/abort distinction, and idempotent retries.
+  - `tests/unit/phase-p05-frontend-foundation.test.ts`: 7 tests verifying 0 raw fetches, 0 token reads, ESLint rules, TanStack Query mounting, and unhandled rejection hooks.
+- **Full Vitest Suite:** 32 test files, 273 tests passing (100%).
+- **Production Build:** Vite production build passes in 4.19s with 0 errors (`pnpm build:frontend`).
+- **E2E Test:** Added automated journey in `tests/e2e/auth-flow.spec.ts` verifying session expiration (401), session expired modal popup, and return path restoration after re-login.
+
+---
+
 ## Phase P02 — Auth: Tokens, Verification, Reset, Sessions & CSRF
 
 **Date:** 2026-10-26  

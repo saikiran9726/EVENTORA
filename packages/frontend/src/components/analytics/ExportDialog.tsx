@@ -4,6 +4,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { apiClient } from '@/lib/api-client';
+import { reportError } from '@/lib/error-reporter';
 
 export interface ExportDialogProps {
   isOpen: boolean;
@@ -29,10 +30,8 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     setErrorMessage(null);
 
     try {
-      const token = localStorage.getItem('eventora_auth_token');
-
-      // Prototype fallback for demo/mock mode
-      if (!token || eventId.startsWith('mock-')) {
+      // Prototype fallback for mock mode
+      if (eventId.startsWith('mock-')) {
         toast({
           type: 'success',
           title: 'Export Download Started',
@@ -42,9 +41,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
         return;
       }
 
-      const data = await apiClient<any>(`/api/v1/organizer/events/${eventId}/exports`, {
-        method: 'POST',
-        body: JSON.stringify({ kind, format }),
+      const data = await apiClient.post<any>(`/api/v1/organizer/events/${eventId}/exports`, {
+        kind,
+        format,
       });
 
       const downloadUrl = data?.job?.downloadUrl;
@@ -71,8 +70,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
         });
         onClose();
       }
-    } catch {
-      setErrorMessage('Network error occurred while generating data export.');
+    } catch (err: any) {
+      reportError(err, { context: 'handleExport', eventId, kind, format });
+      setErrorMessage(err.message || 'Network error occurred while generating data export.');
     } finally {
       setIsExporting(false);
     }

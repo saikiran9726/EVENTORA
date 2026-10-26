@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { apiClient, ApiError } from '@/lib/api-client';
+import { reportError } from '@/lib/error-reporter';
 import {
   Award,
   ShieldCheck,
@@ -47,31 +49,26 @@ export const PublicPassportPage: React.FC<{
       setIsNotFound(false);
 
       try {
-        const res = await fetch(`/api/v1/p/${slug}`, {
-          cache: 'no-store',
-          headers: { Pragma: 'no-cache' },
-        });
+        const data = await apiClient.get<PublicPassportPayload>(`/api/v1/p/${slug}`);
+        if (!isCancelled) {
+          setPassport(data);
+          setIsNotFound(false);
+        }
+        return;
+      } catch (err: any) {
+        if (err instanceof ApiError && err.status === 404) {
+          // If backend returns 404, check if this is an active prototype session
+          const isPublicStored = typeof localStorage !== 'undefined'
+            ? localStorage.getItem('eventora_passport_public')
+            : null;
 
-        if (res.ok) {
-          const data = await res.json();
-          if (!isCancelled) {
-            setPassport(data);
-            setIsNotFound(false);
+          if (isPublicStored === 'false') {
+            if (!isCancelled) setIsNotFound(true);
+            return;
           }
-          return;
+        } else {
+          reportError(err, { context: 'fetchPublicPassport', slug });
         }
-
-        // If backend returns 404, check if this is an active prototype session
-        const isPublicStored = typeof localStorage !== 'undefined'
-          ? localStorage.getItem('eventora_passport_public')
-          : null;
-
-        if (isPublicStored === 'false') {
-          if (!isCancelled) setIsNotFound(true);
-          return;
-        }
-      } catch {
-        // Fallback for prototype testing if server offline
       } finally {
         if (!isCancelled) {
           setIsLoading(false);

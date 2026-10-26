@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { formatPaise } from '@/lib/utils';
 import { apiClient } from '@/lib/api-client';
+import { reportError } from '@/lib/error-reporter';
 import {
   CreditCard,
   ShieldCheck,
@@ -185,10 +186,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const handleSimulatePayment = async (shouldSucceed: boolean) => {
     setCheckoutState('PROCESSING');
 
-    const token = localStorage.getItem('eventora_auth_token');
-
-    // If demo booking or unauthenticated session in frontend prototype, simulate directly
-    if (!token || bookingId.startsWith('bkg_demo_') || bookingId.startsWith('proto-')) {
+    // If demo booking or mock session in frontend prototype, simulate directly
+    if (bookingId.startsWith('bkg_demo_') || bookingId.startsWith('proto-')) {
       setTimeout(() => {
         if (shouldSucceed) {
           setCheckoutState('SUCCESS');
@@ -250,6 +249,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         });
       }
     } catch (err: any) {
+      reportError(err, { context: 'simulatePayment', bookingId });
       setCheckoutState('FAILED');
       setFailureReason(err?.message || err?.error?.message || 'Payment verification failed');
       toast({

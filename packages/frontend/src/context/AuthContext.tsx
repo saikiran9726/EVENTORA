@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { apiClient } from '@/lib/api-client';
+import { reportError } from '@/lib/error-reporter';
 
 export interface UserProfile {
   id: string;
@@ -48,31 +49,59 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
+  const userRef = useRef<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSessionExpiredModalOpen, setIsSessionExpiredModalOpen] = useState<boolean>(false);
   const [returnPath, setReturnPath] = useState<string | null>(null);
 
-  const refreshUser = async () => {
+  // Synchronize ref with user state to prevent stale closures in async callbacks
+  const updateUser = useCallback((newUser: UserProfile | null) => {
+    userRef.current = newUser;
+    setUser(newUser);
+  }, []);
+
+  const triggerSessionExpired = useCallback(() => {
+    if (userRef.current) {
+      if (typeof window !== 'undefined') {
+        const path = window.location.pathname + window.location.search;
+        setReturnPath(path);
+      }
+      setIsSessionExpiredModalOpen(true);
+      updateUser(null);
+    }
+  }, [updateUser]);
+
+  const refreshUser = useCallback(async () => {
     try {
       const res = await apiClient.get<{ user: UserProfile }>('/api/v1/me');
       if (res?.user) {
-        setUser(res.user);
+        updateUser(res.user);
       } else {
-        setUser(null);
+        updateUser(null);
       }
     } catch (err: any) {
-      if (err.error?.code === 'UNAUTHORIZED' && user) {
-        setIsSessionExpiredModalOpen(true);
+      if (err.status === 401 && userRef.current) {
+        triggerSessionExpired();
+      } else {
+        updateUser(null);
       }
-      setUser(null);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [updateUser, triggerSessionExpired]);
 
+  // Wire global unauthorized callback from apiClient
   useEffect(() => {
+    apiClient.setOnUnauthorized(() => {
+      triggerSessionExpired();
+    });
+
     refreshUser();
-  }, []);
+
+    return () => {
+      apiClient.setOnUnauthorized(null);
+    };
+  }, [triggerSessionExpired, refreshUser]);
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -82,15 +111,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       );
 
       if (res?.user) {
-        setUser(res.user);
         if (res.csrfToken) {
           apiClient.setCsrfToken(res.csrfToken);
         }
         if (res.token) {
           apiClient.setSessionToken(res.token);
         }
-        await refreshUser();
-        return { success: true };
+
+        // Authoritatively verify session via /api/v1/me before claiming success
+        try {
+          const meRes = await apiClient.get<{ user: UserProfile }>('/api/v1/me');
+          if (!meRes?.user) {
+            throw new Error('Failed to verify session profile from /api/v1/me');
+          }
+          updateUser(meRes.user);
+          return { success: true };
+        } catch (verifyErr: any) {
+          updateUser(null);
+          reportError(verifyErr, { context: 'login:verify_me' });
+          return {
+            success: false,
+            error: verifyErr.error?.message || verifyErr.message || 'Session verification failed.',
+          };
+        }
       }
       return { success: false, error: 'Login failed' };
     } catch (err: any) {
@@ -127,10 +170,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       await apiClient.post('/api/v1/auth/logout', {});
-    } catch {
-      // Ignore network errors on logout
+    } catch (err) {
+      reportError(err, { context: 'logout' });
     } finally {
-      setUser(null);
+      updateUser(null);
       apiClient.setCsrfToken('');
       apiClient.setSessionToken('');
     }
@@ -140,7 +183,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const res = await apiClient.patch<{ user: UserProfile }>('/api/v1/me', { displayName });
       if (res?.user) {
-        setUser((prev) => (prev ? { ...prev, displayName: res.user.displayName } : null));
+        updateUser(res.user);
         return { success: true };
       }
       return { success: false, error: 'Update failed' };
@@ -152,8 +195,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updatePreferences = async (prefs: { emailEnabled?: boolean; inappEnabled?: boolean; theme?: string }) => {
     try {
       const res = await apiClient.patch<{ preferences: any }>('/api/v1/me/preferences', prefs);
-      if (res?.preferences && user) {
-        setUser({ ...user, preferences: res.preferences });
+      if (res?.preferences && userRef.current) {
+        updateUser({ ...userRef.current, preferences: res.preferences });
         return { success: true };
       }
       return { success: false, error: 'Update failed' };

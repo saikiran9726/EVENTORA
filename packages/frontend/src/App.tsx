@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '@/lib/query-client';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { StudentShell } from '@/components/shells/StudentShell';
 import { OrganizerShell } from '@/components/shells/OrganizerShell';
@@ -50,6 +52,19 @@ const AppInner: React.FC = () => {
   const [activeBookingId, setActiveBookingId] = useState<string | null>(null);
   const [verifyCode, setVerifyCode] = useState<string>('');
   const [publicPassportSlug, setPublicPassportSlug] = useState<string>('');
+  const [isServerWaking, setIsServerWaking] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleWaking = () => setIsServerWaking(true);
+    const handleReady = () => setIsServerWaking(false);
+    window.addEventListener('eventora:server-waking', handleWaking);
+    window.addEventListener('eventora:server-ready', handleReady);
+    return () => {
+      window.removeEventListener('eventora:server-waking', handleWaking);
+      window.removeEventListener('eventora:server-ready', handleReady);
+    };
+  }, []);
 
   // Route-to-path and path-to-route synchronization
   const syncRouteFromPath = () => {
@@ -452,11 +467,24 @@ const AppInner: React.FC = () => {
 
   return (
     <>
+      {isServerWaking && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-0 inset-x-0 z-50 bg-amber-500 text-white text-xs font-medium py-1.5 px-4 text-center shadow flex items-center justify-center gap-2"
+        >
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+          Eventora server is spinning up (Render cold start)... First request may take 15–30s.
+        </div>
+      )}
       {renderShell()}
       <ExpiredSessionModal
         isOpen={isSessionExpiredModalOpen}
         onSignIn={() => {
           setIsSessionExpiredModalOpen(false);
+          if (!returnPath) {
+            setReturnPath(activeRoute);
+          }
           setActiveRoute('auth-login');
         }}
       />
@@ -466,11 +494,13 @@ const AppInner: React.FC = () => {
 
 export const App: React.FC = () => {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <AppInner />
-      </ToastProvider>
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <ToastProvider>
+          <AppInner />
+        </ToastProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 };
 

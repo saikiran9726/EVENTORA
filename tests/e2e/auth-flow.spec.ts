@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test';
-import path from 'path';
 import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
@@ -117,5 +116,79 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
     await roleSelect.selectOption('checkin_staff');
     await expect(page.getByText('Turnstile Check-in Scanner')).toBeVisible();
     await expect(page.getByText('Policy: attendance:checkin:assigned')).toBeVisible();
+  });
+
+  test('Session expiration: 401 triggers expired modal and redirects back to original route after re-login', async ({ page }) => {
+    // 1. Visit App and navigate to Profile
+    await page.goto('/');
+
+    const meNavBtn = page.locator('button:has-text("Me"):visible').first();
+    await meNavBtn.click();
+    await expect(page.getByText('Sign In to Eventora')).toBeVisible();
+
+    // 2. Register & login a test student
+    const createAccountBtn = page.getByRole('button', { name: /create campus account/i });
+    await createAccountBtn.click();
+
+    const uniqueId = Date.now().toString().slice(-6);
+    const testEmail = `expiry.student.${uniqueId}@campus.edu`;
+
+    await page.fill('#reg-name', 'Expiry Test Student');
+    await page.fill('#reg-email', testEmail);
+    await page.fill('#reg-password', 'Eventora#Test2026!');
+    await page.click('button:has-text("Create Account")');
+
+    await expect(page.getByText('Verify Your College Email')).toBeVisible();
+    await page.click('button:has-text("Verify Email & Activate")');
+    await expect(page.getByText('Email Verified!')).toBeVisible();
+
+    await page.click('button:has-text("Proceed to Sign In")');
+    await page.fill('#login-email', testEmail);
+    await page.fill('#login-password', 'Eventora#Test2026!');
+    await page.click('button:has-text("Sign In")');
+
+    // Should be on profile page
+    await expect(page.getByText('Account & Preferences')).toBeVisible();
+
+    // 3. Intercept next /me or API call with 401 Unauthorized to simulate expired session
+    await page.route('**/api/v1/me/preferences', (route) => {
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: {
+            code: 'UNAUTHORIZED',
+            message: 'Session expired due to inactivity',
+            requestId: 'req-expired-test',
+          },
+        }),
+      });
+    });
+
+    // Trigger state change that hits /api/v1/me/preferences
+    const emailToggle = page.locator('input[type="checkbox"]').first();
+    if (await emailToggle.isVisible()) {
+      await emailToggle.click();
+    }
+
+    // 4. Session Expired modal must pop up
+    await expect(page.getByText('Session Expired')).toBeVisible();
+    await expect(page.getByText('Sign In Again')).toBeVisible();
+
+    // 5. Click "Sign In Again"
+    await page.click('button:has-text("Sign In Again")');
+    await expect(page.getByText('Sign In to Eventora')).toBeVisible();
+
+    // 6. Unroute mock so backend responds normally
+    await page.unroute('**/api/v1/me/preferences');
+
+    // 7. Sign in again
+    await page.fill('#login-email', testEmail);
+    await page.fill('#login-password', 'Eventora#Test2026!');
+    await page.click('button:has-text("Sign In")');
+
+    // 8. Must return user back to the Profile page ('Account & Preferences')
+    await expect(page.getByText('Account & Preferences')).toBeVisible();
+    await expect(page.getByText(testEmail)).toBeVisible();
   });
 });

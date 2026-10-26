@@ -21,4 +21,30 @@ export default [
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
+  {
+    files: ['packages/frontend/src/**/*.{ts,tsx}'],
+    ignores: ['packages/frontend/src/lib/api-client.ts'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='fetch']",
+          message:
+            'Direct fetch() is strictly forbidden in frontend components. Use apiClient from "@/lib/api-client" instead.',
+        },
+        {
+          selector: "Literal[value='eventora_auth_token']",
+          message:
+            'Direct access to eventora_auth_token is strictly forbidden. Eventora uses authoritative HTTP-only session cookies.',
+        },
+      ],
+    },
+  },
 ];

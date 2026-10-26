@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { apiClient, ApiError } from '@/lib/api-client';
+import { reportError } from '@/lib/error-reporter';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -44,13 +46,11 @@ export const PublicVerifyPage: React.FC<{
     setErrorMsg(null);
 
     try {
-      const res = await fetch(`/api/v1/verify/${encodeURIComponent(clean)}`);
-      const data = await res.json();
-
-      if (res.ok) {
-        setResult(data as VerifyResult);
-      } else {
-        if (res.status === 404) {
+      const data = await apiClient.get<VerifyResult>(`/api/v1/verify/${encodeURIComponent(clean)}`);
+      setResult(data);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        if (err.status === 404) {
           if (clean === '7H9K-2M4N-8PQR') {
             setResult({
               found: true,
@@ -66,17 +66,18 @@ export const PublicVerifyPage: React.FC<{
               found: false,
               valid: false,
               status: 'REVOKED',
-              message: data.error?.message || 'Certificate code not found in campus database.',
+              message: err.message || 'Certificate code not found in campus database.',
             });
           }
-        } else if (res.status === 429) {
+        } else if (err.status === 429) {
           setErrorMsg('Rate limit exceeded (max 30 verifications/minute). Please wait 1 minute before retrying.');
         } else {
-          setErrorMsg(data.error?.message || 'An error occurred during verification.');
+          setErrorMsg(err.message || 'An error occurred during verification.');
         }
+      } else {
+        reportError(err, { context: 'verifyCode', clean });
+        setErrorMsg('Could not communicate with the verification server. Please try again.');
       }
-    } catch {
-      setErrorMsg('Could not communicate with the verification server. Please try again.');
     } finally {
       setIsLoading(false);
     }
