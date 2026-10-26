@@ -67,6 +67,7 @@ export const eventStatusEnum = pgEnum('event_status', [
   'completed',
 ]);
 export const eventVisibilityEnum = pgEnum('event_visibility', ['college', 'public']);
+export const eventPricingTypeEnum = pgEnum('event_pricing_type', ['free', 'paid']);
 export const teamModeEnum = pgEnum('team_mode', ['none', 'optional', 'required']);
 export const eventApprovalDecisionEnum = pgEnum('event_approval_decision', [
   'approved',
@@ -456,6 +457,8 @@ export const events = pgTable('events', {
   registrationOpensAt: timestamp('registration_opens_at', { withTimezone: true }),
   registrationClosesAt: timestamp('registration_closes_at', { withTimezone: true }),
   capacity: integer('capacity').notNull(),
+  pricingType: eventPricingTypeEnum('pricing_type').default('free').notNull(),
+  currency: varchar('currency', { length: 10 }).default('INR').notNull(),
   eligibility: jsonb('eligibility').default({}).notNull(),
   visibility: eventVisibilityEnum('visibility').default('college').notNull(),
   status: eventStatusEnum('status').default('draft').notNull(),
@@ -1312,6 +1315,7 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   venueBookings: many(venueBookings),
   faqs: many(eventFaqs),
   announcements: many(eventAnnouncements),
+  ticketTypes: many(ticketTypes),
 }));
 
 export const eventFaqsRelations = relations(eventFaqs, ({ one }) => ({
@@ -1345,6 +1349,13 @@ export const eventApprovalsRelations = relations(eventApprovals, ({ one }) => ({
 export const venueBookingsRelations = relations(venueBookings, ({ one }) => ({
   event: one(events, {
     fields: [venueBookings.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const ticketTypesRelations = relations(ticketTypes, ({ one }) => ({
+  event: one(events, {
+    fields: [ticketTypes.eventId],
     references: [events.id],
   }),
 }));

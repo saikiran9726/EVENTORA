@@ -1,5 +1,106 @@
 # Eventora Overhaul Changelog
 
+## Phase P10 — Event Creation: Free/Paid + Schema
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Phase 15)
+- **Migration 15 (`Phase 15: Event Pricing Type, Currency & Tier Backfill`):**
+  - Created `event_pricing_type` enum (`'free'`, `'paid'`) with idempotent check.
+  - Added additive columns to `events` table:
+    - `pricing_type event_pricing_type NOT NULL DEFAULT 'free'`
+    - `currency VARCHAR(10) NOT NULL DEFAULT 'INR'`
+  - Created performance index `idx_events_pricing_type` on `events(pricing_type)`.
+  - Added backfill SQL migrating existing records:
+    `UPDATE events e SET pricing_type = 'paid' WHERE EXISTS (SELECT 1 FROM ticket_types tt WHERE tt.event_id = e.id AND tt.price_paise > 0);`
+  - Added version 15 tracking record into `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 15 -> 14: drops index `idx_events_pricing_type`, drops columns `pricing_type` and `currency` from `events`, drops enum type `event_pricing_type`, and removes version 15 record.
+  - Tested and verified live rollback 15 -> 14 and re-application 14 -> 15 against PostgreSQL database.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Added `eventPricingTypeEnum` (`'free'`, `'paid'`).
+  - Updated `events` table with `pricingType` and `currency`.
+  - Added relational mappings `eventsRelations` and `ticketTypesRelations` for relational queries.
+- **Startup Migration Probe (`packages/backend/src/index.ts`):**
+  - Updated startup check to verify schema version `< 15`.
+
+---
+
+### 2. Money & Currency Utilities (`packages/shared/src/money.ts`)
+- **Integer Paise Financial Invariants:**
+  - Exported `ALLOWED_CURRENCIES = ['INR']` and `isAllowedCurrency()`.
+  - Implemented `rupeeToPaise(rupees: number | string): number`: safely converts rupees to integer paise without floating point inaccuracy. Rejects negative amounts, non-numeric values, and fractional paise (>2 decimal places).
+  - Implemented `paiseToRupee(paise: number): number`: converts integer paise back to numeric rupee amount, rejecting non-integers or negative amounts.
+  - Implemented `formatPaiseToRupee(paise: number, forceDecimals?: boolean): string`: localized standard Indian Rupee currency string representation (e.g. `₹250`, `₹99.50`).
+  - Re-exported utilities across packages via `packages/shared/src/index.ts` and `packages/frontend/src/lib/utils.ts`.
+
+---
+
+### 3. URL-Safe Slug Generation & Collision Resolution (`packages/backend/src/services/slug.ts`)
+- **Transliteration Engine (`transliterateToSlug`):**
+  - Decomposes accented unicode diacritics via `normalize('NFKD')`.
+  - Expands symbols cleanly (`&` -> `and`, `@` -> `at`, `%` -> `percent`, `+` -> `plus`, `#` -> `hash`).
+  - Strips non-alphanumeric noise, normalizes whitespace to single hyphens, and trims leading/trailing hyphens.
+- **Collision Resolution (`generateUniqueSlug`):**
+  - Checks database for collisions on base slug; appends random alphanumeric suffixes (`${base}-${suffix}`) with retry budget; falls back to timestamp suffix if needed.
+  - Supports pg `Pool` and Drizzle client.
+
+---
+
+### 4. Backend Route Schemas & Route Validation (`packages/backend/src/routes/api/v1/events.ts`)
+- **Strict Free vs. Paid Zod Validation:**
+  - `pricingType: z.enum(['free', 'paid']).default('free')`
+  - `currency: z.string().default('INR')`
+  - `ticketTiers: z.array(ticketTierInputSchema).optional()`
+  - Cross-field validation rules enforced in `superRefine`:
+    - `currency` must be in `ALLOWED_CURRENCIES` (`['INR']`).
+    - Paid events: requires $\ge 1$ ticket tier, each tier price must be $> 0$ paise, sum of tier capacities cannot exceed overall event capacity.
+    - Free events: all tiers must have `price_paise = 0`, sum of tier capacities cannot exceed overall event capacity.
+- **API Endpoint Updates:**
+  - `POST /api/v1/events`: Generates unique slug, inserts `pricingType` and `currency`, creates ticket tiers or defaults free tier (`General Admission`, `pricePaise = 0`).
+  - `GET /api/v1/events`: Supports `pricing_type` query filter (`free | paid | all`), returns `pricingType` and `currency`.
+  - `GET /api/v1/events/:slug`: Returns event with relational `ticketTypes`.
+  - `PATCH /api/v1/events/:id`: Allows editing `ticketTiers` for draft events, regenerates unique slug if draft title changes.
+
+---
+
+### 5. Frontend Event Proposal Wizard (`packages/frontend/src/pages/events/CreateEventPage.tsx`)
+- **Rule 5 Compliance (No localStorage):**
+  - Removed all `localStorage` draft saving and proposal idempotency key caching.
+  - Implemented server-side draft autosave: "Save Draft" persists drafts directly via `POST /api/v1/events` or `PATCH /api/v1/events/:id`.
+- **Mandatory Free / Paid Segmented Control:**
+  - Interactive segmented control in Step 3 (`[ Free ] Free Registration` vs `[ Paid ] Paid / Ticketed Event`).
+  - Free mode: informs organizer that attendees register directly without checkout or payment screens.
+  - Paid mode:
+    - Standardizes currency indicator to `INR` (Indian Rupee).
+    - Ticket price input in ₹ with live calculation helper displaying exact integer paise (e.g. `₹499.50` -> `49,950 paise`).
+    - Optional multi-tier builder (e.g. Early Bird, Regular, VIP) with inline capacity sum tracking against event capacity.
+- **Timezone-Aware Date Pickers:**
+  - All date/time fields explicitly labeled with timezone: `(IST / Indian Standard Time, UTC+5:30)`.
+
+---
+
+### 6. Verification & Quality Gates
+- **Unit & Integration Tests:**
+  - `tests/unit/money.test.ts`: 12 tests passing (`rupeeToPaise`, `paiseToRupee`, `formatPaiseToRupee`, `ALLOWED_CURRENCIES`, `isAllowedCurrency`).
+  - `tests/unit/phase-p10-event-creation.test.ts`: 13 tests passing (Free vs Paid schema rules, zero paise checks, currency allow-list, capacity bounds, slug transliteration).
+  - `tests/unit/phase-p09-event-lifecycle.test.ts`: 11 tests passing (schema migration rollback/re-apply).
+  - `tests/unit/form-workflow-repair.test.ts`: 13 tests passing.
+- **Playwright E2E Tests:**
+  - `tests/e2e/phase-p10-event-creation.spec.ts`: 2 tests passing (Desktop-1280):
+    1. Creates Free Event proposal with server draft autosave and no payment screen.
+    2. Creates Paid Event proposal with ₹ to integer paise live conversion and INR currency.
+  - `tests/e2e/event-lifecycle.spec.ts`: Full end-to-end lifecycle test passing.
+- **Typecheck & Lint:**
+  - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, and `@eventora/frontend`.
+  - `pnpm lint`: 0 errors.
+
+---
+
 ## Phase P09 — Event Lifecycle, Cancel Cascade & Auto-Completion Scheduler
 
 **Date:** 2026-10-26  

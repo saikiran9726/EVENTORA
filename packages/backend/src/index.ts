@@ -24,7 +24,7 @@ async function ensureDatabaseSchema() {
         'SELECT MAX(version) as current_version FROM schema_migrations;'
       );
       const version = migRes.rows[0]?.current_version ?? 0;
-      if (version < 14) {
+      if (version < 15) {
         needsMigration = true;
       }
     } catch (err: any) {

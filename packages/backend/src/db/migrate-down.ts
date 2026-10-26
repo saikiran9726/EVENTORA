@@ -24,6 +24,17 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 15 -> 14: Event Pricing Type, Currency & Tier Backfill
+    if (currentVersion >= 15 && targetVersion < 15) {
+      console.log('[Rollback] Rolling back version 15 (Phase 15)...');
+      await client.query(`
+        ALTER TABLE events DROP COLUMN IF EXISTS pricing_type;
+        ALTER TABLE events DROP COLUMN IF EXISTS currency;
+        DROP TYPE IF EXISTS event_pricing_type;
+        DELETE FROM schema_migrations WHERE version = 15;
+      `);
+    }
+
     // Rollback step 14 -> 13: Event Status History System Actor, Completion Index & Scan Outcome
     if (currentVersion >= 14 && targetVersion < 14) {
       console.log('[Rollback] Rolling back version 14 (Phase 14)...');

@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { db } from '../../../db/index.js';
+import { db, pool } from '../../../db/index.js';
 import {
   events,
   venues,
@@ -25,6 +25,8 @@ import {
 import { bookVenueWindow, VenueConflictError } from '../../../services/venue.js';
 import { generateIcsCalendar } from '../../../services/calendar.js';
 import { logAuditEvent } from '../../../services/audit.js';
+import { generateUniqueSlug } from '../../../services/slug.js';
+import { ALLOWED_CURRENCIES } from '@eventora/shared';
 
 const listEventsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
@@ -38,10 +40,18 @@ const listEventsQuerySchema = z.object({
   availability: z.enum(['available', 'all']).optional(),
   sort: z.enum(['date_asc', 'date_desc', 'popularity']).default('date_asc'),
   status: z.enum(['draft', 'pending_approval', 'approved', 'published', 'postponed', 'cancelled', 'completed']).optional(),
+  pricing_type: z.enum(['free', 'paid', 'all']).optional(),
   organizer_id: z.string().uuid().optional(),
 });
 
-const createEventSchema = z.object({
+const ticketTierInputSchema = z.object({
+  name: z.string().min(1, 'Tier name is required').max(100),
+  pricePaise: z.number().int().min(0, 'Price must be non-negative'),
+  capacity: z.number().int().min(1, 'Capacity must be at least 1'),
+  perUserLimit: z.number().int().min(1).max(50).default(5),
+});
+
+const baseCreateEventSchema = z.object({
   organizerId: z.string().uuid().optional(),
   title: z.string().min(3).max(255),
   description: z.string().min(10),
@@ -55,6 +65,9 @@ const createEventSchema = z.object({
   registrationOpensAt: z.string().datetime().optional().nullable(),
   registrationClosesAt: z.string().datetime().optional().nullable(),
   capacity: z.number().int().min(1, 'Capacity must be at least 1'),
+  pricingType: z.enum(['free', 'paid']).default('free'),
+  currency: z.string().default('INR'),
+  ticketTiers: z.array(ticketTierInputSchema).optional(),
   eligibility: z.record(z.any()).default({}),
   visibility: z.enum(['college', 'public']).default('college'),
   teamMode: z.enum(['none', 'optional', 'required']).default('none'),
@@ -63,7 +76,72 @@ const createEventSchema = z.object({
   contactEmail: z.string().email(),
 });
 
-const updateEventSchema = createEventSchema
+const createEventSchema = baseCreateEventSchema.superRefine((data, ctx) => {
+  // 1. Currency allow-list
+  if (!ALLOWED_CURRENCIES.includes(data.currency as any)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['currency'],
+      message: `Currency '${data.currency}' is not supported. Allowed currencies: ${ALLOWED_CURRENCIES.join(', ')}.`,
+    });
+  }
+
+  // 2. Paid events validation: paid => >= 1 tier, price>0, sum(tier.capacity) <= event.capacity
+  if (data.pricingType === 'paid') {
+    const tiers = data.ticketTiers || [];
+    if (tiers.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ticketTiers'],
+        message: 'Paid events must have at least one ticket tier.',
+      });
+    }
+
+    for (let i = 0; i < tiers.length; i++) {
+      if (tiers[i].pricePaise <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ticketTiers', i, 'pricePaise'],
+          message: 'Paid ticket tiers must have price greater than 0 paise.',
+        });
+      }
+    }
+
+    const totalTierCapacity = tiers.reduce((sum, t) => sum + t.capacity, 0);
+    if (totalTierCapacity > data.capacity) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ticketTiers'],
+        message: `Sum of tier capacities (${totalTierCapacity}) cannot exceed overall event capacity (${data.capacity}).`,
+      });
+    }
+  }
+
+  // 3. Free events validation: free => price_paise = 0
+  if (data.pricingType === 'free') {
+    const tiers = data.ticketTiers || [];
+    for (let i = 0; i < tiers.length; i++) {
+      if (tiers[i].pricePaise !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ticketTiers', i, 'pricePaise'],
+          message: 'Free event ticket tiers must have price_paise = 0.',
+        });
+      }
+    }
+
+    const totalTierCapacity = tiers.reduce((sum, t) => sum + t.capacity, 0);
+    if (totalTierCapacity > data.capacity) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ticketTiers'],
+        message: `Sum of tier capacities (${totalTierCapacity}) cannot exceed overall event capacity (${data.capacity}).`,
+      });
+    }
+  }
+});
+
+const updateEventSchema = baseCreateEventSchema
   .omit({ organizerId: true })
   .partial()
   .extend({
@@ -88,17 +166,6 @@ const createFaqSchema = z.object({
 const createAnnouncementSchema = z.object({
   body: z.string().min(3),
 });
-
-function slugify(title: string): string {
-  const base = title
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/[\s_-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  const suffix = Math.random().toString(36).substring(2, 7);
-  return `${base}-${suffix}`;
-}
 
 export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. GET /api/v1/events
@@ -225,6 +292,11 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         conditions.push(lte(events.startsAt, new Date(q.date_to)));
       }
 
+      // Pricing type filter (free vs paid)
+      if (q.pricing_type && q.pricing_type !== 'all') {
+        conditions.push(eq(events.pricingType, q.pricing_type));
+      }
+
       // Full-text search using PostgreSQL TSVECTOR
       if (q.search) {
         conditions.push(
@@ -303,6 +375,8 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           registrationOpensAt: events.registrationOpensAt,
           registrationClosesAt: events.registrationClosesAt,
           capacity: events.capacity,
+          pricingType: events.pricingType,
+          currency: events.currency,
           visibility: events.visibility,
           status: events.status,
           teamMode: events.teamMode,
@@ -356,6 +430,9 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         with: {
           venue: true,
           organizer: true,
+          ticketTypes: {
+            orderBy: (t, { asc }) => [asc(t.pricePaise), asc(t.name)],
+          },
           faqs: {
             orderBy: (f, { asc }) => [asc(f.displayOrder)],
           },
@@ -549,7 +626,7 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         }
       }
 
-      const slug = slugify(data.title);
+      const slug = await generateUniqueSlug(data.title, pool);
 
       const [newEvent] = await db
         .insert(events)
@@ -569,6 +646,8 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           registrationOpensAt: data.registrationOpensAt ? new Date(data.registrationOpensAt) : null,
           registrationClosesAt: data.registrationClosesAt ? new Date(data.registrationClosesAt) : null,
           capacity: data.capacity,
+          pricingType: data.pricingType,
+          currency: data.currency,
           eligibility: data.eligibility,
           visibility: data.visibility,
           status: 'draft',
@@ -581,8 +660,21 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         })
         .returning();
 
-      // Automatically create initial General Admission ticket tier if capacity defined
-      if (newEvent.capacity > 0) {
+      // Create ticket tiers
+      if (data.ticketTiers && data.ticketTiers.length > 0) {
+        for (const tier of data.ticketTiers) {
+          await db.insert(ticketTypes).values({
+            eventId: newEvent.id,
+            name: tier.name,
+            pricePaise: tier.pricePaise,
+            capacity: tier.capacity,
+            sold: 0,
+            held: 0,
+            perUserLimit: tier.perUserLimit || 5,
+          });
+        }
+      } else if (data.pricingType === 'free' && newEvent.capacity > 0) {
+        // Automatically create initial General Admission ticket tier if capacity defined and free
         await db.insert(ticketTypes).values({
           eventId: newEvent.id,
           name: 'General Admission',
@@ -807,6 +899,27 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       delete updates.collegeId;
       delete updates.createdBy;
       delete updates.id;
+
+      // Update ticket tiers on draft events
+      if (currentEvent.status === 'draft' && parseResult.data.ticketTiers !== undefined) {
+        await db.delete(ticketTypes).where(eq(ticketTypes.eventId, id));
+        for (const tier of parseResult.data.ticketTiers) {
+          await db.insert(ticketTypes).values({
+            eventId: id,
+            name: tier.name,
+            pricePaise: tier.pricePaise,
+            capacity: tier.capacity,
+            sold: 0,
+            held: 0,
+            perUserLimit: tier.perUserLimit || 5,
+          });
+        }
+      }
+      delete updates.ticketTiers;
+
+      if (currentEvent.status === 'draft' && updates.title && updates.title !== currentEvent.title) {
+        updates.slug = await generateUniqueSlug(updates.title, pool);
+      }
 
       if (updates.startsAt) updates.startsAt = new Date(updates.startsAt);
       if (updates.endsAt) updates.endsAt = new Date(updates.endsAt);

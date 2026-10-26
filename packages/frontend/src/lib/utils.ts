@@ -21,3 +21,13 @@ export function formatPaise(paise: number): string {
     maximumFractionDigits: 2,
   });
 }
+
+export {
+  ALLOWED_CURRENCIES,
+  type AllowedCurrency,
+  isAllowedCurrency,
+  rupeeToPaise,
+  paiseToRupee,
+  formatPaiseToRupee,
+} from '@eventora/shared';
+

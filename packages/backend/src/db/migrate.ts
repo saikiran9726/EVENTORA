@@ -1303,7 +1303,8 @@ export async function runMigrations() {
         (11, 'Phase 11: Production Hardening, ops_runs & Monthly Partitioning'),
         (12, 'Phase 12: Auth Token Purpose Separation & Session Hardening'),
         (13, 'Phase 13: Active Solo Booking Partial Unique Index & Hold Reconciliation'),
-        (14, 'Phase 14: Event Status History System Actor, Completion Index & Scan Outcome')
+        (14, 'Phase 14: Event Status History System Actor, Completion Index & Scan Outcome'),
+        (15, 'Phase 15: Event Pricing Type, Currency & Tier Backfill')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1333,6 +1334,24 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_events_status_ends_at ON events(status, ends_at);
       ALTER TABLE refunds ALTER COLUMN requested_by DROP NOT NULL;
       ALTER TYPE scan_outcome ADD VALUE IF NOT EXISTS 'EVENT_NOT_PUBLISHED';
+
+      -- Phase 15: Event Pricing Type, Currency & Tier Backfill
+      DO $$ BEGIN
+        CREATE TYPE event_pricing_type AS ENUM ('free', 'paid');
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS pricing_type event_pricing_type DEFAULT 'free' NOT NULL;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'INR' NOT NULL;
+
+      -- Backfill pricing_type from existing ticket_types
+      UPDATE events e
+      SET pricing_type = 'paid'
+      WHERE EXISTS (
+        SELECT 1 FROM ticket_types tt
+        WHERE tt.event_id = e.id AND tt.price_paise > 0
+      );
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

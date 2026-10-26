@@ -599,19 +599,19 @@ describe('Phase P09: Event Lifecycle & Cancel Cascade Quality Gate', () => {
   // 6. Migration 14 Expand / Contract Rollback Verification
   describe('6. Schema Migration 14 Expand / Contract Rollback', () => {
     it('verifies rollback from 14 to 13 and re-application to 14 maintains data integrity', async () => {
-      // 1. Verify currently at version 14
+      // 1. Verify currently at version >= 14
       const v1 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
-      expect(Number(v1.rows[0].ver)).toBe(14);
+      expect(Number(v1.rows[0].ver)).toBeGreaterThanOrEqual(14);
 
       // 2. Rollback to version 13
       await runRollbackToVersion(13);
       const v2 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
       expect(Number(v2.rows[0].ver)).toBe(13);
 
-      // 3. Re-apply to 14
+      // 3. Re-apply to >= 14
       await runMigrations();
       const v3 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
-      expect(Number(v3.rows[0].ver)).toBe(14);
+      expect(Number(v3.rows[0].ver)).toBeGreaterThanOrEqual(14);
     });
   });
 });

@@ -41,6 +41,8 @@ function mapEventRow(row: any): Event {
     registrationOpensAt: row.registration_opens_at,
     registrationClosesAt: row.registration_closes_at,
     capacity: row.capacity,
+    pricingType: row.pricing_type || 'free',
+    currency: row.currency || 'INR',
     eligibility: row.eligibility || {},
     visibility: row.visibility,
     status: row.status,

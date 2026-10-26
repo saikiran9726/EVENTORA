@@ -68,7 +68,7 @@ test.describe('Phase 3 E2E: Event Lifecycle, Venues, Discovery & Calendar', () =
     await page.click('button:has-text("Next: Capacity & Registration")');
 
     // Step 3: Capacity & Rules
-    await expect(page.getByText('Step 3: Capacity, Registration & Team Rules')).toBeVisible();
+    await expect(page.getByText(/Step 3: Capacity/i)).toBeVisible();
     await safeScreenshot(page, './docs/screenshots/phase3-05-proposal-step3-capacity.png', testInfo);
 
     // Submit Proposal for Faculty Review
