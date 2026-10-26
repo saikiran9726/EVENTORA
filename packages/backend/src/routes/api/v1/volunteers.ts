@@ -127,6 +127,15 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: true,
+        resolveEventId: async (req) => {
+          const client = await pool.connect();
+          try {
+            const res = await client.query('SELECT event_id FROM volunteer_roles WHERE id = $1', [(req.params as any).id]);
+            return res.rows[0]?.event_id || null;
+          } finally {
+            client.release();
+          }
+        },
       },
     },
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
@@ -186,6 +195,20 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: true,
+        resolveEventId: async (req) => {
+          const client = await pool.connect();
+          try {
+            const res = await client.query(
+              `SELECT vr.event_id FROM volunteer_shifts vs
+               JOIN volunteer_roles vr ON vs.role_id = vr.id
+               WHERE vs.id = $1`,
+              [(req.params as any).id]
+            );
+            return res.rows[0]?.event_id || null;
+          } finally {
+            client.release();
+          }
+        },
       },
     },
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
@@ -207,6 +230,22 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
     }
   );
 
+  const resolveApplicationEventId = async (req: FastifyRequest) => {
+    const client = await pool.connect();
+    try {
+      const res = await client.query(
+        `SELECT vr.event_id FROM volunteer_applications va
+         JOIN volunteer_shifts vs ON va.shift_id = vs.id
+         JOIN volunteer_roles vr ON vs.role_id = vr.id
+         WHERE va.id = $1`,
+        [(req.params as any).id]
+      );
+      return res.rows[0]?.event_id || null;
+    } finally {
+      client.release();
+    }
+  };
+
   // 6. Approve Application (POST /applications/:id/approve)
   fastify.post(
     '/applications/:id/approve',
@@ -215,6 +254,7 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: true,
+        resolveEventId: resolveApplicationEventId,
       },
     },
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
@@ -237,6 +277,7 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: true,
+        resolveEventId: resolveApplicationEventId,
       },
     },
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
@@ -277,6 +318,7 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: true,
+        resolveEventId: resolveApplicationEventId,
       },
     },
     async (req: FastifyRequest<{ Params: { id: string }; Body: { reason?: string } }>, reply: FastifyReply) => {
@@ -347,6 +389,7 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: true,
+        resolveEventId: resolveApplicationEventId,
       },
     },
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
@@ -524,6 +567,15 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: true,
+        resolveEventId: async (req) => {
+          const client = await pool.connect();
+          try {
+            const res = await client.query('SELECT event_id FROM support_issues WHERE id = $1', [(req.params as any).id]);
+            return res.rows[0]?.event_id || null;
+          } finally {
+            client.release();
+          }
+        },
       },
     },
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {

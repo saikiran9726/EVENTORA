@@ -2,7 +2,15 @@ import { FastifyInstance, FastifyRequest, FastifyReply, RouteOptions } from 'fas
 import fp from 'fastify-plugin';
 import { validateSession, SESSION_CONFIG, constantTimeCompare } from '../services/auth.js';
 import { config as appConfig } from '../config.js';
-import type { User, Session } from '../db/schema.js';
+import { db } from '../db/index.js';
+import {
+  events,
+  organizerMembers,
+  eventStaffAssignments,
+  type User,
+  type Session,
+} from '../db/schema.js';
+import { eq, and } from 'drizzle-orm';
 
 export type PolicyName =
   | 'public'
@@ -20,6 +28,7 @@ export interface RouteConfigPolicy {
   auth: boolean;
   policy: PolicyName;
   objectCheck?: boolean | ((req: FastifyRequest) => Promise<boolean>);
+  resolveEventId?: (req: FastifyRequest) => Promise<string | null | undefined> | string | null | undefined;
 }
 
 declare module 'fastify' {
@@ -27,6 +36,7 @@ declare module 'fastify' {
     auth?: boolean;
     policy?: PolicyName;
     objectCheck?: boolean | ((req: FastifyRequest) => Promise<boolean>);
+    resolveEventId?: (req: FastifyRequest) => Promise<string | null | undefined> | string | null | undefined;
   }
 
   interface FastifyRequest {
@@ -248,10 +258,6 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
       case 'event:create': {
         if (userRole === 'admin') break;
         // Check if user is an active member in any verified organizer club
-        const { db } = await import('../db/index.js');
-        const { organizerMembers } = await import('../db/schema.js');
-        const { eq, and } = await import('drizzle-orm');
-
         const membership = await db.query.organizerMembers.findFirst({
           where: and(eq(organizerMembers.userId, req.user!.id), eq(organizerMembers.status, 'active')),
         });
@@ -271,63 +277,20 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
 
       case 'event:manage:owned': {
         if (userRole === 'admin') break;
-        let eventId = (req.params as any)?.eventId || (req.params as any)?.id;
-        if (!eventId) break;
 
-        const { db } = await import('../db/index.js');
-        const { events, tickets, organizerMembers } = await import('../db/schema.js');
-        const { eq, and } = await import('drizzle-orm');
+        const eventId = config.resolveEventId
+          ? await config.resolveEventId(req)
+          : ((req.params as any)?.eventId || (req.params as any)?.id);
 
-        if (req.url.includes('/tickets/')) {
-          const targetTicket = await db.query.tickets.findFirst({
-            where: eq(tickets.id, eventId),
+        if (!eventId) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Event context required for event:manage:owned',
+              details: { requiredPolicy: 'event:manage:owned' },
+              requestId: req.id,
+            },
           });
-          if (targetTicket) {
-            eventId = targetTicket.eventId;
-          }
-        } else if (req.url.includes('/volunteer-roles/')) {
-          const { volunteerRoles } = await import('../db/schema.js');
-          const targetRole = await db.query.volunteerRoles.findFirst({
-            where: eq(volunteerRoles.id, eventId),
-          });
-          if (targetRole) {
-            eventId = targetRole.eventId;
-          }
-        } else if (req.url.includes('/shifts/')) {
-          const { volunteerShifts, volunteerRoles } = await import('../db/schema.js');
-          const targetShift = await db.query.volunteerShifts.findFirst({
-            where: eq(volunteerShifts.id, eventId),
-          });
-          if (targetShift) {
-            const role = await db.query.volunteerRoles.findFirst({
-              where: eq(volunteerRoles.id, targetShift.roleId),
-            });
-            if (role) eventId = role.eventId;
-          }
-        } else if (req.url.includes('/applications/')) {
-          const { volunteerApplications, volunteerShifts, volunteerRoles } = await import('../db/schema.js');
-          const targetApp = await db.query.volunteerApplications.findFirst({
-            where: eq(volunteerApplications.id, eventId),
-          });
-          if (targetApp) {
-            const shift = await db.query.volunteerShifts.findFirst({
-              where: eq(volunteerShifts.id, targetApp.shiftId),
-            });
-            if (shift) {
-              const role = await db.query.volunteerRoles.findFirst({
-                where: eq(volunteerRoles.id, shift.roleId),
-              });
-              if (role) eventId = role.eventId;
-            }
-          }
-        } else if (req.url.includes('/issues/')) {
-          const { supportIssues } = await import('../db/schema.js');
-          const targetIssue = await db.query.supportIssues.findFirst({
-            where: eq(supportIssues.id, eventId),
-          });
-          if (targetIssue) {
-            eventId = targetIssue.eventId;
-          }
         }
 
         const targetEvent = await db.query.events.findFirst({
@@ -353,7 +316,7 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
           ),
         });
 
-        if (!membership) {
+        if (!membership || (membership.role !== 'owner' && membership.role !== 'manager')) {
           return reply.code(403).send({
             error: {
               code: 'FORBIDDEN',
@@ -368,25 +331,33 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
 
       case 'analytics:view:owned': {
         if (userRole === 'admin') break;
-        let organizerId = (req.params as any)?.organizerId;
-        const paramId = (req.params as any)?.id;
 
-        const { db } = await import('../db/index.js');
-        const { events, organizerMembers } = await import('../db/schema.js');
-        const { eq, and } = await import('drizzle-orm');
-
-        if (!organizerId && paramId) {
-          const targetEvent = await db.query.events.findFirst({
-            where: eq(events.id, paramId),
-          });
-          if (targetEvent) {
-            organizerId = targetEvent.organizerId;
-          } else {
-            organizerId = paramId;
+        let organizerId: string | null | undefined = null;
+        if (config.resolveEventId) {
+          const resolved = await config.resolveEventId(req);
+          if (resolved) {
+            const ev = await db.query.events.findFirst({ where: eq(events.id, resolved) });
+            organizerId = ev ? ev.organizerId : resolved;
+          }
+        } else {
+          organizerId = (req.params as any)?.organizerId;
+          const paramId = (req.params as any)?.id;
+          if (!organizerId && paramId) {
+            const ev = await db.query.events.findFirst({ where: eq(events.id, paramId) });
+            organizerId = ev ? ev.organizerId : paramId;
           }
         }
 
-        if (!organizerId) break;
+        if (!organizerId) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Organizer context required for analytics:view:owned',
+              details: { requiredPolicy: 'analytics:view:owned' },
+              requestId: req.id,
+            },
+          });
+        }
 
         const membership = await db.query.organizerMembers.findFirst({
           where: and(
@@ -396,7 +367,7 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
           ),
         });
 
-        if (!membership) {
+        if (!membership || (membership.role !== 'owner' && membership.role !== 'manager')) {
           return reply.code(403).send({
             error: {
               code: 'FORBIDDEN',
@@ -411,12 +382,21 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
 
       case 'export:owned': {
         if (userRole === 'admin') break;
-        const eventId = (req.params as any)?.id || (req.params as any)?.eventId;
-        if (!eventId) break;
 
-        const { db } = await import('../db/index.js');
-        const { events, organizerMembers } = await import('../db/schema.js');
-        const { eq, and } = await import('drizzle-orm');
+        const eventId = config.resolveEventId
+          ? await config.resolveEventId(req)
+          : ((req.params as any)?.id || (req.params as any)?.eventId);
+
+        if (!eventId) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Event context required for export:owned',
+              details: { requiredPolicy: 'export:owned' },
+              requestId: req.id,
+            },
+          });
+        }
 
         const targetEvent = await db.query.events.findFirst({
           where: eq(events.id, eventId),
@@ -456,12 +436,21 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
 
       case 'attendance:checkin:assigned': {
         if (userRole === 'admin') break;
-        const eventId = (req.params as any)?.id || (req.params as any)?.eventId || (req.body as any)?.eventId;
-        if (!eventId) break;
 
-        const { db } = await import('../db/index.js');
-        const { events, eventStaffAssignments, organizerMembers } = await import('../db/schema.js');
-        const { eq, and } = await import('drizzle-orm');
+        const eventId = config.resolveEventId
+          ? await config.resolveEventId(req)
+          : ((req.params as any)?.id || (req.params as any)?.eventId || (req.body as any)?.eventId);
+
+        if (!eventId) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Event context required for attendance:checkin:assigned',
+              details: { requiredPolicy: 'attendance:checkin:assigned' },
+              requestId: req.id,
+            },
+          });
+        }
 
         // 1. Check direct staff assignment
         const assignment = await db.query.eventStaffAssignments.findFirst({
@@ -507,49 +496,48 @@ export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
 
       case 'attendance:resolve_conflict': {
         if (userRole === 'admin') break;
-        let eventId = (req.params as any)?.eventId || (req.body as any)?.eventId;
-        const conflictId = (req.params as any)?.id;
 
-        const { db } = await import('../db/index.js');
-        const { events, eventStaffAssignments, organizerMembers, scanConflicts } = await import('../db/schema.js');
-        const { eq, and } = await import('drizzle-orm');
+        const eventId = config.resolveEventId
+          ? await config.resolveEventId(req)
+          : ((req.params as any)?.eventId || (req.body as any)?.eventId);
 
-        if (!eventId && conflictId) {
-          const conflict = await db.query.scanConflicts.findFirst({
-            where: eq(scanConflicts.id, conflictId),
+        if (!eventId) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Event context required to resolve attendance scan conflicts',
+              details: { requiredPolicy: 'attendance:resolve_conflict' },
+              requestId: req.id,
+            },
           });
-          if (conflict) {
-            eventId = conflict.eventId;
-          }
         }
 
-        if (eventId) {
-          // 1. Staff assignment with checkin or volunteer_lead capability
-          const assignment = await db.query.eventStaffAssignments.findFirst({
+        // 1. Staff assignment with checkin capability
+        const assignment = await db.query.eventStaffAssignments.findFirst({
+          where: and(
+            eq(eventStaffAssignments.eventId, eventId),
+            eq(eventStaffAssignments.userId, req.user!.id),
+            eq(eventStaffAssignments.capability, 'checkin')
+          ),
+        });
+        if (assignment && (!assignment.expiresAt || new Date(assignment.expiresAt) > new Date())) {
+          break;
+        }
+
+        // 2. Organizer owner/manager
+        const targetEvent = await db.query.events.findFirst({
+          where: eq(events.id, eventId),
+        });
+        if (targetEvent) {
+          const orgMembership = await db.query.organizerMembers.findFirst({
             where: and(
-              eq(eventStaffAssignments.eventId, eventId),
-              eq(eventStaffAssignments.userId, req.user!.id)
+              eq(organizerMembers.organizerId, targetEvent.organizerId),
+              eq(organizerMembers.userId, req.user!.id),
+              eq(organizerMembers.status, 'active')
             ),
           });
-          if (assignment && (!assignment.expiresAt || new Date(assignment.expiresAt) > new Date())) {
+          if (orgMembership && (orgMembership.role === 'owner' || orgMembership.role === 'manager')) {
             break;
-          }
-
-          // 2. Organizer owner/manager
-          const targetEvent = await db.query.events.findFirst({
-            where: eq(events.id, eventId),
-          });
-          if (targetEvent) {
-            const orgMembership = await db.query.organizerMembers.findFirst({
-              where: and(
-                eq(organizerMembers.organizerId, targetEvent.organizerId),
-                eq(organizerMembers.userId, req.user!.id),
-                eq(organizerMembers.status, 'active')
-              ),
-            });
-            if (orgMembership && (orgMembership.role === 'owner' || orgMembership.role === 'manager')) {
-              break;
-            }
           }
         }
 

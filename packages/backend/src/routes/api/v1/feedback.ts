@@ -211,6 +211,16 @@ export const feedbackRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: false,
+        resolveEventId: async (req) => {
+          const { id } = req.params as { id: string };
+          const client = await pool.connect();
+          try {
+            const res = await client.query('SELECT event_id FROM event_feedback WHERE id = $1', [id]);
+            return res.rows[0]?.event_id || null;
+          } finally {
+            client.release();
+          }
+        },
       },
     },
     async (req, reply) => {

@@ -176,6 +176,11 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         auth: true,
         policy: 'event:manage:owned',
         objectCheck: false,
+        resolveEventId: async (req) => {
+          const { id } = req.params as { id: string };
+          const ticket = await getTicketById(id);
+          return ticket?.event_id || null;
+        },
       },
     },
     async (req, reply) => {
@@ -238,7 +243,19 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       config: {
         auth: true,
         policy: 'authenticated',
-        objectCheck: false,
+        objectCheck: async (req) => {
+          const { id } = req.params as { id: string };
+          const user = req.user!;
+          if (user.globalRole === 'admin') return true;
+          const client = await pool.connect();
+          try {
+            const res = await client.query('SELECT user_id FROM certificates WHERE id = $1', [id]);
+            if (res.rows.length === 0) return true;
+            return res.rows[0].user_id === user.id;
+          } finally {
+            client.release();
+          }
+        },
       },
     },
     async (req, reply) => {

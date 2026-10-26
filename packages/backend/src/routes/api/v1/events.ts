@@ -32,12 +32,12 @@ const listEventsQuerySchema = z.object({
   category: z.string().optional(),
   department: z.string().optional(),
   format: z.enum(['in_person', 'online', 'hybrid']).optional(),
-  date_from: z.string().optional(),
-  date_to: z.string().optional(),
+  date_from: z.string().refine((val) => !isNaN(Date.parse(val)), { message: 'Invalid date_from format' }).optional(),
+  date_to: z.string().refine((val) => !isNaN(Date.parse(val)), { message: 'Invalid date_to format' }).optional(),
   search: z.string().optional(),
   availability: z.enum(['available', 'all']).optional(),
   sort: z.enum(['date_asc', 'date_desc', 'popularity']).default('date_asc'),
-  status: z.string().optional(),
+  status: z.enum(['draft', 'pending_approval', 'approved', 'published', 'postponed', 'cancelled', 'completed']).optional(),
   organizer_id: z.string().uuid().optional(),
 });
 
@@ -54,7 +54,7 @@ const createEventSchema = z.object({
   endsAt: z.string().datetime(),
   registrationOpensAt: z.string().datetime().optional().nullable(),
   registrationClosesAt: z.string().datetime().optional().nullable(),
-  capacity: z.number().int().min(0),
+  capacity: z.number().int().min(1, 'Capacity must be at least 1'),
   eligibility: z.record(z.any()).default({}),
   visibility: z.enum(['college', 'public']).default('college'),
   teamMode: z.enum(['none', 'optional', 'required']).default('none'),
@@ -63,9 +63,12 @@ const createEventSchema = z.object({
   contactEmail: z.string().email(),
 });
 
-const updateEventSchema = createEventSchema.partial().extend({
-  version: z.number().int().optional(),
-});
+const updateEventSchema = createEventSchema
+  .omit({ organizerId: true })
+  .partial()
+  .extend({
+    version: z.number().int().optional(),
+  });
 
 const approvalSchema = z.object({
   decision: z.enum(['approved', 'rejected', 'changes_requested']),
@@ -126,24 +129,72 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       const isAdmin = user?.globalRole === 'admin';
       const isReviewer = user?.globalRole === 'reviewer';
 
-      // Status visibility guard: Anonymous & Students see ONLY 'published'
-      let allowedStatuses: EventStatus[] = ['published'];
-
-      if (q.status && (isAdmin || isReviewer)) {
-        allowedStatuses = [q.status as EventStatus];
-      } else if (q.status && user) {
-        // Organizer checking owned events
-        allowedStatuses = [q.status as EventStatus];
-      }
-
       // Build query conditions
       const conditions: any[] = [];
+
+      // Status authorization guard:
+      // Anonymous -> published only
+      // Admin / Reviewer -> any status
+      // Others -> only their organizers' events
+      let allowedStatuses: EventStatus[] = ['published'];
+
+      if (!user) {
+        allowedStatuses = ['published'];
+      } else if (isAdmin || isReviewer) {
+        allowedStatuses = q.status ? [q.status as EventStatus] : ['published'];
+      } else {
+        // Authenticated student / organizer member
+        if (q.status && q.status !== 'published') {
+          const memberships = await db.query.organizerMembers.findMany({
+            where: and(
+              eq(organizerMembers.userId, user.id),
+              eq(organizerMembers.status, 'active')
+            ),
+          });
+          const userOrgIds = memberships.map((m) => m.organizerId);
+
+          if (userOrgIds.length === 0) {
+            allowedStatuses = ['published'];
+          } else if (q.organizer_id && !userOrgIds.includes(q.organizer_id)) {
+            return reply.code(403).send({
+              error: {
+                code: 'FORBIDDEN',
+                message: 'You are not an active member of the specified organizer',
+                details: { organizerId: q.organizer_id },
+                requestId: req.id,
+              },
+            });
+          } else {
+            allowedStatuses = [q.status as EventStatus];
+            if (!q.organizer_id) {
+              conditions.push(sql`${events.organizerId} IN ${userOrgIds}`);
+            }
+          }
+        } else {
+          allowedStatuses = ['published'];
+        }
+      }
 
       // Status filter
       if (allowedStatuses.length === 1) {
         conditions.push(eq(events.status, allowedStatuses[0]));
       } else {
         conditions.push(sql`${events.status} IN ${allowedStatuses}`);
+      }
+
+      // Scope visibility='college' events by college_id
+      if (isAdmin) {
+        // Platform admin can inspect events across all colleges
+      } else if (user?.collegeId) {
+        conditions.push(
+          or(
+            eq(events.visibility, 'public'),
+            and(eq(events.visibility, 'college'), eq(events.collegeId, user.collegeId))
+          )
+        );
+      } else {
+        // Anonymous users or users without college context: public events only
+        conditions.push(eq(events.visibility, 'public'));
       }
 
       // Organizer filter
@@ -181,13 +232,58 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         );
       }
 
-      // Cursor pagination
+      // Cursor pagination: cursor is a (startsAt, id) tuple honoring sort direction
+      let cursorStartsAt: Date | null = null;
+      let cursorId: string | null = null;
+
       if (q.cursor) {
-        conditions.push(gte(events.startsAt, new Date(q.cursor)));
+        try {
+          const decoded = JSON.parse(Buffer.from(q.cursor, 'base64url').toString('utf8'));
+          if (Array.isArray(decoded) && decoded.length === 2) {
+            cursorStartsAt = new Date(decoded[0]);
+            cursorId = String(decoded[1]);
+          } else {
+            cursorStartsAt = new Date(q.cursor);
+          }
+        } catch {
+          const d = new Date(q.cursor);
+          if (!isNaN(d.getTime())) {
+            cursorStartsAt = d;
+          }
+        }
+      }
+
+      if (cursorStartsAt) {
+        if (q.sort === 'date_desc') {
+          if (cursorId) {
+            conditions.push(
+              or(
+                lte(events.startsAt, cursorStartsAt),
+                and(eq(events.startsAt, cursorStartsAt), lte(events.id, cursorId))
+              )
+            );
+          } else {
+            conditions.push(lte(events.startsAt, cursorStartsAt));
+          }
+        } else {
+          // date_asc (default)
+          if (cursorId) {
+            conditions.push(
+              or(
+                gte(events.startsAt, cursorStartsAt),
+                and(eq(events.startsAt, cursorStartsAt), gte(events.id, cursorId))
+              )
+            );
+          } else {
+            conditions.push(gte(events.startsAt, cursorStartsAt));
+          }
+        }
       }
 
       // Order by
-      const orderBy = q.sort === 'date_desc' ? desc(events.startsAt) : asc(events.startsAt);
+      const orderBy = q.sort === 'date_desc'
+        ? [desc(events.startsAt), desc(events.id)]
+        : [asc(events.startsAt), asc(events.id)];
 
       const items = await db
         .select({
@@ -223,13 +319,13 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(organizerProfiles, eq(events.organizerId, organizerProfiles.id))
         .where(and(...conditions))
-        .orderBy(orderBy)
+        .orderBy(...orderBy)
         .limit(q.limit + 1);
 
       let nextCursor: string | null = null;
       if (items.length > q.limit) {
         const nextItem = items.pop()!;
-        nextCursor = nextItem.startsAt.toISOString();
+        nextCursor = Buffer.from(JSON.stringify([nextItem.startsAt.toISOString(), nextItem.id])).toString('base64url');
       }
 
       return reply.code(200).send({
@@ -350,6 +446,33 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
             code: 'INVALID_EVENT_WINDOW',
             message: 'Event end time must be strictly after start time.',
             details: { startsAt: data.startsAt, endsAt: data.endsAt },
+            requestId: req.id,
+          },
+        });
+      }
+
+      // Cross-field validation: registration window & team sizes
+      if (data.registrationOpensAt && data.registrationClosesAt) {
+        const opens = new Date(data.registrationOpensAt);
+        const closes = new Date(data.registrationClosesAt);
+        if (closes <= opens || closes > endsAt) {
+          return reply.code(400).send({
+            error: {
+              code: 'INVALID_REGISTRATION_WINDOW',
+              message: 'Registration closing time must be strictly after opening time and before event end time.',
+              details: { opensAt: data.registrationOpensAt, closesAt: data.registrationClosesAt },
+              requestId: req.id,
+            },
+          });
+        }
+      }
+
+      if (data.teamMin && data.teamMax && data.teamMin > data.teamMax) {
+        return reply.code(400).send({
+          error: {
+            code: 'INVALID_TEAM_CONSTRAINTS',
+            message: 'Minimum team size cannot exceed maximum team size.',
+            details: { teamMin: data.teamMin, teamMax: data.teamMax },
             requestId: req.id,
           },
         });
@@ -534,6 +657,132 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
             requestId: req.id,
           },
         });
+      }
+
+      // 1. Refuse modifications to completed or cancelled events
+      if (currentEvent.status === 'cancelled' || currentEvent.status === 'completed') {
+        return reply.code(400).send({
+          error: {
+            code: 'EVENT_CANNOT_BE_MODIFIED',
+            message: `Event in '${currentEvent.status}' status cannot be modified.`,
+            details: { status: currentEvent.status },
+            requestId: req.id,
+          },
+        });
+      }
+
+      // 2. Restrict material edits while event is pending approval
+      const isMaterial =
+        parseResult.data.venueId !== undefined ||
+        parseResult.data.startsAt !== undefined ||
+        parseResult.data.endsAt !== undefined ||
+        parseResult.data.capacity !== undefined;
+
+      if (currentEvent.status === 'pending_approval' && isMaterial) {
+        return reply.code(400).send({
+          error: {
+            code: 'MATERIAL_EDIT_RESTRICTED',
+            message: 'Material event parameters (venue, dates, capacity) cannot be modified while pending reviewer approval.',
+            details: { status: currentEvent.status },
+            requestId: req.id,
+          },
+        });
+      }
+
+      // 3. Refuse capacity reduction below already sold + held tickets
+      if (parseResult.data.capacity !== undefined) {
+        if (parseResult.data.capacity < 1) {
+          return reply.code(400).send({
+            error: {
+              code: 'INVALID_CAPACITY',
+              message: 'Event capacity must be at least 1.',
+              details: { requestedCapacity: parseResult.data.capacity },
+              requestId: req.id,
+            },
+          });
+        }
+
+        const ttRows = await db
+          .select({
+            totalSold: sql<number>`coalesce(sum(${ticketTypes.sold}), 0)`,
+            totalHeld: sql<number>`coalesce(sum(${ticketTypes.held}), 0)`,
+          })
+          .from(ticketTypes)
+          .where(eq(ticketTypes.eventId, id));
+
+        const allocated = Number(ttRows[0]?.totalSold || 0) + Number(ttRows[0]?.totalHeld || 0);
+        if (parseResult.data.capacity < allocated) {
+          return reply.code(400).send({
+            error: {
+              code: 'CAPACITY_BELOW_ALLOCATED',
+              message: `Event capacity cannot be reduced below already allocated tickets (${allocated}).`,
+              details: { requestedCapacity: parseResult.data.capacity, allocated },
+              requestId: req.id,
+            },
+          });
+        }
+      }
+
+      // 4. Cross-field validation: startsAt < endsAt, opens < closes <= ends, teamMin <= teamMax
+      const effectiveStartsAt = parseResult.data.startsAt ? new Date(parseResult.data.startsAt) : new Date(currentEvent.startsAt);
+      const effectiveEndsAt = parseResult.data.endsAt ? new Date(parseResult.data.endsAt) : new Date(currentEvent.endsAt);
+
+      if (effectiveEndsAt <= effectiveStartsAt) {
+        return reply.code(400).send({
+          error: {
+            code: 'INVALID_EVENT_WINDOW',
+            message: 'Event end time must be strictly after start time.',
+            details: { startsAt: effectiveStartsAt, endsAt: effectiveEndsAt },
+            requestId: req.id,
+          },
+        });
+      }
+
+      const effectiveOpensAt = parseResult.data.registrationOpensAt !== undefined
+        ? (parseResult.data.registrationOpensAt ? new Date(parseResult.data.registrationOpensAt) : null)
+        : (currentEvent.registrationOpensAt ? new Date(currentEvent.registrationOpensAt) : null);
+      const effectiveClosesAt = parseResult.data.registrationClosesAt !== undefined
+        ? (parseResult.data.registrationClosesAt ? new Date(parseResult.data.registrationClosesAt) : null)
+        : (currentEvent.registrationClosesAt ? new Date(currentEvent.registrationClosesAt) : null);
+
+      if (effectiveOpensAt && effectiveClosesAt) {
+        if (effectiveClosesAt <= effectiveOpensAt) {
+          return reply.code(400).send({
+            error: {
+              code: 'INVALID_REGISTRATION_WINDOW',
+              message: 'Registration closing time must be strictly after opening time.',
+              details: { opensAt: effectiveOpensAt, closesAt: effectiveClosesAt },
+              requestId: req.id,
+            },
+          });
+        }
+        if (effectiveClosesAt > effectiveEndsAt) {
+          return reply.code(400).send({
+            error: {
+              code: 'INVALID_REGISTRATION_WINDOW',
+              message: 'Registration closing time cannot be after event end time.',
+              details: { closesAt: effectiveClosesAt, endsAt: effectiveEndsAt },
+              requestId: req.id,
+            },
+          });
+        }
+      }
+
+      const effectiveTeamMin = parseResult.data.teamMin !== undefined ? parseResult.data.teamMin : currentEvent.teamMin;
+      const effectiveTeamMax = parseResult.data.teamMax !== undefined ? parseResult.data.teamMax : currentEvent.teamMax;
+
+      if (effectiveTeamMin !== null && effectiveTeamMin !== undefined &&
+          effectiveTeamMax !== null && effectiveTeamMax !== undefined) {
+        if (effectiveTeamMin > effectiveTeamMax) {
+          return reply.code(400).send({
+            error: {
+              code: 'INVALID_TEAM_CONSTRAINTS',
+              message: 'Minimum team size cannot exceed maximum team size.',
+              details: { teamMin: effectiveTeamMin, teamMax: effectiveTeamMax },
+              requestId: req.id,
+            },
+          });
+        }
       }
 
       // Optimistic concurrency control: check If-Match header or version property

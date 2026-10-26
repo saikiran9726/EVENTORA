@@ -203,3 +203,114 @@
   - TypeScript typecheck passed with 0 errors.
   - ESLint passed with 0 errors.
   - Production build passed for all workspace packages.
+
+---
+
+## Phase P04 — Authorization Rewrite (RBAC, IDOR, Params)
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Route Policy Decoupling & Explicit Event Resolvers
+
+- **Removed URL Path Heuristics (`packages/backend/src/plugins/auth-policy.ts`):**
+  - Eliminated all `req.url.includes(...)` substring heuristics previously used to guess entity types from `:id`.
+  - Added explicit `resolveEventId?: (req: FastifyRequest) => Promise<string | null | undefined> | string | null | undefined` to `RouteConfigPolicy` interface and `RouteShorthandOptions`.
+  - Hoisted all dynamic database and schema imports (`db`, `events`, `organizerMembers`, `eventStaffAssignments`) to the module top level.
+- **Fail-Closed Missing Context:**
+  - In `event:manage:owned`, `attendance:checkin:assigned`, `attendance:resolve_conflict`, `analytics:view:owned`, and `export:owned`, missing event or organizer contexts strictly fail closed with 403 `FORBIDDEN` (eliminating silent policy bypasses).
+- **Hardened Check-in & Conflict Capabilities:**
+  - `attendance:resolve_conflict` policy now strictly enforces that event staff possess the dedicated `capability === 'checkin'`, or that the user is an active `owner` or `manager` of the event's organizer club.
+- **Configured Explicit Resolvers on Sub-Resource Routes:**
+  - `POST /api/v1/tickets/:id/revoke`: Resolves `eventId` via `getTicketById(id)`.
+  - `POST /api/v1/feedback/:id/moderate`: Resolves `eventId` via `event_feedback.event_id`.
+  - `POST /api/v1/volunteer-roles/:id/shifts`: Resolves `eventId` via `volunteer_roles.event_id`.
+  - `GET /api/v1/shifts/:id/applications`: Resolves `eventId` via `volunteer_shifts -> volunteer_roles.event_id`.
+  - `POST /api/v1/applications/:id/(approve|assign|reject|complete)`: Resolves `eventId` via `volunteer_applications -> volunteer_shifts -> volunteer_roles.event_id`.
+  - `PATCH /api/v1/issues/:id`: Resolves `eventId` via `support_issues.event_id`.
+  - `POST /api/v1/conflicts/:id/resolve`: Resolves `eventId` via `scan_conflicts.event_id`.
+
+---
+
+### 2. Global Route Parameter UUID Validation
+
+- **Global `preValidation` Hook (`packages/backend/src/app.ts`):**
+  - Added a global fastify `preValidation` hook inspecting all request route parameters in `req.params`.
+  - Any parameter named `id` or ending with `Id` is strictly validated against UUID syntax `/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`.
+  - Non-UUID inputs immediately terminate with HTTP 400 `{ error: { code: 'INVALID_ID', message: "Route parameter '...' must be a valid UUID", details: { parameter, value }, requestId } }`, preventing invalid syntax from ever reaching database drivers or causing unhandled 500 errors.
+  - Excluded `/api/v1/me/sessions/:id` (which uses a 64-character SHA-256 session token hash rather than an entity UUID).
+
+---
+
+### 3. Anti-Self-Dealing Guard on Refunds
+
+- **Self-Dealing Prohibition (`packages/backend/src/services/payment.ts`):**
+  - In `decideRefund`, added verification against self-approval:
+    `if (ref.requested_by === userId || ref.booking_user_id === userId) throw new PaymentError('FORBIDDEN', 'Requester cannot decide their own refund request', 403)`.
+  - Even if an organizer owner or manager possesses authority over their club's ledger, they are strictly prohibited from approving refund requests for their own personal bookings.
+
+---
+
+### 4. Event Discovery Scoping & Keyset Cursor Pagination
+
+- **Status & Visibility Scoping (`packages/backend/src/routes/api/v1/events.ts`):**
+  - Enum-validated `status` parameter in query schema against `eventStatusEnum.enumValues`.
+  - Anonymous users are strictly constrained to `published` events.
+  - Authenticated students and non-organizer members are constrained to `published` events.
+  - Authenticated organizer members can query non-published statuses (`draft`, `pending_approval`, `approved`, etc.) strictly scoped to organizers where they maintain an active membership.
+  - College visibility scoping: `visibility = 'college'` events are scoped strictly to `events.collegeId = user.collegeId`. Anonymous users and cross-college students only see `visibility = 'public'` events.
+- **Keyset Cursor Pagination:**
+  - Updated `nextCursor` and cursor consumption to use base64url-encoded `(startsAt, id)` tuples.
+  - Honored sort directions (`date_asc` and `date_desc`) with tie-breaker sorting on `id` to prevent pagination skips and duplicates.
+
+---
+
+### 5. Event Mutation & Capacity Constraints
+
+- **Update Schema & State Invariants (`packages/backend/src/routes/api/v1/events.ts`):**
+  - Configured `updateEventSchema = createEventSchema.omit({ organizerId: true }).partial().extend({ version: z.number().int().optional() })`.
+  - Blocked all modifications on completed and cancelled events with HTTP 400 `EVENT_CANNOT_BE_MODIFIED`.
+  - Restricted material parameter edits (`venueId`, `startsAt`, `endsAt`, `capacity`) while event status is `'pending_approval'` with HTTP 400 `MATERIAL_EDIT_RESTRICTED`.
+  - Enforced minimum capacity: `capacity >= 1`.
+  - Query ticket types: Refused capacity reductions below already committed allocations (`capacity < totalSold + totalHeld`) with HTTP 400 `CAPACITY_BELOW_ALLOCATED`.
+  - Cross-field validation: enforced `startsAt < endsAt`, `registrationOpensAt < registrationClosesAt <= endsAt`, and `teamMin <= teamMax`.
+
+---
+
+### 6. Object-Level Access Control (IDOR Prevention)
+
+- **Explicit `objectCheck` on Private Entities:**
+  - Added object-level ownership verification hooks returning 403 `FORBIDDEN` across all private attendee endpoints:
+    - `GET /api/v1/bookings/:id`
+    - `POST /api/v1/bookings/:id/cancel`
+    - `POST /api/v1/bookings/:id/checkout`
+    - `POST /api/v1/bookings/:id/refunds`
+    - `GET /api/v1/certificates/:id/download`
+
+---
+
+### 7. Administrative Protections
+
+- **Self-Demotion & Last Admin Protection (`packages/backend/src/routes/api/v1/admin.ts`):**
+  - Maintained safeguards preventing administrators from demoting their own account (`SELF_DEMOTION_PROHIBITED`) or suspending their own account (`SELF_SUSPENSION_PROHIBITED`).
+  - Enforced platform safeguard preventing the demotion or suspension of the last active administrator (`LAST_ADMIN_PROTECTION`).
+  - Audited all administrative role mutations via `logAuditEvent`.
+
+---
+
+### 8. Verification & Automated Coverage
+
+- **Automated IDOR & Route Authorization Matrix (`tests/security/idor-matrix.test.ts`):**
+  - Implemented 12 automated test cases evaluating all 8 role personas (`anon`, `student`, `other-college student`, `organizer-A`, `organizer-B`, `check-in staff`, `reviewer`, `admin`) across public, student-private, organizer-management, review, check-in, conflict resolution, analytics, and admin routes.
+  - Verified 100% pass rate.
+- **Full Vitest Suite:**
+  - 31 test files, 260 tests passing (100%).
+- **Full Playwright Browser Suite:**
+  - 11 spec files, 75 tests passing across Mobile-375, Tablet-768, and Desktop-1280 (100%).
+- **Static Analysis & Builds:**
+  - TypeScript typecheck passed with 0 errors across all workspace packages.
+  - ESLint passed with 0 errors across all workspace packages.
+  - Production build passed for all packages.

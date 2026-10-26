@@ -572,8 +572,8 @@ export async function decideRefund(params: DecideRefundParams) {
     await client.query('BEGIN');
 
     const refRes = await client.query(
-      `SELECT r.id, r.payment_id, r.amount_paise, r.status, p.booking_id, p.provider_payment_id,
-              b.event_id, e.organizer_id
+      `SELECT r.id, r.payment_id, r.amount_paise, r.status, r.requested_by, p.booking_id, p.provider_payment_id,
+              b.event_id, b.user_id as booking_user_id, e.organizer_id
        FROM refunds r
        JOIN payments p ON r.payment_id = p.id
        JOIN bookings b ON p.booking_id = b.id
@@ -587,6 +587,11 @@ export async function decideRefund(params: DecideRefundParams) {
     }
 
     const ref = refRes.rows[0];
+
+    // Anti-self-dealing check: Requester cannot decide their own refund
+    if (ref.requested_by === userId || ref.booking_user_id === userId) {
+      throw new PaymentError('FORBIDDEN', 'Requester cannot decide their own refund request', 403);
+    }
 
     // Authorization: User must be an administrator or active owner/manager of the organizer profile
     const userRoleRes = await client.query(

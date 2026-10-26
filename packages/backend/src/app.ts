@@ -121,6 +121,30 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   // Rate Limiting (Redis-backed checkRateLimit; req.ip + user.id after auth policy)
   app.register(rateLimiterPlugin);
 
+  // Global UUID route parameter validation hook
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  app.addHook('preValidation', async (req, reply) => {
+    // Skip session hash parameters which are 64-char sha256 hex hashes rather than UUIDs
+    if (req.url.startsWith('/api/v1/me/sessions/')) return;
+
+    if (req.params && typeof req.params === 'object') {
+      for (const [key, value] of Object.entries(req.params as Record<string, unknown>)) {
+        if ((key === 'id' || key.endsWith('Id')) && typeof value === 'string') {
+          if (!UUID_REGEX.test(value)) {
+            return reply.code(400).send({
+              error: {
+                code: 'INVALID_ID',
+                message: `Route parameter '${key}' must be a valid UUID`,
+                details: { parameter: key, value },
+                requestId: req.id,
+              },
+            });
+          }
+        }
+      }
+    }
+  });
+
   // Monitoring & Health (GET /health, GET /readiness, GET /metrics)
   app.register(monitoringRoutes);
 

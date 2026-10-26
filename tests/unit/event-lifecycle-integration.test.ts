@@ -17,6 +17,7 @@ import {
   waitlistEntries,
   teamSubmissions,
   teamEventRegistrations,
+  refunds,
 } from '../../packages/backend/src/db/schema.js';
 import { bookVenueWindow, VenueConflictError } from '../../packages/backend/src/services/venue.js';
 import { eq } from 'drizzle-orm';
@@ -76,6 +77,7 @@ describe('Phase 3 Event Lifecycle, Venues, Discovery & Authorization Integration
       await db.delete(teamEventRegistrations).where(inArray(teamEventRegistrations.eventId, testEvtIds));
       await db.delete(waitlistEntries).where(inArray(waitlistEntries.eventId, testEvtIds));
       await db.delete(tickets).where(inArray(tickets.eventId, testEvtIds));
+      await db.delete(refunds);
       await db.delete(bookings).where(inArray(bookings.eventId, testEvtIds));
       await db.delete(ticketTypes).where(inArray(ticketTypes.eventId, testEvtIds));
       await db.delete(venueBookings).where(inArray(venueBookings.eventId, testEvtIds));

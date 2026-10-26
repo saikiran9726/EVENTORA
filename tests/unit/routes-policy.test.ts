@@ -19,7 +19,7 @@ describe('Route Policy & Deny-by-Default Enforcement', () => {
       { method: 'GET', url: '/api/v1/me/preferences' },
       { method: 'PATCH', url: '/api/v1/me/preferences' },
       { method: 'GET', url: '/api/v1/admin/users' },
-      { method: 'POST', url: '/api/v1/admin/users/test-id/role' },
+      { method: 'POST', url: '/api/v1/admin/users/00000000-0000-0000-0000-000000000001/role' },
     ];
 
     for (const tc of testCases) {
