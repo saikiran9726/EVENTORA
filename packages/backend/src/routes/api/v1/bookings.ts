@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import crypto from 'crypto';
 import { db, pool } from '../../../db/index.js';
 import { createBooking, BookingError } from '../../../services/booking.js';
 import { joinWaitlist, leaveWaitlist, claimOffer, WaitlistError } from '../../../services/waitlist.js';
@@ -61,7 +62,7 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         });
       }
 
-      // Enforce Idempotency-Key header
+      // Enforce Idempotency-Key header (capped at 128 characters)
       const idempotencyKey = (req.headers['idempotency-key'] || req.headers['Idempotency-Key']) as string;
       if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
         return reply.code(400).send({
@@ -69,6 +70,17 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
             code: 'MISSING_IDEMPOTENCY_KEY',
             message: 'Header "Idempotency-Key" is required for bookings',
             details: {},
+            requestId: req.id,
+          },
+        });
+      }
+
+      if (idempotencyKey.trim().length > 128) {
+        return reply.code(400).send({
+          error: {
+            code: 'INVALID_IDEMPOTENCY_KEY',
+            message: 'Header "Idempotency-Key" must not exceed 128 characters',
+            details: { maxLength: 128 },
             requestId: req.id,
           },
         });
@@ -85,6 +97,22 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           },
         });
       }
+
+      // SHA-256 payload binding for idempotency replays
+      const normalizedPayload = {
+        items: parseResult.data.items
+          .map((it) => ({ ticketTypeId: it.ticketTypeId, quantity: it.quantity }))
+          .sort((a, b) => a.ticketTypeId.localeCompare(b.ticketTypeId)),
+        teamRegistrationId: parseResult.data.teamRegistrationId || null,
+        answers: (parseResult.data.answers || []).map((a) => ({
+          questionId: a.questionId,
+          answer: a.answer,
+        })),
+      };
+      const payloadHash = crypto
+        .createHash('sha256')
+        .update(JSON.stringify(normalizedPayload))
+        .digest('hex');
 
       // Cross-college & department eligibility verification (Phase 10 FR-XCOL)
       const eligibility = await checkRegistrationEligibility(eventId, {
@@ -109,6 +137,7 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           eventId,
           items: parseResult.data.items,
           idempotencyKey: idempotencyKey.trim(),
+          payloadHash,
           teamRegistrationId: parseResult.data.teamRegistrationId,
           answers: parseResult.data.answers,
         });

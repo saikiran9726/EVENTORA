@@ -696,10 +696,14 @@ export const bookings = pgTable(
     totalPaise: integer('total_paise').default(0).notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull(),
+    payloadHash: varchar('payload_hash', { length: 64 }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
     uqUserIdempotency: unique('uq_booking_user_idempotency').on(table.userId, table.idempotencyKey),
+    bookingsActiveUserEventSoloIdx: uniqueIndex('bookings_active_user_event_solo_idx')
+      .on(table.userId, table.eventId)
+      .where(sql`status IN ('PENDING_PAYMENT', 'CONFIRMED') AND team_registration_id IS NULL`),
   })
 );
 

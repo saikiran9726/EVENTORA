@@ -52,6 +52,8 @@ export const RequireRole: React.FC<RequireRoleProps> = ({ allowedRoles, children
     effectiveRoles.push('admin', 'reviewer', 'organizer', 'checkin_staff');
   } else if (user.globalRole === 'reviewer') {
     effectiveRoles.push('reviewer');
+  } else if ((user as { globalRole?: string }).globalRole === 'checkin_staff') {
+    effectiveRoles.push('checkin_staff');
   }
 
   if (user.organizerMemberships && user.organizerMemberships.length > 0) {

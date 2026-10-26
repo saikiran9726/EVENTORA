@@ -1301,7 +1301,8 @@ export async function runMigrations() {
         (9, 'Phase 9: Alerts, Notification Pipeline & Offline Check-in'),
         (10, 'Phase 10: Cross-College Discovery & Student Event Passport'),
         (11, 'Phase 11: Production Hardening, ops_runs & Monthly Partitioning'),
-        (12, 'Phase 12: Auth Token Purpose Separation & Session Hardening')
+        (12, 'Phase 12: Auth Token Purpose Separation & Session Hardening'),
+        (13, 'Phase 13: Active Solo Booking Partial Unique Index & Hold Reconciliation')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1319,6 +1320,12 @@ export async function runMigrations() {
       EXCEPTION
         WHEN duplicate_object THEN null;
       END $$;
+
+      -- Phase 13: Active Solo Booking Partial Unique Index & Hold Reconciliation
+      DROP INDEX IF EXISTS uq_booking_user_event_active;
+      CREATE UNIQUE INDEX IF NOT EXISTS bookings_active_user_event_solo_idx ON bookings (user_id, event_id)
+        WHERE status IN ('PENDING_PAYMENT', 'CONFIRMED') AND team_registration_id IS NULL;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payload_hash VARCHAR(64);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

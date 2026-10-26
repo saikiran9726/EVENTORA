@@ -80,7 +80,22 @@ test.describe('Phase 3 E2E: Event Lifecycle, Venues, Discovery & Calendar', () =
     await safeScreenshot(page, './docs/screenshots/phase3-06-proposal-submitted.png', testInfo);
 
     // 4. Switch to Faculty Reviewer Role
-    await roleSelect.selectOption('reviewer');
+    await page.route('**/api/v1/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            id: 'mock-faculty-id',
+            email: 'faculty@campus.edu',
+            displayName: 'Dr. Suresh Faculty',
+            globalRole: 'reviewer',
+            status: 'active',
+          },
+        }),
+      });
+    });
+    await page.goto('/review');
 
     // Expect Faculty Review Queue
     await expect(page.getByText('Faculty Approval & Review Queue')).toBeVisible();
@@ -100,11 +115,22 @@ test.describe('Phase 3 E2E: Event Lifecycle, Venues, Discovery & Calendar', () =
     }
 
     // 5. Switch to Student Role
-    await roleSelect.selectOption('student');
-
-    // Navigate to Calendar
-    const calendarNavBtn = page.locator('button:has-text("Calendar"):visible').first();
-    await calendarNavBtn.click();
+    await page.route('**/api/v1/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            id: 'mock-student-id',
+            email: 'student@campus.edu',
+            displayName: 'Aarav Sharma',
+            globalRole: 'student',
+            status: 'active',
+          },
+        }),
+      });
+    });
+    await page.goto('/calendar');
 
     await expect(page.getByText('Campus Event Calendar')).toBeVisible();
     await safeScreenshot(page, './docs/screenshots/phase3-09-calendar-month.png', testInfo);

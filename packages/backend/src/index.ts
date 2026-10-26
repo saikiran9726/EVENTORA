@@ -1,5 +1,6 @@
 import { buildApp } from './app.js';
 import { startOutboxWorker, stopOutboxWorker } from './services/outbox-worker.js';
+import { startHoldReconcilerWorker, stopHoldReconcilerWorker } from './services/hold-reconciler.js';
 import { pool } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { seedDatabase } from './db/seed.js';
@@ -22,7 +23,7 @@ async function ensureDatabaseSchema() {
         'SELECT MAX(version) as current_version FROM schema_migrations;'
       );
       const version = migRes.rows[0]?.current_version ?? 0;
-      if (version < 11) {
+      if (version < 13) {
         needsMigration = true;
       }
     } catch (err: any) {
@@ -69,6 +70,7 @@ async function start() {
   // Register lifecycle hooks before starting the server
   server.addHook('onClose', async () => {
     stopOutboxWorker();
+    stopHoldReconcilerWorker();
   });
 
   const shutdown = async (signal: string) => {
@@ -91,8 +93,9 @@ async function start() {
     await server.listen({ port: PORT, host: HOST });
     console.log(`[Eventora Backend] Server listening at http://${HOST}:${PORT}`);
 
-    // In single-service deployments (e.g. Render free tier), run background outbox processing in-process
+    // In single-service deployments (e.g. Render free tier), run background workers in-process
     startOutboxWorker();
+    startHoldReconcilerWorker();
   } catch (err) {
     server.log.error(err);
     process.exit(1);

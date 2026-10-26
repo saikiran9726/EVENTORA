@@ -1,5 +1,82 @@
 # Eventora Overhaul Changelog
 
+## Phase P08 — Inventory & Booking Correctness, Hold Reconciler & Concurrency Safeguards
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Phase 13)
+- **Migration 13 (`Phase 13: Active Solo Booking Partial Unique Index & Hold Reconciliation`):**
+  - Created partial unique index `bookings_active_user_event_solo_idx` on `(user_id, event_id)` WHERE `status IN ('PENDING_PAYMENT', 'CONFIRMED') AND team_registration_id IS NULL`. Replaces blanket unique constraint to allow historical cancelled/refunded bookings while strictly preventing duplicate active solo bookings.
+  - Added `payload_hash VARCHAR(64)` column to `bookings` table for cryptographic idempotency payload verification.
+  - Added version 13 tracking into `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 13 -> 12: drops index `bookings_active_user_event_solo_idx`, restores `uq_booking_user_event_active`, drops column `payload_hash`, and removes version 13 record.
+  - Verified atomic rollback 13 -> 12 and re-application 12 -> 13 against live PostgreSQL.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Updated `bookings` table definition in Drizzle with `payloadHash: varchar('payload_hash', { length: 64 })` and `bookingsActiveUserEventSoloIdx`.
+- **Startup Migration Probe (`packages/backend/src/index.ts`):**
+  - Updated auto-migration trigger probe to check for schema version `< 13`.
+
+---
+
+### 2. Single-Leader Advisory Lock Hold Reconciler
+- **Hold Reconciler Service (`packages/backend/src/services/hold-reconciler.ts`):**
+  - Implemented Postgres advisory lock worker using `pg_try_advisory_lock(4208001)` to ensure single-leader execution across horizontally clustered backend nodes.
+  - Background loop calls `reconcileExpiredHolds` every 60 seconds.
+  - Deadlocks avoided by locking `ticket_types` sorted `ORDER BY id ASC FOR UPDATE` before decrementing `held` counters.
+- **Server Lifecycle Hooks (`packages/backend/src/index.ts`):**
+  - Starts hold reconciler worker on Fastify server listen.
+  - Registers `onClose` hook to gracefully stop worker and release advisory locks during shutdown.
+
+---
+
+### 3. Inventory State Machine & Row-Locking Cancellation
+- **Row-Locking Cancellation (`packages/backend/src/services/cancellation.ts`):**
+  - Acquires exclusive row locks on `ticket_types` sorted `ORDER BY id ASC FOR UPDATE` to prevent deadlocks under concurrency.
+  - Reconciles held vs. sold counters accurately:
+    - If booking is `PENDING_PAYMENT`: decrements `held = GREATEST(0, held - quantity)`.
+    - If booking is `CONFIRMED`: decrements `sold = GREATEST(0, sold - quantity)` and calls `promoteNext(booking.event_id, item.ticket_type_id, client)`.
+- **Waitlist Promotion Polymorphism (`packages/backend/src/services/waitlist.ts`):**
+  - Hardened `promoteNext` to support both `(ticketTypeId, client)` and `(eventId, ticketTypeId, client)` signatures seamlessly.
+- **Payment Lifecycle Counters (`packages/backend/src/services/payment.ts`):**
+  - Payment success: acquires row locks sorted by ID, decrements `held`, increments `sold`.
+  - Payment failure: acquires row locks sorted by ID, decrements `held` (prevents seat leaks).
+  - Refund approval: acquires row locks sorted by ID, decrements `sold`, and triggers waitlist promotion.
+
+---
+
+### 4. Booking Creation Invariants & Safeguards (`packages/backend/src/services/booking.ts`)
+- **Event Capacity Guard:** Enforces `events.capacity` constraint across all tiers simultaneously by locking the `events` table row `FOR UPDATE`.
+- **Event Expiry Guard:** Rejects bookings attempted after event conclusion (`now() > endsAt`) with HTTP 400 `EVENT_ALREADY_ENDED`.
+- **Line Item Deduplication:** Line items with identical `ticketTypeId` are merged before capacity checks, preventing duplicate line-item bypass exploits.
+- **Custom Form Question Validation:** Answers validated against custom form questions in `registration_form_questions` (verifies required fields, question ownership, and allowed enum options).
+- **Team Registration Validation:** Validates `teamRegistrationId` against `team_event_registrations` and active status in `team_members`.
+- **Cryptographic Idempotency Guard:**
+  - Idempotency keys capped at $\le 128$ characters and validated.
+  - Computes SHA-256 payload hash of normalized request body.
+  - Concurrent and replay requests with matching keys return existing booking if payload matches.
+  - Replays with altered body payload are rejected with HTTP 422 `IDEMPOTENCY_PAYLOAD_MISMATCH`.
+
+---
+
+### 5. Automated Verification & Quality Gates
+- **Comprehensive P08 Unit & Integration Suite (`tests/unit/phase-p08-inventory-booking.test.ts`):**
+  - 21 tests covering all state machine branches.
+  - Concurrency gate: 200 parallel bookings competing for 10 available seats $\to$ exactly 10 succeed, 190 fail, and counters stay strictly consistent (`sold + held == 10`).
+  - Abandoned holds free seats after expiry.
+  - Failed payments release held inventory without leaking seats.
+  - Cancellation promotes waitlisted candidates automatically.
+- **Vitest Full Regression:** 35/35 test files passed, 310/310 tests passed (100%).
+- **Playwright Full Regression:** 54/54 core tests passed, 24/24 final journey tests passed across Mobile, Tablet, and Desktop viewports.
+- **Typecheck & Lint:** 0 TypeScript errors, 0 ESLint errors across whole monorepo.
+- **Production Build:** `pnpm build` completed cleanly in 4.22s.
+
+---
+
 ## Phase P05 — Frontend Foundation A: API Client, Auth State & Error Handling
 
 **Date:** 2026-10-26  

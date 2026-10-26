@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -98,6 +99,9 @@ export const PassportPage: React.FC<{
   onNavigateToVerify?: (code: string) => void;
   onNavigateToPublicPassport?: (slug: string) => void;
 }> = ({ onNavigateToVerify, onNavigateToPublicPassport }) => {
+  const navigate = useNavigate();
+  const navigateToPublicPassport = onNavigateToPublicPassport || ((slug: string) => navigate(`/p/${slug}`));
+  const navigateToVerify = onNavigateToVerify || ((code: string) => navigate(`/verify?code=${code}`));
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'timeline' | 'passes' | 'certificates' | 'settings'>('timeline');
   const [achievements, setAchievements] = useState<StudentAchievement[]>(DEFAULT_PROTOTYPE_ACHIEVEMENTS);
@@ -144,10 +148,10 @@ export const PassportPage: React.FC<{
 
       if (passData) {
         if (passData.settings) setSettings(passData.settings);
-        if (passData.achievements) setAchievements(passData.achievements);
+        if (passData.achievements && passData.achievements.length > 0) setAchievements(passData.achievements);
       }
 
-      if (certData && Array.isArray(certData.certificates)) {
+      if (certData && Array.isArray(certData.certificates) && certData.certificates.length > 0) {
         setCertificates(certData.certificates);
       }
 
@@ -322,17 +326,15 @@ export const PassportPage: React.FC<{
                   <Copy className="w-3.5 h-3.5" />
                   <span>Copy Link</span>
                 </Button>
-                {onNavigateToPublicPassport && (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => onNavigateToPublicPassport(settings.slug)}
-                    className="text-xs flex items-center gap-1.5"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>View Public Page</span>
-                  </Button>
-                )}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => navigateToPublicPassport(settings.slug)}
+                  className="text-xs flex items-center gap-1.5"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>View Public Page</span>
+                </Button>
                 <Button
                   variant="destructive"
                   size="sm"
@@ -590,17 +592,15 @@ export const PassportPage: React.FC<{
                       <Download className="w-3.5 h-3.5 mr-1" />
                       Download
                     </Button>
-                    {onNavigateToVerify && (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => onNavigateToVerify(cert.verification_code)}
-                        className="text-xs"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                        Verify
-                      </Button>
-                    )}
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => navigateToVerify(cert.verification_code)}
+                      className="text-xs"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                      Verify
+                    </Button>
                   </div>
                 </Card>
               );

@@ -118,12 +118,32 @@ export async function leaveWaitlist(userId: string, eventId: string) {
  * Promotes the FIFO head waitlist entry to OFFERED state.
  * Atomically reserves the seat by setting held += 1 on the ticket_types row.
  * Can be run within an external transaction client or initiates its own transaction.
+ * Supports both signatures:
+ *   promoteNext(ticketTypeId, externalClient?, offerWindowMinutes?)
+ *   promoteNext(eventId, ticketTypeId, externalClient?)
  */
 export async function promoteNext(
-  ticketTypeId: string,
-  externalClient?: any,
-  offerWindowMinutes = 30
+  firstArg: string,
+  secondArg?: any,
+  thirdArg?: any
 ) {
+  let ticketTypeId: string;
+  let externalClient: any;
+  let offerWindowMinutes = 30;
+
+  if (typeof secondArg === 'string') {
+    // Called as promoteNext(eventId, ticketTypeId, externalClient)
+    ticketTypeId = secondArg;
+    externalClient = thirdArg;
+  } else {
+    // Called as promoteNext(ticketTypeId, externalClient, offerWindowMinutes)
+    ticketTypeId = firstArg;
+    externalClient = secondArg;
+    if (typeof thirdArg === 'number') {
+      offerWindowMinutes = thirdArg;
+    }
+  }
+
   const client = externalClient || (await pool.connect());
   const isInternalTx = !externalClient;
 

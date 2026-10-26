@@ -24,6 +24,18 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 13 -> 12: Active Solo Booking Index & Payload Hash
+    if (currentVersion >= 13 && targetVersion < 13) {
+      console.log('[Rollback] Rolling back version 13 (Phase 13)...');
+      await client.query(`
+        DROP INDEX IF EXISTS bookings_active_user_event_solo_idx;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_booking_user_event_active ON bookings (user_id, event_id)
+          WHERE (status != 'CANCELLED' AND team_registration_id IS NULL);
+        ALTER TABLE bookings DROP COLUMN IF EXISTS payload_hash;
+        DELETE FROM schema_migrations WHERE version = 13;
+      `);
+    }
+
     // Rollback step 12 -> 11: Token Purpose
     if (currentVersion >= 12 && targetVersion < 12) {
       console.log('[Rollback] Rolling back version 12 (Phase 12)...');

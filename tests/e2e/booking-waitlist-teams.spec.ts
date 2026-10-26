@@ -4,6 +4,12 @@ import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 4 E2E: Registration, Capacity, Waitlists & Teams', () => {
   test('Free Booking Flow -> Zero Payment Screen -> QR Ticket Generation -> Team Hub', async ({ page }, testInfo) => {
+    // 0. Authenticate as student
+    await page.goto('/login');
+    await page.click('button:has-text("Student")');
+    await page.click('button:has-text("Sign In")');
+    await expect(page).toHaveURL(/\/(discovery)?$/);
+
     // 1. Visit App
     await page.goto('/');
 
@@ -82,6 +88,12 @@ test.describe('Phase 4 E2E: Registration, Capacity, Waitlists & Teams', () => {
   });
 
   test('Mobile Viewport (375x667): Bottom Navigation & Sticky Bottom Action Bar', async ({ page }, testInfo) => {
+    // 0. Authenticate as student
+    await page.goto('/login');
+    await page.click('button:has-text("Student")');
+    await page.click('button:has-text("Sign In")');
+    await expect(page).toHaveURL(/\/(discovery)?$/);
+
     await page.setViewportSize({ width: 375, height: 667 });
     await page.goto('/');
 

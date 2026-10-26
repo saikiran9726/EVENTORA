@@ -10,6 +10,7 @@ export interface SwitchProps {
   disabled?: boolean;
   className?: string;
   id?: string;
+  'aria-label'?: string;
 }
 
 export const Switch: React.FC<SwitchProps> = ({
@@ -21,6 +22,7 @@ export const Switch: React.FC<SwitchProps> = ({
   disabled = false,
   className,
   id: providedId,
+  'aria-label': ariaLabel,
 }) => {
   const generatedId = useId();
   const id = providedId || generatedId;
@@ -50,6 +52,7 @@ export const Switch: React.FC<SwitchProps> = ({
           id={id}
           type="button"
           role="switch"
+          aria-label={ariaLabel}
           aria-checked={checked}
           aria-invalid={Boolean(error)}
           aria-describedby={describedBy}

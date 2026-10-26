@@ -57,22 +57,45 @@ export async function cancelBooking(bookingId: string, actorId: string, reason =
       [bookingId]
     );
 
-    // 7. Decrement sold seats on ticket_types and trigger waitlist promotion
+    // 7. Lock ticket_types rows in sorted ascending order to prevent deadlocks under concurrency
     const itemsRes = await client.query(
-      `SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1;`,
+      `SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1 ORDER BY ticket_type_id ASC;`,
       [bookingId]
     );
 
-    for (const item of itemsRes.rows) {
+    const ticketTypeIds = itemsRes.rows.map((i: any) => i.ticket_type_id).sort();
+    if (ticketTypeIds.length > 0) {
       await client.query(
-        `UPDATE ticket_types
-         SET sold = GREATEST(0, sold - $1)
-         WHERE id = $2;`,
-        [item.quantity, item.ticket_type_id]
+        `SELECT id, capacity, sold, held FROM ticket_types WHERE id = ANY($1::uuid[]) ORDER BY id ASC FOR UPDATE;`,
+        [ticketTypeIds]
       );
+    }
 
-      // In the same transaction: promote next waiting attendee
-      await promoteNext(item.ticket_type_id, client);
+    // 8. Release inventory:
+    // - PENDING_PAYMENT: release held capacity (held -= q)
+    // - CONFIRMED: release sold capacity (sold -= q) and trigger waitlist promotion
+    const wasPendingPayment = booking.status === 'PENDING_PAYMENT';
+    const wasConfirmed = booking.status === 'CONFIRMED';
+
+    for (const item of itemsRes.rows) {
+      if (wasPendingPayment) {
+        await client.query(
+          `UPDATE ticket_types
+           SET held = GREATEST(0, held - $1)
+           WHERE id = $2;`,
+          [item.quantity, item.ticket_type_id]
+        );
+      } else if (wasConfirmed) {
+        await client.query(
+          `UPDATE ticket_types
+           SET sold = GREATEST(0, sold - $1)
+           WHERE id = $2;`,
+          [item.quantity, item.ticket_type_id]
+        );
+
+        // In the same transaction: promote next waiting attendee
+        await promoteNext(booking.event_id, item.ticket_type_id, client);
+      }
     }
 
     // 8. Write to outbox

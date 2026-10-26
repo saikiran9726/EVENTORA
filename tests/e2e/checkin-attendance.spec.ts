@@ -4,13 +4,17 @@ import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certificates (FR-CHECKIN, FR-CERT)', () => {
   test('Complete Flow: QR Pass Display -> Staff Scanner Check-in -> Duplicate Rejection -> Passport Certificate -> Public Zero-PII Verification', async ({ page }, testInfo) => {
+    // 0. Authenticate as student
+    await page.goto('/login');
+    await page.click('button:has-text("Student")');
+    await page.click('button:has-text("Sign In")');
+    await expect(page).toHaveURL(/\/(discovery)?$/);
+
     // 1. Visit App
     await page.goto('/');
 
     // 2. Navigate to Tickets & Registrations (Student)
-    const ticketsNavBtn = page.locator('button:has-text("Tickets"):visible').first();
-    await expect(ticketsNavBtn).toBeVisible();
-    await ticketsNavBtn.click();
+    await page.goto('/tickets');
 
     // Verify My Tickets screen & High-Contrast QR Code Container
     await expect(page.getByText('My Tickets & Registrations')).toBeVisible();
@@ -22,9 +26,22 @@ test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certifi
     await safeScreenshot(page, './docs/screenshots/phase6-01-qr-ticket-display.png', testInfo);
 
     // 3. Switch to Check-in Staff Role
-    const roleSelect = page.locator('select:visible').first();
-    await expect(roleSelect).toBeVisible();
-    await roleSelect.selectOption('checkin_staff');
+    await page.route('**/api/v1/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            id: 'mock-staff-id',
+            email: 'staff@campus.edu',
+            displayName: 'Gate Staff',
+            globalRole: 'checkin_staff',
+            status: 'active',
+          },
+        }),
+      });
+    });
+    await page.goto('/scan/evt-test');
 
     // Verify Scanner Shell & Turnstile Scanner Interface
     await expect(page.getByText('Eventora Turnstile Scanner')).toBeVisible();
@@ -62,10 +79,22 @@ test.describe('Phase 6 E2E: QR Tickets, Turnstile Check-in, Attendance & Certifi
     await safeScreenshot(page, './docs/screenshots/phase6-03-scanner-duplicate.png', testInfo);
 
     // 6. Switch Role to Student -> Navigate to Passport
-    await roleSelect.selectOption('student');
-    const passportNavBtn = page.locator('button:has-text("Passport"):visible').first();
-    await expect(passportNavBtn).toBeVisible();
-    await passportNavBtn.click();
+    await page.route('**/api/v1/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            id: 'mock-student-id',
+            email: 'student@campus.edu',
+            displayName: 'Aarav Sharma',
+            globalRole: 'student',
+            status: 'active',
+          },
+        }),
+      });
+    });
+    await page.goto('/passport');
 
     // Verify Student Passport Page & Digital Certificates
     await expect(page.getByText('Student Event Passport & Credentials')).toBeVisible();

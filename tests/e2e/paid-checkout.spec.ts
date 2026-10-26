@@ -4,7 +4,13 @@ import { safeScreenshot } from './screenshot-helper.js';
 
 test.describe('Phase 5 E2E: Test-Mode Paid Checkout, Receipts & Ledger (FR-PAY)', () => {
   test('End-to-End Paid Checkout -> Simulator Payment -> Digital Receipt -> Organizer Ledger', async ({ page }, testInfo) => {
-    // 1. Visit App
+    // 0. Authenticate as student
+    await page.goto('/login');
+    await page.click('button:has-text("Student")');
+    await page.click('button:has-text("Sign In")');
+    await expect(page).toHaveURL(/\/(discovery)?$/);
+
+    // 1. Visit App / Discovery
     await page.goto('/');
 
     // 2. Select an event card to view details

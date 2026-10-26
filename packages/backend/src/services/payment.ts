@@ -241,11 +241,18 @@ export async function executePaymentConfirmationTransaction(params: {
       );
       await client.query(`UPDATE bookings SET status = 'PAYMENT_FAILED' WHERE id = $1;`, [payment.booking_id]);
 
-      // Release hold
+      // Release hold with sorted row locking
       const itemsRes = await client.query(
-        `SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1;`,
+        `SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1 ORDER BY ticket_type_id ASC;`,
         [payment.booking_id]
       );
+      const ticketTypeIds = itemsRes.rows.map((i: any) => i.ticket_type_id).sort();
+      if (ticketTypeIds.length > 0) {
+        await client.query(
+          `SELECT id, capacity, sold, held FROM ticket_types WHERE id = ANY($1::uuid[]) ORDER BY id ASC FOR UPDATE;`,
+          [ticketTypeIds]
+        );
+      }
       for (const item of itemsRes.rows) {
         await client.query(
           `UPDATE ticket_types SET held = GREATEST(held - $1, 0) WHERE id = $2;`,
@@ -281,18 +288,21 @@ export async function executePaymentConfirmationTransaction(params: {
       [paymentId, payment.id]
     );
 
-    // 5. Transfer capacity: held -= q, sold += q
+    // 5. Transfer capacity: held -= q, sold += q (sorted lock to prevent deadlocks)
     const itemsRes = await client.query(
       `SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1 ORDER BY ticket_type_id ASC;`,
       [payment.booking_id]
     );
 
-    for (const item of itemsRes.rows) {
-      // Row lock ticket type
+    const ticketTypeIds = itemsRes.rows.map((i: any) => i.ticket_type_id).sort();
+    if (ticketTypeIds.length > 0) {
       await client.query(
-        `SELECT capacity, sold, held FROM ticket_types WHERE id = $1 FOR UPDATE;`,
-        [item.ticket_type_id]
+        `SELECT id, capacity, sold, held FROM ticket_types WHERE id = ANY($1::uuid[]) ORDER BY id ASC FOR UPDATE;`,
+        [ticketTypeIds]
       );
+    }
+
+    for (const item of itemsRes.rows) {
       await client.query(
         `UPDATE ticket_types
          SET held = GREATEST(held - $1, 0), sold = sold + $1
@@ -685,18 +695,26 @@ export async function decideRefund(params: DecideRefundParams) {
       [ref.organizer_id, ref.booking_id, ref.payment_id, ref.amount_paise]
     );
 
-    // 5. Decrement sold and promote next waitlisted user
+    // 5. Decrement sold and promote next waitlisted user (sorted lock to prevent deadlocks)
     const itemsRes = await client.query(
-      `SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1;`,
+      `SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1 ORDER BY ticket_type_id ASC;`,
       [ref.booking_id]
     );
+
+    const ticketTypeIds = itemsRes.rows.map((i: any) => i.ticket_type_id).sort();
+    if (ticketTypeIds.length > 0) {
+      await client.query(
+        `SELECT id, capacity, sold, held FROM ticket_types WHERE id = ANY($1::uuid[]) ORDER BY id ASC FOR UPDATE;`,
+        [ticketTypeIds]
+      );
+    }
 
     for (const item of itemsRes.rows) {
       await client.query(
         `UPDATE ticket_types SET sold = GREATEST(sold - $1, 0) WHERE id = $2;`,
         [item.quantity, item.ticket_type_id]
       );
-      await promoteNext(item.ticket_type_id, client);
+      await promoteNext(ref.event_id, item.ticket_type_id, client);
     }
 
     await client.query('COMMIT');
@@ -812,7 +830,17 @@ export async function reconcileExpiredHolds() {
         await client.query(`UPDATE payments SET status = 'FAILED', failure_code = 'HOLD_EXPIRED' WHERE id = $1;`, [row.payment_id]);
       }
 
-      const itemsRes = await client.query(`SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1;`, [row.id]);
+      const itemsRes = await client.query(
+        `SELECT ticket_type_id, quantity FROM booking_items WHERE booking_id = $1 ORDER BY ticket_type_id ASC;`,
+        [row.id]
+      );
+      const ticketTypeIds = itemsRes.rows.map((i: any) => i.ticket_type_id).sort();
+      if (ticketTypeIds.length > 0) {
+        await client.query(
+          `SELECT id, capacity, sold, held FROM ticket_types WHERE id = ANY($1::uuid[]) ORDER BY id ASC FOR UPDATE;`,
+          [ticketTypeIds]
+        );
+      }
       for (const item of itemsRes.rows) {
         await client.query(
           `UPDATE ticket_types SET held = GREATEST(held - $1, 0) WHERE id = $2;`,

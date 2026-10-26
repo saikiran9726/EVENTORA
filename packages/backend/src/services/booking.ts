@@ -29,6 +29,7 @@ export interface CreateBookingParams {
     quantity: number;
   }[];
   idempotencyKey: string;
+  payloadHash?: string;
   teamRegistrationId?: string | null;
   answers?: {
     questionId: string;
@@ -49,13 +50,15 @@ export interface BookingResult {
  * Non-negotiables enforced:
  * 1. SELECT ... FOR UPDATE on ticket_types row(s) in ascending order to prevent deadlocks.
  * 2. sold + held + quantity <= capacity check strictly on stored state.
- * 3. Idempotency-Key deduplication returning original booking response.
+ * 3. Idempotency-Key deduplication returning original booking response, bound to SHA-256 payload hash.
  * 4. Free bookings set status = 'CONFIRMED' with total_paise = 0 (no payment screen).
  * 5. Outbox record written atomically with booking.
  * 6. Non-blocking student schedule overlap check returned as warnings.
+ * 7. Active solo booking duplicate guard: counts only PENDING_PAYMENT or CONFIRMED.
+ * 8. Registration question validation against event registration_form_questions.
  */
 export async function createBooking(params: CreateBookingParams): Promise<BookingResult> {
-  const { userId, eventId, items, idempotencyKey, teamRegistrationId, answers } = params;
+  const { userId, eventId, items, idempotencyKey, payloadHash, teamRegistrationId, answers } = params;
 
   if (!items || items.length === 0) {
     throw new BookingError('INVALID_ITEMS', 'At least one ticket item is required');
@@ -71,6 +74,16 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
 
     if (existingRes.rows.length > 0) {
       const existingBooking = existingRes.rows[0];
+
+      // Verify payload hash matches if present
+      if (payloadHash && existingBooking.payload_hash && existingBooking.payload_hash !== payloadHash) {
+        throw new BookingError(
+          'IDEMPOTENCY_PAYLOAD_MISMATCH',
+          'Idempotency key reused with different request payload',
+          422
+        );
+      }
+
       const itemsRes = await client.query(
         `SELECT * FROM booking_items WHERE booking_id = $1;`,
         [existingBooking.id]
@@ -90,10 +103,10 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
 
     await client.query('BEGIN');
 
-    // 2. Validate Event state and registration window
+    // 2. Validate Event state and registration window (lock event row to serialize total capacity checks)
     const eventRes = await client.query(
       `SELECT id, title, status, starts_at, ends_at, registration_opens_at, registration_closes_at, capacity, team_mode
-       FROM events WHERE id = $1 FOR SHARE;`,
+       FROM events WHERE id = $1 FOR UPDATE;`,
       [eventId]
     );
 
@@ -113,16 +126,16 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
     if (event.registration_closes_at && new Date(event.registration_closes_at) < now) {
       throw new BookingError('REGISTRATION_CLOSED', 'Registration window has closed', 400);
     }
-    if (event.starts_at && new Date(event.starts_at) <= now) {
-      throw new BookingError('EVENT_ALREADY_STARTED', 'Cannot book tickets for an event that has already started', 400);
+    if (event.ends_at && new Date(event.ends_at) <= now) {
+      throw new BookingError('EVENT_ALREADY_ENDED', 'Cannot book tickets for an event that has already ended', 400);
     }
 
-    // 3. Validate Team Registration or Check active solo booking
+    // 3. Validate Team Registration or Check active solo booking (only PENDING_PAYMENT or CONFIRMED)
     if (teamRegistrationId) {
       const trRes = await client.query(
         `SELECT tr.id, tr.event_id, tm.status
-         FROM team_registrations tr
-         JOIN team_members tm ON tr.team_id = tm.team_id AND tm.user_id = $1 AND tm.status = 'active'
+         FROM team_event_registrations tr
+         JOIN team_members tm ON tr.team_id = tm.team_id AND tm.user_id = $1 AND tm.status = 'ACTIVE'
          WHERE tr.id = $2;`,
         [userId, teamRegistrationId]
       );
@@ -138,11 +151,39 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       }
     } else {
       const activeBookingCheck = await client.query(
-        `SELECT id FROM bookings
-         WHERE user_id = $1 AND event_id = $2 AND status != 'CANCELLED' AND team_registration_id IS NULL;`,
+        `SELECT id, idempotency_key, payload_hash FROM bookings
+         WHERE user_id = $1 AND event_id = $2 AND status IN ('PENDING_PAYMENT', 'CONFIRMED') AND team_registration_id IS NULL;`,
         [userId, eventId]
       );
       if (activeBookingCheck.rows.length > 0) {
+        // If the active booking has the same idempotency_key, this is a concurrent or repeated replay of the same booking
+        const matchingIdem = activeBookingCheck.rows.find((r) => r.idempotency_key === idempotencyKey);
+        if (matchingIdem) {
+          if (payloadHash && matchingIdem.payload_hash && matchingIdem.payload_hash !== payloadHash) {
+            throw new BookingError(
+              'IDEMPOTENCY_PAYLOAD_MISMATCH',
+              'Idempotency key reused with different request payload',
+              422
+            );
+          }
+          await client.query('COMMIT');
+          const itemsRes = await pool.query(
+            `SELECT * FROM booking_items WHERE booking_id = $1;`,
+            [matchingIdem.id]
+          );
+          const ticketsRes = await pool.query(
+            `SELECT id, ticket_code, status, checked_in_at, created_at FROM tickets WHERE booking_id = $1;`,
+            [matchingIdem.id]
+          );
+          return {
+            booking: matchingIdem,
+            items: itemsRes.rows,
+            tickets: ticketsRes.rows,
+            warnings: [],
+            isIdempotentReplay: true,
+          };
+        }
+
         throw new BookingError(
           'ALREADY_REGISTERED',
           'You already have an active registration for this event',
@@ -151,7 +192,68 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       }
     }
 
-    // 4. Normalize duplicate ticket tier lines and sort in ascending order to prevent deadlocks
+    // 4. Validate Custom Registration Form Questions
+    const questionsRes = await client.query(
+      `SELECT id, label, type, required, options
+       FROM registration_form_questions
+       WHERE event_id = $1
+       ORDER BY sort ASC, id ASC;`,
+      [eventId]
+    );
+
+    if (questionsRes.rows.length > 0) {
+      const questionMap = new Map<string, any>(
+        questionsRes.rows.map((q) => [q.id, q])
+      );
+
+      // Verify answers only refer to questions of this event
+      if (answers && answers.length > 0) {
+        for (const ans of answers) {
+          if (!questionMap.has(ans.questionId)) {
+            throw new BookingError(
+              'INVALID_QUESTION',
+              `Question ${ans.questionId} does not belong to this event`,
+              400
+            );
+          }
+        }
+      }
+
+      // Check required questions and valid option choices
+      const answersMap = new Map<string, any>(
+        (answers || []).map((a) => [a.questionId, a.answer])
+      );
+
+      for (const q of questionsRes.rows) {
+        const ansVal = answersMap.get(q.id);
+        const isEmpty =
+          ansVal === undefined ||
+          ansVal === null ||
+          (typeof ansVal === 'string' && ansVal.trim() === '');
+
+        if (q.required && isEmpty) {
+          throw new BookingError(
+            'MISSING_REQUIRED_QUESTION',
+            `Answer is required for question: "${q.label}"`,
+            400,
+            { questionId: q.id }
+          );
+        }
+
+        if (!isEmpty && (q.type === 'select' || q.type === 'radio') && Array.isArray(q.options)) {
+          if (!q.options.includes(ansVal)) {
+            throw new BookingError(
+              'INVALID_QUESTION_OPTION',
+              `Selected option is invalid for question: "${q.label}"`,
+              400,
+              { questionId: q.id, allowedOptions: q.options }
+            );
+          }
+        }
+      }
+    }
+
+    // 5. Normalize duplicate ticket tier lines and sort in ascending order to prevent deadlocks
     const normalizedMap = new Map<string, number>();
     for (const it of items) {
       if (it.quantity <= 0) {
@@ -166,7 +268,7 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
 
     const ticketTypeIds = sortedItems.map((i) => i.ticketTypeId);
 
-    // 5. Lock ticket_types rows with SELECT ... FOR UPDATE
+    // 6. Lock ticket_types rows with SELECT ... FOR UPDATE in ascending order
     const lockedTypesRes = await client.query(
       `SELECT id, event_id, name, price_paise, capacity, sold, held, per_user_limit, sales_start, sales_end
        FROM ticket_types
@@ -181,7 +283,7 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       lockedTypesMap.set(row.id, row);
     }
 
-    // Check overall event capacity limit across all tiers
+    // 7. Check overall event capacity limit across all tiers
     if (event.capacity) {
       const bookedRes = await client.query(
         `SELECT COALESCE(SUM(sold + held), 0) as total_booked FROM ticket_types WHERE event_id = $1;`,
@@ -228,7 +330,7 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       });
     }
 
-    // 6. Update inventory counts:
+    // 8. Update inventory counts:
     // Free bookings immediately occupy 'sold'.
     // Paid bookings reserve seats in 'held' until payment confirmation; expires in 15 mins.
     const isFree = calculatedTotalPaise === 0;
@@ -249,15 +351,15 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       }
     }
 
-    // 7. Insert Booking (Status: CONFIRMED for free, PENDING_PAYMENT for paid with expires_at)
+    // 9. Insert Booking (Status: CONFIRMED for free, PENDING_PAYMENT for paid with expires_at)
     let booking: any;
     try {
       const bookingRes = await client.query(
         `INSERT INTO bookings (
-           user_id, event_id, team_registration_id, status, total_paise, idempotency_key, expires_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+           user_id, event_id, team_registration_id, status, total_paise, idempotency_key, expires_at, payload_hash
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *;`,
-        [userId, eventId, teamRegistrationId || null, bookingStatus, calculatedTotalPaise, idempotencyKey, expiresAt]
+        [userId, eventId, teamRegistrationId || null, bookingStatus, calculatedTotalPaise, idempotencyKey, expiresAt, payloadHash || null]
       );
       booking = bookingRes.rows[0];
     } catch (insertErr: any) {
@@ -271,6 +373,13 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
         );
         if (retryRes.rows.length > 0) {
           const existingBooking = retryRes.rows[0];
+          if (payloadHash && existingBooking.payload_hash && existingBooking.payload_hash !== payloadHash) {
+            throw new BookingError(
+              'IDEMPOTENCY_PAYLOAD_MISMATCH',
+              'Idempotency key reused with different request payload',
+              422
+            );
+          }
           const itemsRes = await pool.query(
             `SELECT * FROM booking_items WHERE booking_id = $1;`,
             [existingBooking.id]
@@ -288,10 +397,54 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
           };
         }
       }
+      if (
+        insertErr.code === '23505' &&
+        (insertErr.constraint === 'bookings_active_user_event_solo_idx' ||
+          insertErr.constraint === 'uq_booking_user_event_active')
+      ) {
+        await client.query('ROLLBACK');
+        // Check if the conflicting active booking has the same idempotency key (concurrent race of same request)
+        await new Promise((r) => setTimeout(r, 50));
+        const retryRes = await pool.query(
+          `SELECT * FROM bookings WHERE user_id = $1 AND idempotency_key = $2;`,
+          [userId, idempotencyKey]
+        );
+        if (retryRes.rows.length > 0) {
+          const existingBooking = retryRes.rows[0];
+          if (payloadHash && existingBooking.payload_hash && existingBooking.payload_hash !== payloadHash) {
+            throw new BookingError(
+              'IDEMPOTENCY_PAYLOAD_MISMATCH',
+              'Idempotency key reused with different request payload',
+              422
+            );
+          }
+          const itemsRes = await pool.query(
+            `SELECT * FROM booking_items WHERE booking_id = $1;`,
+            [existingBooking.id]
+          );
+          const ticketsRes = await pool.query(
+            `SELECT id, ticket_code, status, checked_in_at, created_at FROM tickets WHERE booking_id = $1;`,
+            [existingBooking.id]
+          );
+          return {
+            booking: existingBooking,
+            items: itemsRes.rows,
+            tickets: ticketsRes.rows,
+            warnings: [],
+            isIdempotentReplay: true,
+          };
+        }
+
+        throw new BookingError(
+          'ALREADY_REGISTERED',
+          'You already have an active registration for this event',
+          409
+        );
+      }
       throw insertErr;
     }
 
-    // 8. Insert Booking Items (price snapshot)
+    // 10. Insert Booking Items (price snapshot)
     const insertedItems: any[] = [];
     for (const item of bookingItemsToInsert) {
       const itemRes = await client.query(
@@ -303,7 +456,7 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       insertedItems.push(itemRes.rows[0]);
     }
 
-    // 9. Save Registration Answers if provided
+    // 11. Save Registration Answers if provided
     if (answers && answers.length > 0) {
       for (const ans of answers) {
         await client.query(
@@ -314,7 +467,7 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       }
     }
 
-    // 10. Generate Tickets if booking is CONFIRMED
+    // 12. Generate Tickets if booking is CONFIRMED (free bookings)
     const insertedTickets: any[] = [];
     if (bookingStatus === 'CONFIRMED') {
       for (const item of bookingItemsToInsert) {
@@ -338,7 +491,7 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
         }
       }
 
-      // 11. Write outbox event atomically
+      // 13. Write outbox event atomically
       await client.query(
         `INSERT INTO outbox (event_type, payload, dedupe_key)
          VALUES ($1, $2, $3);`,
@@ -356,7 +509,7 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
       );
     }
 
-    // 12. Non-blocking schedule overlap check
+    // 14. Non-blocking schedule overlap check
     const warnings: { code: string; eventId?: string; message: string }[] = [];
     const overlapRes = await client.query(
       `SELECT e.id, e.title

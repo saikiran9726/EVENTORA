@@ -177,7 +177,7 @@ export const PublicPassportPage: React.FC<{
   }
 
   return (
-    <div className="max-w-3xl mx-auto py-8 px-4 space-y-6">
+    <main className="max-w-3xl mx-auto py-8 px-4 space-y-6">
       {/* Top Banner & Institution Affirmation */}
       <Card className="p-6 border-l-4 border-l-brand space-y-4 bg-gradient-to-br from-surface via-surface to-brand/5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -292,6 +292,6 @@ export const PublicPassportPage: React.FC<{
           </Button>
         </div>
       )}
-    </div>
+    </main>
   );
 };
