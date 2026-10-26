@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -8,12 +9,19 @@ import { Eye, EyeOff, Lock, Mail, User, CheckCircle2, XCircle, ShieldAlert } fro
 
 interface RegisterPageProps {
   onSuccess?: () => void;
-  onNavigateLogin: () => void;
+  onNavigateLogin?: () => void;
 }
 
 export const RegisterPage: React.FC<RegisterPageProps> = ({
+  onSuccess: _onSuccess,
   onNavigateLogin,
 }) => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get('returnTo');
+  const handleNavigateLogin =
+    onNavigateLogin ||
+    (() => navigate(returnTo ? `/login?returnTo=${encodeURIComponent(returnTo)}` : '/login'));
   const { register } = useAuth();
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -112,7 +120,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
           <p className="text-sm text-muted">
             Your college email has been verified. You can now sign in with your credentials.
           </p>
-          <Button variant="primary" onClick={onNavigateLogin} className="w-full mt-4">
+          <Button variant="primary" onClick={handleNavigateLogin} className="w-full mt-4">
             Proceed to Sign In
           </Button>
         </Card>
@@ -180,7 +188,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
             <span>Already verified? </span>
             <button
               type="button"
-              onClick={onNavigateLogin}
+              onClick={handleNavigateLogin}
               className="ml-1 text-brand-600 font-semibold hover:underline"
             >
               Sign In
@@ -344,7 +352,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
           <span>Already registered? </span>
           <button
             type="button"
-            onClick={onNavigateLogin}
+            onClick={handleNavigateLogin}
             className="ml-1 text-brand-600 font-semibold hover:underline"
           >
             Sign In

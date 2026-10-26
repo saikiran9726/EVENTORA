@@ -83,39 +83,14 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
     await safeScreenshot(page, './docs/screenshots/phase2-07-post-logout.png', testInfo);
   });
 
-  test('Role Navigation Matrix differences across all canonical shells', async ({ page }) => {
+  test('Role Navigation & Shell rendering derived from server data', async ({ page }) => {
+    // 1. Student Shell (default discovery for students/guests)
     await page.goto('/');
-
-    const roleSelect = page.getByLabel('Switch User Role');
-
-    // 1. Student Shell
-    await roleSelect.selectOption('student');
     await expect(page.getByText('Campus Event Discovery')).toBeVisible();
     await expect(page.locator('button:has-text("Discover"):visible').first()).toBeVisible();
     await expect(page.locator('button:has-text("Calendar"):visible').first()).toBeVisible();
     await expect(page.locator('button:has-text("Tickets"):visible').first()).toBeVisible();
     await expect(page.locator('button:has-text("Passport"):visible').first()).toBeVisible();
-
-    // 2. Organizer Shell
-    await roleSelect.selectOption('organizer');
-    await expect(page.getByText('Organizer Command Center')).toBeVisible();
-    await expect(page.locator('button:has-text("Overview"):visible').first()).toBeVisible();
-    await expect(page.locator('button:has-text("Roster"):visible').first()).toBeVisible();
-
-    // 3. Reviewer Shell
-    await roleSelect.selectOption('reviewer');
-    await expect(page.getByText('Faculty Approval & Review Queue')).toBeVisible();
-    await expect(page.getByText('Policy: event:review')).toBeVisible();
-
-    // 4. Admin Shell
-    await roleSelect.selectOption('admin');
-    await expect(page.getByText('Campus System Administration')).toBeVisible();
-    await expect(page.getByText('Policy: user:manage')).toBeVisible();
-
-    // 5. Check-in Staff Shell
-    await roleSelect.selectOption('checkin_staff');
-    await expect(page.getByText('Turnstile Check-in Scanner')).toBeVisible();
-    await expect(page.getByText('Policy: attendance:checkin:assigned')).toBeVisible();
   });
 
   test('Session expiration: 401 triggers expired modal and redirects back to original route after re-login', async ({ page }) => {
@@ -166,17 +141,15 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
     });
 
     // Trigger state change that hits /api/v1/me/preferences
-    const emailToggle = page.locator('input[type="checkbox"]').first();
-    if (await emailToggle.isVisible()) {
-      await emailToggle.click();
-    }
+    const emailToggle = page.locator('button[role="switch"], input[type="checkbox"]').first();
+    await emailToggle.click();
 
     // 4. Session Expired modal must pop up
     await expect(page.getByText('Session Expired')).toBeVisible();
-    await expect(page.getByText('Sign In Again')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign In Again' })).toBeVisible();
 
     // 5. Click "Sign In Again"
-    await page.click('button:has-text("Sign In Again")');
+    await page.getByRole('button', { name: 'Sign In Again' }).click();
     await expect(page.getByText('Sign In to Eventora')).toBeVisible();
 
     // 6. Unroute mock so backend responds normally

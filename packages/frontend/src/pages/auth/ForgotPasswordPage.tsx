@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -6,10 +7,12 @@ import { apiClient } from '@/lib/api-client';
 import { KeyRound, Mail, ShieldAlert, CheckCircle2 } from 'lucide-react';
 
 interface ForgotPasswordPageProps {
-  onNavigateLogin: () => void;
+  onNavigateLogin?: () => void;
 }
 
 export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onNavigateLogin }) => {
+  const navigate = useNavigate();
+  const handleNavigateLogin = onNavigateLogin || (() => navigate('/login'));
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -77,7 +80,7 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onNaviga
           <p className="text-sm text-muted">
             Your password has been securely updated using Argon2id encryption. You can now log in.
           </p>
-          <Button variant="primary" onClick={onNavigateLogin} className="w-full mt-4">
+          <Button variant="primary" onClick={handleNavigateLogin} className="w-full mt-4">
             Sign In with New Password
           </Button>
         </Card>
@@ -216,7 +219,7 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onNaviga
           <span>Remember your credentials? </span>
           <button
             type="button"
-            onClick={onNavigateLogin}
+            onClick={handleNavigateLogin}
             className="ml-1 text-brand-600 font-semibold hover:underline"
           >
             Sign In

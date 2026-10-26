@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -70,7 +71,32 @@ export interface ScanLogItem {
   staffName: string | null;
 }
 
-export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-event-id' }) => {
+export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEventId }) => {
+  const { eventId: paramEventId } = useParams<{ eventId?: string }>();
+  const navigate = useNavigate();
+  const eventId = propEventId || paramEventId || '';
+
+  const [availableEvents, setAvailableEvents] = useState<
+    Array<{ id: string; title: string; startsAt?: string; location?: string }>
+  >([]);
+  const [loadingEvents, setLoadingEvents] = useState(!eventId);
+
+  useEffect(() => {
+    if (!eventId) {
+      setLoadingEvents(true);
+      apiClient
+        .get<any>('/api/v1/events')
+        .then((res) => {
+          const evs = res?.events || res?.items || [];
+          setAvailableEvents(evs);
+        })
+        .catch(() => {
+          setAvailableEvents([]);
+        })
+        .finally(() => setLoadingEvents(false));
+    }
+  }, [eventId]);
+
   const { toast } = useToast();
   const [manualToken, setManualToken] = useState('');
   const [isScanning, setIsScanning] = useState(false);
@@ -396,15 +422,74 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId = 'mock-ev
   ).length;
   const conflictCount = offlineOps.filter((op) => op.status === 'CONFLICT').length;
 
+  if (!eventId) {
+    return (
+      <div className="max-w-xl mx-auto py-10 px-4 space-y-6">
+        <div className="text-center space-y-2">
+          <div className="w-12 h-12 rounded-full bg-brand/10 text-brand flex items-center justify-center mx-auto">
+            <Camera className="w-6 h-6" />
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-text">Select Event to Scan</h1>
+          <p className="text-sm text-text-muted">Choose an active campus event to initialize the turnstile scanner.</p>
+        </div>
+
+        {loadingEvents ? (
+          <div className="text-center py-8 text-sm text-text-muted animate-pulse">
+            Loading assigned campus events...
+          </div>
+        ) : availableEvents.length === 0 ? (
+          <div className="text-center py-8 bg-surface border border-border rounded-xl p-6 space-y-3">
+            <p className="text-sm text-text">No active events found for turnstile scanning.</p>
+            <Button variant="outline" onClick={() => navigate('/')}>
+              Return to Discovery
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {availableEvents.map((ev) => (
+              <div
+                key={ev.id}
+                onClick={() => navigate(`/scan/${ev.id}`)}
+                className="p-4 bg-surface border border-border hover:border-brand rounded-xl cursor-pointer transition-all flex items-center justify-between group shadow-sm hover:shadow"
+              >
+                <div>
+                  <h3 className="text-sm font-semibold text-text group-hover:text-brand transition-colors">
+                    {ev.title}
+                  </h3>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    {ev.startsAt ? new Date(ev.startsAt).toLocaleDateString() : 'Active Campus Event'} • {ev.location || 'Campus Venue'}
+                  </p>
+                </div>
+                <Button size="sm" variant="primary" onClick={() => navigate(`/scan/${ev.id}`)}>
+                  Select
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto pb-12">
       {/* Header & Policy Marker */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text flex items-center gap-2">
-            <Camera className="w-6 h-6 text-brand" />
-            <span>Turnstile Check-in Scanner</span>
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-text flex items-center gap-2">
+              <Camera className="w-6 h-6 text-brand" />
+              <span>Turnstile Check-in Scanner</span>
+            </h1>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/scan')}
+              className="text-xs py-1 h-7"
+            >
+              Switch Event
+            </Button>
+          </div>
           <p className="text-xs sm:text-sm text-text-muted mt-1">
             FR-CHECKIN & FR-OFFLINE Turnstile Scanner • Zero-PII Manifests • Replay-Idempotent Sync
           </p>

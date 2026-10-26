@@ -17,12 +17,10 @@ import { ShellCommonProps } from './StudentShell';
 import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 
 export const OrganizerShell: React.FC<ShellCommonProps> = ({
-  currentRole,
-  onRoleChange,
-  activeRoute,
-  onRouteChange,
-  isDarkMode,
-  onToggleDarkMode,
+  activeRoute = 'dashboard',
+  onRouteChange = () => {},
+  isDarkMode = false,
+  onToggleDarkMode = () => {},
   children,
 }) => {
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
@@ -70,21 +68,13 @@ export const OrganizerShell: React.FC<ShellCommonProps> = ({
 
         {/* Global Controls */}
         <div className="flex items-center gap-2 md:gap-3">
-          <div className="flex items-center gap-1.5 bg-surface-2 border border-border rounded-md px-2 py-1 text-xs">
-            <span className="text-text-muted hidden sm:inline">Role:</span>
-            <select
-              value={currentRole}
-              onChange={(e) => onRoleChange(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-brand focus:outline-none cursor-pointer"
-              aria-label="Switch User Role"
-            >
-              <option value="student">Student</option>
-              <option value="organizer">Club Organizer</option>
-              <option value="reviewer">Faculty Reviewer</option>
-              <option value="checkin_staff">Check-in Staff</option>
-              <option value="admin">Administrator</option>
-            </select>
-          </div>
+          <button
+            type="button"
+            onClick={() => onRouteChange('discover')}
+            className="px-2 py-1 rounded-md text-xs font-semibold text-text-muted hover:text-text bg-surface-2 hover:bg-surface transition-colors"
+          >
+            ← Campus Events
+          </button>
 
           <button
             type="button"

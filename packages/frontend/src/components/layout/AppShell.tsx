@@ -22,22 +22,21 @@ import { MOCK_BANNER_TEXT } from '@/mock/data';
 export type CurrentRole = 'student' | 'organizer' | 'reviewer' | 'admin' | 'checkin_staff';
 
 interface AppShellProps {
-  currentRole: CurrentRole;
-  onRoleChange: (role: CurrentRole) => void;
-  activeRoute: string;
-  onRouteChange: (route: string) => void;
-  isDarkMode: boolean;
-  onToggleDarkMode: () => void;
+  currentRole?: CurrentRole;
+  onRoleChange?: (role: CurrentRole) => void;
+  activeRoute?: string;
+  onRouteChange?: (route: string) => void;
+  isDarkMode?: boolean;
+  onToggleDarkMode?: () => void;
   children: React.ReactNode;
 }
 
 export const AppShell: React.FC<AppShellProps> = ({
-  currentRole,
-  onRoleChange,
-  activeRoute,
-  onRouteChange,
-  isDarkMode,
-  onToggleDarkMode,
+  currentRole = 'student',
+  activeRoute = 'discover',
+  onRouteChange = () => {},
+  isDarkMode = false,
+  onToggleDarkMode = () => {},
   children,
 }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -126,25 +125,8 @@ export const AppShell: React.FC<AppShellProps> = ({
           </button>
         </div>
 
-        {/* Global Controls & Role Selector */}
+        {/* Global Controls */}
         <div className="flex items-center gap-2 md:gap-3">
-          {/* Active Role Switcher for Phase 1 Demo */}
-          <div className="flex items-center gap-1.5 bg-surface-2 border border-border rounded-md px-2 py-1 text-xs">
-            <span className="text-text-muted hidden sm:inline">Role:</span>
-            <select
-              value={currentRole}
-              onChange={(e) => onRoleChange(e.target.value as CurrentRole)}
-              className="bg-transparent text-xs font-semibold text-brand focus:outline-none cursor-pointer"
-              aria-label="Switch User Role"
-            >
-              <option value="student">Student</option>
-              <option value="organizer">Club Organizer</option>
-              <option value="reviewer">Faculty Reviewer</option>
-              <option value="checkin_staff">Check-in Staff</option>
-              <option value="admin">Administrator</option>
-            </select>
-          </div>
-
           {/* Theme Toggle */}
           <button
             type="button"

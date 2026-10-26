@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Filter, Calendar, MapPin, Users, ArrowRight, Image as ImageIcon, Loader2, ShieldCheck, School } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -11,7 +12,7 @@ import { formatINR } from '@/lib/utils';
 import { apiClient } from '@/lib/api-client';
 
 interface DiscoveryPageProps {
-  onSelectEvent: (eventId: string) => void;
+  onSelectEvent?: (eventId: string) => void;
 }
 
 export interface DiscoveredEvent {
@@ -34,7 +35,9 @@ export interface DiscoveredEvent {
   registeredCount?: number;
 }
 
-export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent }) => {
+export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent: propOnSelectEvent }) => {
+  const navigate = useNavigate();
+  const onSelectEvent = propOnSelectEvent || ((id: string) => navigate(`/events/${id}`));
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');

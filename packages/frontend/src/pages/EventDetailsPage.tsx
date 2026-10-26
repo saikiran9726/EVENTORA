@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Share2,
@@ -25,8 +26,8 @@ import { apiClient } from '@/lib/api-client';
 import { useAuth } from '@/context/AuthContext';
 
 interface EventDetailsPageProps {
-  eventId: string;
-  onBack: () => void;
+  eventId?: string;
+  onBack?: () => void;
   onProceedToCheckout?: (bookingId: string) => void;
 }
 
@@ -40,10 +41,16 @@ interface PublicRatingData {
 }
 
 export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
-  eventId,
-  onBack,
-  onProceedToCheckout,
+  eventId: propEventId,
+  onBack: propOnBack,
+  onProceedToCheckout: propOnProceedToCheckout,
 }) => {
+  const params = useParams<{ slug?: string; id?: string }>();
+  const navigate = useNavigate();
+  const eventId = propEventId || params.slug || params.id || '';
+  const onBack = propOnBack || (() => navigate(-1));
+  const onProceedToCheckout =
+    propOnProceedToCheckout || ((bookingId: string) => navigate(`/checkout/${bookingId}`));
   const { toast } = useToast();
   const { user } = useAuth();
   const prototypeEvent = PROTOTYPE_EVENTS.find((e) => e.id === eventId) || PROTOTYPE_EVENTS[0];

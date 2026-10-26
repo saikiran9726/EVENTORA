@@ -10,9 +10,24 @@ test.describe('Phase 3 E2E: Event Lifecycle, Venues, Discovery & Calendar', () =
     // Screenshot discovery baseline
     await safeScreenshot(page, './docs/screenshots/phase3-01-discovery-initial.png', testInfo);
 
-    // 2. Switch Role to Club Organizer
-    const roleSelect = page.locator('select[aria-label="Switch User Role"]');
-    await roleSelect.selectOption('organizer');
+    // 2. Authenticate as Club Organizer and navigate to /organizer
+    await page.route('**/api/v1/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            id: 'mock-org-user-id',
+            email: 'organizer@campus.edu',
+            displayName: 'Tech Club Organizer',
+            globalRole: 'student',
+            status: 'active',
+            organizerMemberships: [{ organizerId: 'org-test', role: 'admin', organizerName: 'Tech Club' }],
+          },
+        }),
+      });
+    });
+    await page.goto('/organizer');
 
     // Expect Organizer Command Center
     await expect(page.getByText('Club Organizer Command Center & Analytics')).toBeVisible();

@@ -74,11 +74,24 @@ test.describe('Eventora Phase 1 Design System & Application Shell', () => {
   test('Organizer Analytics with KPI stat cards, sortable table, and responsive cards', async ({
     page,
   }, testInfo) => {
-    await page.goto('/');
-
-    // Switch role to organizer
-    const roleSelect = page.locator('select[aria-label="Switch User Role"]');
-    await roleSelect.selectOption('organizer');
+    // Authenticate as organizer and navigate to /organizer
+    await page.route('**/api/v1/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            id: 'mock-org-user-id',
+            email: 'organizer@campus.edu',
+            displayName: 'Tech Club Organizer',
+            globalRole: 'student',
+            status: 'active',
+            organizerMemberships: [{ organizerId: 'org-test', role: 'admin', organizerName: 'Tech Club' }],
+          },
+        }),
+      });
+    });
+    await page.goto('/organizer');
 
     // Verify Organizer Shell Views
     await expect(page.locator('text=Club Organizer Command Center & Analytics')).toBeVisible();

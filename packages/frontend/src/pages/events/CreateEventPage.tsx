@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -57,11 +58,17 @@ export interface VenueOption {
 }
 
 interface CreateEventPageProps {
-  onBack: () => void;
-  onSuccess: (eventId: string) => void;
+  onBack?: () => void;
+  onSuccess?: (eventId: string) => void;
 }
 
-export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack, onSuccess }) => {
+export const CreateEventPage: React.FC<CreateEventPageProps> = ({
+  onBack: propOnBack,
+  onSuccess: propOnSuccess,
+}) => {
+  const navigate = useNavigate();
+  const onBack = propOnBack || (() => navigate('/organizer'));
+  const onSuccess = propOnSuccess || ((id: string) => navigate(`/events/${id}`));
   const { toast } = useToast();
   const { user, isAuthenticated, login } = useAuth();
   const isOrganizerOrAdmin = Boolean(

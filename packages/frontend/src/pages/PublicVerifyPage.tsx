@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { reportError } from '@/lib/error-reporter';
 import { Card } from '@/components/ui/Card';
@@ -32,7 +33,11 @@ export interface VerifyResult {
 export const PublicVerifyPage: React.FC<{
   initialCode?: string;
   onBack?: () => void;
-}> = ({ initialCode = '', onBack }) => {
+}> = ({ initialCode: propInitialCode, onBack: propOnBack }) => {
+  const params = useParams<{ code?: string }>();
+  const navigate = useNavigate();
+  const initialCode = propInitialCode || params.code || '';
+  const onBack = propOnBack || (() => navigate('/passport'));
   const [code, setCode] = useState(initialCode);
   const [result, setResult] = useState<VerifyResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);

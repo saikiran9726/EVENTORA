@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -6,9 +7,9 @@ import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff, Lock, Mail, ShieldAlert, Sparkles } from 'lucide-react';
 
 interface LoginPageProps {
-  onSuccess: () => void;
-  onNavigateRegister: () => void;
-  onNavigateForgot: () => void;
+  onSuccess?: () => void;
+  onNavigateRegister?: () => void;
+  onNavigateForgot?: () => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({
@@ -16,7 +17,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onNavigateRegister,
   onNavigateForgot,
 }) => {
-  const { login } = useAuth();
+  const { login, returnPath, setReturnPath } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -37,7 +42,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setIsLoading(false);
 
     if (result.success) {
-      onSuccess();
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        const queryReturn = searchParams.get('returnTo');
+        const stateReturn = (location.state as any)?.from?.pathname;
+        const target =
+          returnPath ||
+          (queryReturn ? decodeURIComponent(queryReturn) : null) ||
+          stateReturn ||
+          '/';
+        setReturnPath(null);
+        navigate(target, { replace: true });
+      }
     } else {
       setErrorMessage(result.error || 'Invalid email or password.');
     }
@@ -103,7 +120,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </label>
                 <button
                   type="button"
-                  onClick={onNavigateForgot}
+                  onClick={onNavigateForgot || (() => navigate('/forgot'))}
                   className="text-xs text-brand-600 hover:underline font-medium"
                 >
                   Forgot password?
@@ -194,7 +211,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           <span>Don&apos;t have an account? </span>
           <button
             type="button"
-            onClick={onNavigateRegister}
+            onClick={
+              onNavigateRegister ||
+              (() => {
+                const returnTo = searchParams.get('returnTo');
+                navigate(returnTo ? `/register?returnTo=${encodeURIComponent(returnTo)}` : '/register');
+              })
+            }
             className="ml-1 text-brand-600 font-semibold hover:underline"
           >
             Create campus account

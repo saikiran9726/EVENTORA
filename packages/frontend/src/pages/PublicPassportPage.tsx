@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { reportError } from '@/lib/error-reporter';
 import {
@@ -33,10 +34,16 @@ interface PublicPassportPayload {
 }
 
 export const PublicPassportPage: React.FC<{
-  slug: string;
+  slug?: string;
   onBack?: () => void;
   onNavigateToVerify?: (code: string) => void;
-}> = ({ slug, onBack, onNavigateToVerify }) => {
+}> = ({ slug: propSlug, onBack: propOnBack, onNavigateToVerify: propOnNavigateToVerify }) => {
+  const params = useParams<{ slug?: string }>();
+  const navigate = useNavigate();
+  const slug = propSlug || params.slug || '';
+  const onBack = propOnBack || (() => navigate('/passport'));
+  const onNavigateToVerify =
+    propOnNavigateToVerify || ((code: string) => navigate(`/verify/${encodeURIComponent(code)}`));
   const [passport, setPassport] = useState<PublicPassportPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isNotFound, setIsNotFound] = useState(false);

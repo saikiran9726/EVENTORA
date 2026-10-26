@@ -376,3 +376,115 @@
   - TypeScript typecheck passed with 0 errors across all workspace packages.
   - ESLint passed with 0 errors across all workspace packages.
   - Production build passed for all packages.
+
+---
+
+## Phase P05 — Frontend Foundation A: API Client, Auth State & Error Handling
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Robust Unified API Client (`apiClient`)
+- Replaced ad-hoc `fetch()` calls across the frontend with `apiClient` (`packages/frontend/src/lib/api-client.ts`).
+- Standardized request envelope parsing to unpack backend `{ error: { code, message, details, requestId } }` errors into typed `ApiError` instances.
+- Added automatic exponential backoff with jitter on network drops and 5xx errors.
+- Handled Render cold starts with wake-up detection emitting `eventora:server-waking` and `eventora:server-ready` window events.
+- Wired 401 Unauthorized detection to global callback triggering session expiration modals.
+
+---
+
+### 2. Centralized Auth State & Session Expiration
+- Unified auth state in `AuthContext` (`packages/frontend/src/context/AuthContext.tsx`).
+- Created `ExpiredSessionModal` notifying users when their 30-minute idle session expires and preserving the destination route for post-login return.
+- Connected profile display name updates and preference toggles to `/api/v1/me` and `/api/v1/me/preferences`.
+
+---
+
+### 3. Error Reporting & Diagnostics
+- Implemented `reportError` in `packages/frontend/src/lib/error-reporter.ts` capturing error stacks, component traces, and backend `requestId`.
+- Added automated unit test suite `tests/unit/phase-p05-frontend-foundation.test.ts` (7 passing tests).
+
+---
+
+## Phase P06 — Frontend Foundation B: Router, Guards & Error Boundaries
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. React Router DOM v6 Migration & Declarative Routes
+- Replaced manual state-based router (`activeTab`, `currentView`, `activeEventId`) in `App.tsx` with `<BrowserRouter>`, `<Routes>`, and `<Route>` from `react-router-dom` v6.
+- Declared canonical URL hierarchy across all 23 application views:
+  - Discovery: `/`
+  - Event Details: `/events/:slug`
+  - Checkout & Tickets: `/checkout/:bookingId`, `/tickets`, `/tickets/:id`
+  - Calendars & Hubs: `/calendar`, `/teams`, `/volunteers`
+  - Passports & Verification: `/passport`, `/p/:slug`, `/verify`, `/verify/:code`
+  - Attendee Profile: `/profile`
+  - Organizer Command Center: `/organizer`, `/organizer/create`, `/organizer/:tab`
+  - Reviewer Queue: `/review`
+  - Campus Administration: `/admin`, `/admin/:tab`
+  - Scanner & Check-in: `/scan`, `/scan/:eventId`
+  - Authentication: `/login`, `/register`, `/forgot`, `/reset/:token`, `/verify-email/:token`
+  - Catch-All: `*` routing to `NotFoundPage` (404)
+  - Backward compatibility: Legacy redirects for `/dashboard` -> `/organizer` and `/auth/*` -> `/*`.
+
+---
+
+### 2. Server-Derived Authorization Guards (`RequireAuth` & `RequireRole`)
+- Created `packages/frontend/src/components/auth/RouteGuards.tsx`:
+  - `RequireAuth`: Intercepts unauthenticated users, captures current route in `returnTo`, and redirects to `/login?returnTo=...`.
+  - `RequireRole`: Derives effective user roles solely from authenticated server data (`user.globalRole`, `user.organizerMemberships`, `user.staffAssignments`).
+- **Complete Deletion of Manual Role Switcher:**
+  - Completely purged the manual `<select aria-label="Switch User Role">` across `StudentShell`, `OrganizerShell`, `ReviewerShell`, `AdminShell`, `CheckinShell`, and `AppShell`.
+  - Zero remaining occurrences across all source and test files.
+- **Dedicated 403 Forbidden Page (`packages/frontend/src/pages/ForbiddenPage.tsx`):**
+  - Displays access denied status, required role information, and recovery actions ("Discover Events" and "Go Back").
+
+---
+
+### 3. Suspense, Code-Splitting & Per-Route Error Boundaries
+- Code-split all page components using `React.lazy()` with Rollup dynamic chunks.
+- Created `RouteSkeleton` (`packages/frontend/src/components/ui/RouteSkeleton.tsx`) with pulsing wireframe loading feedback.
+- Implemented `ErrorBoundary` (`packages/frontend/src/components/layout/ErrorBoundary.tsx`):
+  - Captures runtime React component failures without crashing the entire single-page application.
+  - Automatically extracts and displays backend `requestId` and error codes.
+  - Provides interactive "Try Again" recovery retry and fallback navigation buttons.
+  - Integrated at the root platform level and individually around each code-split route view.
+
+---
+
+### 4. Scanner Real Event Parameter & Event Picker
+- Purged hardcoded `'mock-event-id'` across `packages/frontend/src/pages/ScannerPage.tsx` and `packages/frontend/src/lib/offline-sync.ts`.
+- Implemented Active Event Picker when navigating to `/scan` without an `eventId`: queries active events, displays interactive selection cards, and navigates to `/scan/:eventId`.
+- Added "Switch Event" header action inside the active turnstile scanner.
+
+---
+
+### 5. ReturnTo Navigation Preservation
+- Enhanced `LoginPage` and `RegisterPage` to forward and preserve `returnTo` search parameters during new account registration and email verification.
+- Upon successful login, users are automatically returned to their intended deep link destination.
+
+---
+
+### 6. Verification & Automated Coverage
+- **Unit & Security Matrix Suite:**
+  - Created `tests/unit/phase-p06-router-guards.test.ts` (8 passing unit tests).
+  - Full vitest suite: 33 test files, 281 tests passing (100%).
+- **Playwright E2E Acceptance Suite (`tests/e2e/router-guards-navigation.spec.ts`):**
+  - 15 tests passing across Mobile-375, Tablet-768, and Desktop-1280 (100%):
+    1. Deep links survive page reload without resetting to root or losing state (`/calendar`, `/teams`, `/volunteers`).
+    2. Logged-out redirect preserves `returnTo` and navigates back upon login (`/profile`).
+    3. 404 Catch-All renders `NotFoundPage` with clean return to Discovery.
+    4. Role-guarded routes render 403 `ForbiddenPage` with required role indicators for unauthorized roles (`/admin`, `/review`).
+    5. Browser back and forward history navigation buttons navigate correctly between routes.
+- **Static Analysis & Builds:**
+  - TypeScript typecheck passed with 0 errors across `@eventora/shared`, `@eventora/backend`, and `@eventora/frontend`.
+  - ESLint passed with 0 errors.
+  - Vite production build succeeded in 4.18s with code-split route chunks.
+

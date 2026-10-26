@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -20,7 +21,7 @@ import {
 import { useToast } from '@/components/ui/Toast';
 
 export interface CheckoutPageProps {
-  bookingId: string;
+  bookingId?: string;
   onSuccess?: (receipt: any) => void;
   onNavigateToTickets?: () => void;
   onBack?: () => void;
@@ -39,11 +40,16 @@ export interface BookingHoldDetails {
 }
 
 export const CheckoutPage: React.FC<CheckoutPageProps> = ({
-  bookingId,
+  bookingId: propBookingId,
   onSuccess,
-  onNavigateToTickets,
-  onBack,
+  onNavigateToTickets: propOnNavigateToTickets,
+  onBack: propOnBack,
 }) => {
+  const params = useParams<{ bookingId?: string }>();
+  const navigate = useNavigate();
+  const bookingId = propBookingId || params.bookingId || '';
+  const onNavigateToTickets = propOnNavigateToTickets || (() => navigate('/tickets'));
+  const onBack = propOnBack || (() => navigate(-1));
   const { toast } = useToast();
   const [loading, setLoading] = useState<boolean>(true);
   const [booking, setBooking] = useState<BookingHoldDetails | null>(null);

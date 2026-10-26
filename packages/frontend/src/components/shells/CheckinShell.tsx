@@ -5,12 +5,9 @@ import { PROTOTYPE_BADGE_TEXT } from '@/prototype/data';
 import { ShellCommonProps } from './StudentShell';
 
 export const CheckinShell: React.FC<ShellCommonProps> = ({
-  currentRole,
-  onRoleChange,
-  activeRoute: _activeRoute,
-  onRouteChange,
-  isDarkMode,
-  onToggleDarkMode,
+  onRouteChange = () => {},
+  isDarkMode = false,
+  onToggleDarkMode = () => {},
   children,
 }) => {
   return (
@@ -44,21 +41,6 @@ export const CheckinShell: React.FC<ShellCommonProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-surface-2 border border-border rounded-md px-2 py-1 text-xs">
-            <select
-              value={currentRole}
-              onChange={(e) => onRoleChange(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-brand focus:outline-none cursor-pointer"
-              aria-label="Switch User Role"
-            >
-              <option value="student">Student</option>
-              <option value="organizer">Club Organizer</option>
-              <option value="reviewer">Faculty Reviewer</option>
-              <option value="checkin_staff">Check-in Staff</option>
-              <option value="admin">Administrator</option>
-            </select>
-          </div>
-
           <button
             type="button"
             onClick={onToggleDarkMode}

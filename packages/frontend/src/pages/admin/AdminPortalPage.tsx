@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -48,18 +49,32 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
   onNavigateTab,
 }) => {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<string>(initialTab);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Infer tab from URL if present
+  const derivedTab = React.useMemo(() => {
+    const path = location.pathname;
+    if (path.includes('/admin/users')) return 'admin-users';
+    if (path.includes('/admin/clubs')) return 'admin-clubs';
+    if (path.includes('/admin/events')) return 'admin-events';
+    if (path.includes('/admin/audit')) return 'admin-audit';
+    return initialTab;
+  }, [location.pathname, initialTab]);
+
+  const [activeTab, setActiveTab] = useState<string>(derivedTab);
 
   useEffect(() => {
-    if (initialTab) {
-      setActiveTab(initialTab);
-    }
-  }, [initialTab]);
+    setActiveTab(derivedTab);
+  }, [derivedTab]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     if (onNavigateTab) {
       onNavigateTab(tab);
+    } else {
+      const sub = tab.replace('admin-', '');
+      navigate(sub === 'overview' ? '/admin' : `/admin/${sub}`);
     }
   };
 

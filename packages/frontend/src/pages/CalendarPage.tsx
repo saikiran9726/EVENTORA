@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft,
   ChevronRight,
@@ -30,7 +31,9 @@ interface CalendarPageProps {
   onSelectEvent?: (eventId: string) => void;
 }
 
-export const CalendarPage: React.FC<CalendarPageProps> = ({ onSelectEvent }) => {
+export const CalendarPage: React.FC<CalendarPageProps> = ({ onSelectEvent: propOnSelectEvent }) => {
+  const navigate = useNavigate();
+  const onSelectEvent = propOnSelectEvent || ((id: string) => navigate(`/events/${id}`));
   const { toast } = useToast();
   const [viewMode, setViewMode] = useState<'month' | 'agenda'>('month');
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
