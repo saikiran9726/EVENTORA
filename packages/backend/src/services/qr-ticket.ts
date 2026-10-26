@@ -124,7 +124,7 @@ export interface ScanTicketParams {
 }
 
 export interface ScanOutcomeResult {
-  outcome: 'ACCEPTED' | 'DUPLICATE' | 'INVALID' | 'WRONG_EVENT' | 'REVOKED' | 'OUTSIDE_WINDOW';
+  outcome: 'ACCEPTED' | 'DUPLICATE' | 'INVALID' | 'WRONG_EVENT' | 'REVOKED' | 'OUTSIDE_WINDOW' | 'EVENT_NOT_PUBLISHED';
   message: string;
   ticketId?: string;
   checkedInAt?: string;
@@ -157,6 +157,61 @@ export async function scanTicket(params: ScanTicketParams): Promise<ScanOutcomeR
 
   try {
     await client.query('BEGIN');
+
+    // 2.5 Event Status Guard (Check-in blocked for non-published events)
+    const evRes = await client.query(
+      `SELECT id, status, title FROM events WHERE id = $1;`,
+      [eventId]
+    );
+
+    if (evRes.rows.length === 0) {
+      await client.query(
+        `INSERT INTO scan_log (event_id, staff_id, outcome, at) VALUES ($1, $2, 'INVALID', NOW());`,
+        [eventId, staffId]
+      );
+      await client.query('COMMIT');
+      return {
+        outcome: 'INVALID',
+        message: 'Invalid scan request: Event not found.',
+      };
+    }
+
+    const currentEvent = evRes.rows[0];
+    if (currentEvent.status !== 'published') {
+      const tCheck = await client.query(
+        `SELECT id, status FROM tickets WHERE qr_token_hash = $1;`,
+        [qrTokenHash]
+      );
+      const ticketId = tCheck.rows[0]?.id;
+      const ticketStatus = tCheck.rows[0]?.status;
+
+      // If the ticket was revoked (e.g. from an event cancellation cascade), classify as REVOKED
+      if (ticketStatus === 'REVOKED' || ticketStatus === 'CANCELLED') {
+        await client.query(
+          `INSERT INTO scan_log (ticket_id, event_id, staff_id, outcome, at)
+           VALUES ($1, $2, $3, 'REVOKED', NOW());`,
+          [ticketId || null, eventId, staffId]
+        );
+        await client.query('COMMIT');
+        return {
+          outcome: 'REVOKED',
+          message: 'Revoked Ticket: This registration has been cancelled or revoked.',
+          ticketId,
+        };
+      }
+
+      await client.query(
+        `INSERT INTO scan_log (ticket_id, event_id, staff_id, outcome, at)
+         VALUES ($1, $2, $3, 'EVENT_NOT_PUBLISHED', NOW());`,
+        [ticketId || null, eventId, staffId]
+      );
+      await client.query('COMMIT');
+      return {
+        outcome: 'EVENT_NOT_PUBLISHED',
+        message: `Check-in blocked: Event is ${currentEvent.status}, not published.`,
+        ticketId,
+      };
+    }
 
     // 3. Optional Session Window Guard
     if (sessionId) {

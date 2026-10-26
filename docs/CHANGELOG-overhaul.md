@@ -1,5 +1,80 @@
 # Eventora Overhaul Changelog
 
+## Phase P09 — Event Lifecycle, Cancel Cascade & Auto-Completion Scheduler
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Phase 14)
+- **Migration 14 (`Phase 14: Event Status History System Actor, Completion Index & Scan Outcome`):**
+  - Made `actor_id` nullable in `event_status_history` (`ALTER TABLE event_status_history ALTER COLUMN actor_id DROP NOT NULL;`) to permit automated background scheduler transitions.
+  - Created composite performance index `idx_events_status_ends_at` on `events(status, ends_at)` for instant identification of expired published events.
+  - Made `requested_by` nullable in `refunds` (`ALTER TABLE refunds ALTER COLUMN requested_by DROP NOT NULL;`) so organizer/system cancel cascades insert refunds cleanly without requiring dummy reviewer actors.
+  - Added `'EVENT_NOT_PUBLISHED'` to `scan_outcome` enum (`ALTER TYPE scan_outcome ADD VALUE IF NOT EXISTS 'EVENT_NOT_PUBLISHED';`).
+  - Added version 14 entry to `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 14 -> 13: drops index `idx_events_status_ends_at`, restores `NOT NULL` constraint on `event_status_history.actor_id` and `refunds.requested_by` (with fallback user assignment), and removes version 14 record.
+  - Tested and verified live rollback 14 -> 13 and re-application 13 -> 14.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Updated `eventStatusHistory.actorId` (nullable).
+  - Updated `refunds.requestedBy` (nullable).
+  - Updated `scanOutcomeEnum` with `'EVENT_NOT_PUBLISHED'`.
+- **Startup Migration Probe (`packages/backend/src/index.ts`):**
+  - Updated startup check to verify schema version `< 14`.
+
+---
+
+### 2. Single-Transaction Event Lifecycle State Transitions (`packages/backend/src/services/event-lifecycle.ts`)
+- **Single Client Transaction:**
+  - Rewrote `transitionEventStatus` to run status update + event status history + venue booking reconciliation + cancel cascade + outbox notifications + audit logging inside **ONE atomic client transaction** (`client.query('BEGIN')` ... `COMMIT`).
+  - If any step throws or encounters a concurrency conflict, the entire operation rolls back atomically.
+- **Complete Cancel Cascade:**
+  - Releases venue bookings (`status = 'released'`).
+  - Revokes all active tickets (`status = 'REVOKED'`).
+  - Resets ticket tier capacity counters (`sold = 0, held = 0`).
+  - Cancels all active bookings (`status = 'CANCELLED'`).
+  - Closes all waiting and offered waitlist entries (`status = 'EXPIRED'`).
+  - Automatically queues refund requests with `status = 'REQUESTED'` in `refunds` for paid bookings with succeeded payment, and updates payments to `status = 'REFUND_PENDING'`.
+  - Queues outbox notifications for each attendee (`notification.event_cancelled`) and general event outbox entry (`event.cancelled`).
+  - Returns `CancelCascadeSummary` with exact counts: `cancelledBookingsCount`, `ticketsRevokedCount`, `refundsQueuedCount`, `waitlistClosedCount`, `outboxQueuedCount`, `releasedVenueBookingsCount`.
+
+---
+
+### 3. API Route Enhancements (`packages/backend/src/routes/api/v1/events.ts`)
+- **Real Cancel Cascade Summary:**
+  - Replaced generic/false cancellation message with live counts in `POST /api/v1/events/:id/cancel`:
+    - Root and summary counts: `cancelledBookingsCount`, `ticketsRevokedCount`, `refundsQueuedCount`, `waitlistClosedCount`, `outboxQueuedCount`.
+    - Dynamic message: `"Event has been cancelled. Released X bookings, revoked Y tickets, queued Z refunds, and closed W waitlist entries."`.
+- **Material Edit Attendee Outbox Notifications:**
+  - In `PATCH /api/v1/events/:id`, when a published event undergoes material changes (`startsAt`, `endsAt`, `venueId`), all active ticket holders are retrieved and queued individual `notification.event_rescheduled` outbox rows for notification fan-out.
+
+---
+
+### 4. Check-in Scanner & Booking Guards (`packages/backend/src/services/qr-ticket.ts`, `booking.ts`)
+- **Check-in Scanner:**
+  - Guard checks `events.status`. If the event is not `published`:
+    - If the ticket was revoked/cancelled, logs outcome `'REVOKED'` and returns message `"Revoked Ticket: This registration has been cancelled or revoked."`.
+    - Otherwise logs outcome `'EVENT_NOT_PUBLISHED'` and returns `"Check-in blocked: Event is <status>, not published."`.
+- **Booking Guards:**
+  - Confirms `createBooking` and `createHold` reject bookings for non-published events (`EVENT_NOT_PUBLISHED`).
+
+---
+
+### 5. Automated Event Completion Scheduler (`packages/backend/src/services/event-scheduler.ts`)
+- **Advisory Lock Worker:**
+  - Uses PostgreSQL session-level advisory lock `EVENT_COMPLETER_ADVISORY_LOCK_ID = 4208002` (`pg_try_advisory_lock`) to guarantee single-leader execution across horizontal cluster nodes.
+- **Auto-Completion:**
+  - Queries `events` where `status = 'published' AND ends_at <= NOW()`.
+  - Transitions them to `'completed'` with `actorId: 'system'` and audit log note.
+- **Fastify Lifecycle Hooks (`packages/backend/src/index.ts`):**
+  - Worker starts automatically on server listen (`startEventCompleterWorker()`).
+  - Gracefully stops on server close (`stopEventCompleterWorker()`) via `server.addHook('onClose')`.
+
+---
+
 ## Phase P08 — Inventory & Booking Correctness, Hold Reconciler & Concurrency Safeguards
 
 **Date:** 2026-10-26  

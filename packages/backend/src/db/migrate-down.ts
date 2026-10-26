@@ -24,6 +24,23 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 14 -> 13: Event Status History System Actor, Completion Index & Scan Outcome
+    if (currentVersion >= 14 && targetVersion < 14) {
+      console.log('[Rollback] Rolling back version 14 (Phase 14)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_events_status_ends_at;
+        UPDATE event_status_history
+        SET actor_id = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)
+        WHERE actor_id IS NULL;
+        ALTER TABLE event_status_history ALTER COLUMN actor_id SET NOT NULL;
+        UPDATE refunds
+        SET requested_by = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)
+        WHERE requested_by IS NULL;
+        ALTER TABLE refunds ALTER COLUMN requested_by SET NOT NULL;
+        DELETE FROM schema_migrations WHERE version = 14;
+      `);
+    }
+
     // Rollback step 13 -> 12: Active Solo Booking Index & Payload Hash
     if (currentVersion >= 13 && targetVersion < 13) {
       console.log('[Rollback] Rolling back version 13 (Phase 13)...');

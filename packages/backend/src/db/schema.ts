@@ -146,6 +146,7 @@ export const scanOutcomeEnum = pgEnum('scan_outcome', [
   'REVOKED',
   'OUTSIDE_WINDOW',
   'NOT_ASSIGNED',
+  'EVENT_NOT_PUBLISHED',
 ]);
 
 export const feedbackModerationStatusEnum = pgEnum('feedback_moderation_status', [
@@ -480,8 +481,7 @@ export const eventStatusHistory = pgTable('event_status_history', {
   fromStatus: eventStatusEnum('from_status').notNull(),
   toStatus: eventStatusEnum('to_status').notNull(),
   actorId: uuid('actor_id')
-    .references(() => users.id, { onDelete: 'restrict' })
-    .notNull(),
+    .references(() => users.id, { onDelete: 'restrict' }),
   note: text('note'),
   at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -861,8 +861,7 @@ export const refunds = pgTable('refunds', {
   reason: text('reason').notNull(),
   status: refundStatusEnum('status').default('REQUESTED').notNull(),
   requestedBy: uuid('requested_by')
-    .references(() => users.id, { onDelete: 'restrict' })
-    .notNull(),
+    .references(() => users.id, { onDelete: 'restrict' }),
   decidedBy: uuid('decided_by').references(() => users.id, { onDelete: 'set null' }),
   idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

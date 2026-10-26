@@ -11,8 +11,8 @@ import {
   eventFaqs,
   eventAnnouncements,
   ticketTypes,
+  tickets,
   outbox,
-  type Event,
   type EventStatus,
 } from '../../../db/schema.js';
 import { eq, and, sql, desc, asc, gte, lte, or } from 'drizzle-orm';
@@ -833,7 +833,7 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         });
       }
 
-      // Material edit on PUBLISHED event: write history & queue outbox notice
+      // Material edit on PUBLISHED event: write history & queue outbox notice to all ticket holders
       if (currentEvent.status === 'published') {
         const isMaterial =
           updates.venueId !== undefined ||
@@ -852,6 +852,31 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
             status: 'pending',
             dedupeKey: `event_changed_${id}_${updated.version}`,
           });
+
+          // Query distinct active ticket holders and queue notification.event_rescheduled
+          const activeHolders = await db
+            .selectDistinct({ userId: tickets.userId })
+            .from(tickets)
+            .where(and(eq(tickets.eventId, id), sql`${tickets.status} != 'REVOKED'`, sql`${tickets.userId} IS NOT NULL`));
+
+          for (const holder of activeHolders) {
+            if (holder.userId) {
+              await db.insert(outbox).values({
+                eventType: 'notification.event_rescheduled',
+                payload: {
+                  eventId: id,
+                  eventTitle: updated.title,
+                  userId: holder.userId,
+                  startsAt: updated.startsAt,
+                  endsAt: updated.endsAt,
+                  venueId: updated.venueId,
+                  updatedAt: updated.updatedAt,
+                },
+                status: 'pending',
+                dedupeKey: `notif_rescheduled_${id}_${holder.userId}_${updated.version}`,
+              });
+            }
+          }
         }
       }
 
@@ -1202,9 +1227,26 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           }
         );
 
+        const summary = updated.cascadeSummary || {
+          cancelledBookingsCount: 0,
+          ticketsRevokedCount: 0,
+          refundsQueuedCount: 0,
+          waitlistClosedCount: 0,
+          outboxQueuedCount: 0,
+          releasedVenueBookingsCount: 0,
+        };
+
+        const message = `Event has been cancelled. Released ${summary.cancelledBookingsCount} bookings, revoked ${summary.ticketsRevokedCount} tickets, queued ${summary.refundsQueuedCount} refunds, and closed ${summary.waitlistClosedCount} waitlist entries.`;
+
         return reply.code(200).send({
           event: updated,
-          message: 'Event has been cancelled and associated bookings released.',
+          summary,
+          cancelledBookingsCount: summary.cancelledBookingsCount,
+          ticketsRevokedCount: summary.ticketsRevokedCount,
+          refundsQueuedCount: summary.refundsQueuedCount,
+          waitlistClosedCount: summary.waitlistClosedCount,
+          outboxQueuedCount: summary.outboxQueuedCount,
+          message,
         });
       } catch (err: any) {
         if (err instanceof InvalidTransitionError) {
