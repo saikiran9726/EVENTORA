@@ -7,7 +7,7 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { Switch } from '@/components/ui/Switch';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
-import { Tabs } from '@/components/ui/Tabs';
+import { Tabs, TabPanel } from '@/components/ui/Tabs';
 import { Dialog } from '@/components/ui/Dialog';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Pagination } from '@/components/ui/Pagination';
@@ -15,6 +15,8 @@ import { Stepper } from '@/components/ui/Stepper';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { QRDisplay } from '@/components/ui/QRDisplay';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState, ErrorState, PermissionDeniedState } from '@/components/ui/FeedbackStates';
 import { useToast } from '@/components/ui/Toast';
 
@@ -22,11 +24,13 @@ export const ComponentGalleryPage: React.FC = () => {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('matrix');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isNonDismissibleOpen, setIsNonDismissibleOpen] = useState(false);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [switchVal, setSwitchVal] = useState(true);
   const [checkboxVal, setCheckboxVal] = useState(true);
   const [currentStep, setCurrentStep] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>('asc');
 
   return (
     <div className="space-y-8">
@@ -47,7 +51,7 @@ export const ComponentGalleryPage: React.FC = () => {
           Eventora UI System & Interaction States
         </h1>
         <p className="text-xs sm:text-sm text-text-muted mt-1 max-w-2xl leading-relaxed">
-          Deep Indigo primary (#4F46E5 / #818CF8), balanced neutral surfaces, 4px grid spacing, 6/10/16 radii, sm/md shadows, and full dark-mode contrast.
+          Deep Indigo primary (#4F46E5 / #818CF8), balanced neutral surfaces, 4px grid spacing, 6/10/16 radii, sm/md/lg shadows, safe-area insets, and full dark-mode AA contrast.
         </p>
       </div>
 
@@ -57,6 +61,7 @@ export const ComponentGalleryPage: React.FC = () => {
           { id: 'matrix', label: 'State Matrix' },
           { id: 'forms', label: 'Inputs & Controls' },
           { id: 'components', label: 'Badges & Buttons' },
+          { id: 'tables', label: 'Tables & Pagination' },
           { id: 'overlays', label: 'Dialogs & QR' },
           { id: 'feedback', label: 'System States' },
         ]}
@@ -64,8 +69,8 @@ export const ComponentGalleryPage: React.FC = () => {
         onChange={setActiveTab}
       />
 
-      {/* Tab: UI State Matrix (Requirement 4: default, hover, focus, active, disabled(+reason), loading, error, success) */}
-      {activeTab === 'matrix' && (
+      {/* Tab: UI State Matrix */}
+      <TabPanel id="matrix" activeTab={activeTab}>
         <div className="space-y-6">
           <Card>
             <CardHeader>
@@ -128,7 +133,7 @@ export const ComponentGalleryPage: React.FC = () => {
 
           <Card>
             <CardHeader>
-              <CardTitle>Workflow Stepper & Offline Indicator</CardTitle>
+              <CardTitle>Workflow Stepper, Skeletons & Offline Indicator</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <Stepper
@@ -160,74 +165,125 @@ export const ComponentGalleryPage: React.FC = () => {
                 </Button>
               </div>
 
+              <div className="pt-3 border-t border-border space-y-2">
+                <p className="text-xs font-semibold text-text">Loading Skeletons (Reduced-Motion Compliant):</p>
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-4 w-1/2" />
+                </div>
+              </div>
+
               <div className="pt-3 border-t border-border">
                 <OfflineBanner isOffline pendingSyncCount={3} />
               </div>
             </CardContent>
           </Card>
         </div>
-      )}
+      </TabPanel>
 
       {/* Tab: Form Controls */}
-      {activeTab === 'forms' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Inputs, Selects, Switches, & Textareas</CardTitle>
-          </CardHeader>
-          <CardContent className="max-w-md space-y-4">
-            <Input
-              label="Student Email Address"
-              required
-              placeholder="student@campus.edu"
-              helperText="Must be an active institution roll identifier."
-            />
+      <TabPanel id="forms" activeTab={activeTab}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Standard Inputs & Form Controls</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                label="Student Email Address"
+                required
+                placeholder="student@campus.edu"
+                helperText="Must be an active institution roll identifier."
+              />
 
-            <DatePicker
-              label="Event Date"
-              required
-            />
+              <DatePicker
+                label="Event Date"
+                required
+              />
 
-            <Select
-              label="Department Affiliation"
-              required
-              options={[
-                { value: 'cs', label: 'Computer Science & Engineering' },
-                { value: 'is', label: 'Information Science & Engineering' },
-                { value: 'ec', label: 'Electronics & Communication' },
-                { value: 'me', label: 'Mechanical Engineering' },
-              ]}
-            />
+              <Select
+                label="Department Affiliation"
+                required
+                options={[
+                  { value: 'cs', label: 'Computer Science & Engineering' },
+                  { value: 'is', label: 'Information Science & Engineering' },
+                  { value: 'ec', label: 'Electronics & Communication' },
+                  { value: 'me', label: 'Mechanical Engineering' },
+                ]}
+              />
 
-            <Textarea
-              label="Event Proposal Abstract"
-              placeholder="Provide a concise 2-sentence summary of the activity..."
-            />
+              <Textarea
+                label="Event Proposal Abstract"
+                placeholder="Provide a concise 2-sentence summary of the activity..."
+                helperText="Maximum 300 characters."
+              />
 
-            <Checkbox
-              label="Public Event Discovery"
-              description="Allow students from other participating colleges to discover and register."
-              checked={checkboxVal}
-              onChange={(e) => setCheckboxVal(e.target.checked)}
-            />
+              <Checkbox
+                label="Public Event Discovery"
+                description="Allow students from other participating colleges to discover and register."
+                checked={checkboxVal}
+                onChange={(e) => setCheckboxVal(e.target.checked)}
+              />
 
-            <Switch
-              label="Automated Waitlist Promotion"
-              description="Automatically dispatch seat offers when confirmed bookings cancel."
-              checked={switchVal}
-              onChange={setSwitchVal}
-            />
+              <Switch
+                label="Automated Waitlist Promotion"
+                description="Automatically dispatch seat offers when confirmed bookings cancel."
+                checked={switchVal}
+                onChange={setSwitchVal}
+              />
+            </CardContent>
+          </Card>
 
-            <Pagination
-              currentPage={currentPage}
-              totalPages={5}
-              onPageChange={setCurrentPage}
-            />
-          </CardContent>
-        </Card>
-      )}
+          <Card>
+            <CardHeader>
+              <CardTitle>Validation & Error States (aria-describedby)</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                label="Required Full Name"
+                required
+                error="Full name cannot be empty."
+                defaultValue=""
+              />
+
+              <Select
+                label="Required College Domain"
+                required
+                error="Please choose an institution domain."
+                options={[
+                  { value: '', label: '-- Select College --' },
+                  { value: 'tech', label: 'Smart Tech Institute' },
+                ]}
+              />
+
+              <Textarea
+                label="Safety Protocols"
+                required
+                error="Safety guidelines must contain at least 20 words."
+                defaultValue="Too short"
+              />
+
+              <Checkbox
+                label="Terms & Code of Conduct"
+                required
+                error="You must agree to the campus safety charter."
+                checked={false}
+                onChange={() => {}}
+              />
+
+              <Switch
+                label="Emergency Broadcast Override"
+                error="Requires verified faculty administrative authorization."
+                checked={false}
+                onChange={() => {}}
+              />
+            </CardContent>
+          </Card>
+        </div>
+      </TabPanel>
 
       {/* Tab: Badges & Buttons */}
-      {activeTab === 'components' && (
+      <TabPanel id="components" activeTab={activeTab}>
         <div className="space-y-6">
           <Card>
             <CardHeader>
@@ -269,18 +325,85 @@ export const ComponentGalleryPage: React.FC = () => {
             </CardContent>
           </Card>
         </div>
-      )}
+      </TabPanel>
+
+      {/* Tab: Tables & Pagination */}
+      <TabPanel id="tables" activeTab={activeTab}>
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Responsive Data Table (Scrollable + Mobile Cards)</CardTitle>
+              <p className="text-xs text-text-muted">
+                Accessible keyboard navigation region, column sort indicators, and mobile-responsive scroll container.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Table aria-label="Campus Event Roster Demo" responsiveCards>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead
+                      sortDirection={sortDir}
+                      onSort={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+                    >
+                      Attendee Name
+                    </TableHead>
+                    <TableHead>College Domain</TableHead>
+                    <TableHead>Ticket Type</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Registered</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell dataLabel="Attendee Name" className="font-medium">Aarav Sharma</TableCell>
+                    <TableCell dataLabel="College Domain">@campus.edu</TableCell>
+                    <TableCell dataLabel="Ticket Type">VIP All-Access</TableCell>
+                    <TableCell dataLabel="Status">
+                      <Badge variant="success" size="sm">CONFIRMED</Badge>
+                    </TableCell>
+                    <TableCell dataLabel="Registered">24 Oct 2026</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell dataLabel="Attendee Name" className="font-medium">Sneha Patel</TableCell>
+                    <TableCell dataLabel="College Domain">@tech.edu</TableCell>
+                    <TableCell dataLabel="Ticket Type">Standard Student</TableCell>
+                    <TableCell dataLabel="Status">
+                      <Badge variant="brand" size="sm">CHECKED_IN</Badge>
+                    </TableCell>
+                    <TableCell dataLabel="Registered">25 Oct 2026</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell dataLabel="Attendee Name" className="font-medium">Rohan Gupta</TableCell>
+                    <TableCell dataLabel="College Domain">@polytechnic.edu</TableCell>
+                    <TableCell dataLabel="Ticket Type">Workshop Pass</TableCell>
+                    <TableCell dataLabel="Status">
+                      <Badge variant="warning" size="sm">WAITLIST</Badge>
+                    </TableCell>
+                    <TableCell dataLabel="Registered">26 Oct 2026</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+
+              <Pagination
+                currentPage={currentPage}
+                totalPages={8}
+                onPageChange={setCurrentPage}
+              />
+            </CardContent>
+          </Card>
+        </div>
+      </TabPanel>
 
       {/* Tab: Overlays & QR */}
-      {activeTab === 'overlays' && (
+      <TabPanel id="overlays" activeTab={activeTab}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
-              <CardTitle>Responsive Dialogs & Bottom Sheets</CardTitle>
+              <CardTitle>Responsive Dialogs, Sheets & Modals</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-xs text-text-muted leading-relaxed">
-                Separate dialog and bottom sheet components with full keyboard focus trap, Esc dismissal, and backdrop handling.
+                Overlays with stable onClose references (no focus stealing on re-renders), body scroll-lock with restore, and non-dismissible variants.
               </p>
 
               <div className="flex flex-wrap gap-3">
@@ -290,8 +413,12 @@ export const ComponentGalleryPage: React.FC = () => {
                 <Button variant="secondary" onClick={() => setIsSheetOpen(true)}>
                   Open Bottom Sheet
                 </Button>
+                <Button variant="outline" onClick={() => setIsNonDismissibleOpen(true)}>
+                  Open Non-Dismissible
+                </Button>
               </div>
 
+              {/* Standard Centered Dialog */}
               <Dialog
                 isOpen={isDialogOpen}
                 onClose={() => setIsDialogOpen(false)}
@@ -302,6 +429,7 @@ export const ComponentGalleryPage: React.FC = () => {
                   <p className="text-xs text-text-muted">
                     This dialog traps keyboard focus between the close button and action buttons until dismissed.
                   </p>
+                  <Input label="Interactive Input (Testing Focus Stability)" placeholder="Type here..." />
                   <div className="flex justify-end gap-2 pt-3 border-t border-border">
                     <Button variant="outline" size="sm" onClick={() => setIsDialogOpen(false)}>
                       Close
@@ -313,6 +441,27 @@ export const ComponentGalleryPage: React.FC = () => {
                 </div>
               </Dialog>
 
+              {/* Non-Dismissible Dialog */}
+              <Dialog
+                isOpen={isNonDismissibleOpen}
+                onClose={() => setIsNonDismissibleOpen(false)}
+                isDismissible={false}
+                title="Critical Action Confirmation"
+                description="This dialog cannot be dismissed by clicking outside or pressing Escape."
+              >
+                <div className="space-y-3">
+                  <p className="text-xs text-text-muted">
+                    Must explicitly choose an action below to proceed.
+                  </p>
+                  <div className="flex justify-end gap-2 pt-3 border-t border-border">
+                    <Button variant="primary" size="sm" onClick={() => setIsNonDismissibleOpen(false)}>
+                      Acknowledge & Dismiss
+                    </Button>
+                  </div>
+                </div>
+              </Dialog>
+
+              {/* Mobile Bottom Sheet */}
               <BottomSheet
                 isOpen={isSheetOpen}
                 onClose={() => setIsSheetOpen(false)}
@@ -348,10 +497,10 @@ export const ComponentGalleryPage: React.FC = () => {
             </CardContent>
           </Card>
         </div>
-      )}
+      </TabPanel>
 
       {/* Tab: System States */}
-      {activeTab === 'feedback' && (
+      <TabPanel id="feedback" activeTab={activeTab}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <EmptyState
             title="No Bookings Yet"
@@ -369,6 +518,7 @@ export const ComponentGalleryPage: React.FC = () => {
           <ErrorState
             title="Connection Interrupted"
             description="Unable to sync live attendance manifest from server. Verify connection or switch to offline scanner."
+            requestId="req-8f92-ae31-77b0-c049d1"
             onRetry={() =>
               toast({
                 type: 'info',
@@ -381,6 +531,7 @@ export const ComponentGalleryPage: React.FC = () => {
           <PermissionDeniedState
             title="Access Denied"
             description="You do not have permission to view or manage this resource under Eventora's server-enforced role policy."
+            actionLabel="Return to Events"
             onAction={() =>
               toast({
                 type: 'warning',
@@ -390,7 +541,7 @@ export const ComponentGalleryPage: React.FC = () => {
             }
           />
         </div>
-      )}
+      </TabPanel>
     </div>
   );
 };

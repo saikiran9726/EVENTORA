@@ -12,6 +12,7 @@ export const ExpiredSessionModal: React.FC<ExpiredSessionModalProps> = ({ isOpen
     <Dialog
       isOpen={isOpen}
       onClose={() => {}}
+      isDismissible={false}
       title="Session Expired"
       description="Your session has expired due to 30 minutes of inactivity or revocation. Please sign in again to continue."
     >

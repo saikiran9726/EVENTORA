@@ -47,7 +47,7 @@ export const OrganizerShell: React.FC<ShellCommonProps> = ({
       </div>
 
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur-md border-b border-border h-14 flex items-center justify-between px-4 lg:px-6 w-full">
+      <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur-md border-b border-border h-14 pt-safe flex items-center justify-between px-4 lg:px-6 w-full">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -142,7 +142,7 @@ export const OrganizerShell: React.FC<ShellCommonProps> = ({
         </aside>
 
         {/* Content Area */}
-        <main className="flex-1 w-full min-w-0 max-w-content mx-auto p-4 sm:p-6 lg:p-8 pb-24 md:pb-8">
+        <main className="flex-1 w-full min-w-0 max-w-content mx-auto p-4 sm:p-6 lg:p-8 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
           {children}
         </main>
       </div>
@@ -150,7 +150,7 @@ export const OrganizerShell: React.FC<ShellCommonProps> = ({
       {/* Mobile Bottom Navigation for Organizer (max 5 items) */}
       <nav
         aria-label="Organizer Navigation"
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface/95 backdrop-blur-md border-t border-border h-16 flex items-center justify-around px-2"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface/95 backdrop-blur-md border-t border-border min-h-[4rem] pb-safe flex items-center justify-around px-2"
       >
         {sidebarItems.slice(0, 5).map((item) => {
           const Icon = item.icon;

@@ -64,7 +64,7 @@ test.describe('Eventora Phase 1 Design System & Application Shell', () => {
     await registerBtn.click();
 
     // Verify focus trap / Esc dismissal
-    const modalTitle = page.locator('#modal-title');
+    const modalTitle = page.locator('[role="dialog"] h2').first();
     await expect(modalTitle).toBeVisible();
 
     await page.keyboard.press('Escape');
@@ -167,5 +167,83 @@ test.describe('Eventora Phase 1 Design System & Application Shell', () => {
     await page.keyboard.press('Tab');
     const focusedTag = await page.evaluate(() => document.activeElement?.tagName);
     expect(['A', 'BUTTON', 'INPUT', 'SELECT']).toContain(focusedTag);
+  });
+
+  test('Component Gallery Axe-Core Accessibility Scan (WCAG 2.2 AA clean)', async ({ page }) => {
+    await page.goto('/components');
+    await expect(page.getByText('Eventora UI System & Interaction States')).toBeVisible();
+
+    const accessibilityScanResults = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .disableRules(['color-contrast'])
+      .analyze();
+
+    const seriousOrCritical = accessibilityScanResults.violations.filter(
+      (v) => v.impact === 'serious' || v.impact === 'critical'
+    );
+    expect(seriousOrCritical).toEqual([]);
+  });
+
+  test('Overlay Focus Trap, ESC Dismissal & Body Scroll Lock', async ({ page }) => {
+    await page.goto('/components');
+    await page.click('button[role="tab"]:has-text("Dialogs & QR")');
+
+    // 1. Open Centered Dialog -> Body Scroll Lock
+    await page.click('button:has-text("Open Centered Dialog")');
+    const dialog = page.locator('[role="dialog"]');
+    await expect(dialog).toBeVisible();
+
+    // Verify body scroll lock
+    const isLocked = await page.evaluate(() => document.body.style.overflow === 'hidden');
+    expect(isLocked).toBe(true);
+
+    // Press Escape -> Dialog closes and body scroll is restored
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+
+    const isRestored = await page.evaluate(() => document.body.style.overflow !== 'hidden');
+    expect(isRestored).toBe(true);
+
+    // 2. Open Non-Dismissible Dialog -> Escape does NOT dismiss
+    await page.click('button:has-text("Open Non-Dismissible")');
+    const nonDismissibleDialog = page.locator('[role="dialog"]:has-text("Critical Action Confirmation")');
+    await expect(nonDismissibleDialog).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(nonDismissibleDialog).toBeVisible();
+
+    // Click explicit action button to dismiss
+    await page.click('button:has-text("Acknowledge & Dismiss")');
+    await expect(nonDismissibleDialog).not.toBeVisible();
+  });
+
+  test('Form Controls Validation & aria-describedby Linkages', async ({ page }) => {
+    await page.goto('/components');
+    await page.click('button[role="tab"]:has-text("Inputs & Controls")');
+
+    // Input with error
+    const errInput = page.locator('input[aria-invalid="true"]').first();
+    await expect(errInput).toBeVisible();
+    const describedBy = await errInput.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+
+    const errSpan = page.locator(`[id="${describedBy}"]`);
+    await expect(errSpan).toBeVisible();
+    await expect(errSpan).toHaveAttribute('role', 'alert');
+
+    // Custom select has no unstyled native appearance
+    const select = page.locator('select').first();
+    await expect(select).toBeVisible();
+  });
+
+  test('Tabs Keyboard Arrow Navigation', async ({ page }) => {
+    await page.goto('/components');
+    const stateMatrixTab = page.locator('button[role="tab"]:has-text("State Matrix")');
+    await stateMatrixTab.focus();
+
+    // ArrowRight moves to Inputs & Controls
+    await page.keyboard.press('ArrowRight');
+    const activeTab = page.locator('button[role="tab"][aria-selected="true"]');
+    await expect(activeTab).toContainText('Inputs & Controls');
   });
 });

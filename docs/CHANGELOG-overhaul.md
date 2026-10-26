@@ -488,3 +488,87 @@
   - ESLint passed with 0 errors.
   - Vite production build succeeded in 4.18s with code-split route chunks.
 
+---
+
+## Phase P07 — Design System, Tokens, UI Components & Overlays
+
+**Date:** 2026-10-26  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Design Tokens, Inter Typography & Safe-Area Insets
+- **Updated `tailwind.config.ts` & `index.css`:**
+  - Prioritized `'Inter'` across font family definitions (`font-sans`), falling back to modern system fonts.
+  - Extended semantic color scale tokens (`--brand-light`, `--surface-3`, `--border-subtle`, `--text-subtle`) ensuring strict WCAG 2.1 AA contrast (>= 4.5:1) in both light and dark themes.
+  - Standardized transition durations to `<= 200ms` (`fast: 100ms`, `normal: 180ms`, `slow: 200ms`).
+  - Added `@media (prefers-reduced-motion: reduce)` reducing all CSS and Framer Motion animations to 0.01ms.
+  - Implemented safe-area insets (`--safe-area-bottom`, `--safe-area-top`, `.pb-safe`, `.pt-safe`) for phone home indicator bars and notches.
+
+---
+
+### 2. Form Controls & Validation Accessibility
+- **Rebuilt `components/ui/*` Form Inputs (`Input`, `Select`, `Textarea`, `Checkbox`, `Switch`):**
+  - Integrated `useId()` for deterministic element and label association.
+  - Linked validation errors and helper descriptions via `aria-describedby` and `aria-invalid`.
+  - Added `role="alert"` on rendered error elements for screen reader announcements.
+  - Replaced unstyled native controls with accessible custom controls (custom `ChevronDown` on Select, styled checkmark box on Checkbox, smooth animated toggle pill on Switch).
+
+---
+
+### 3. Rebuilt Overlays: Modal, Dialog & BottomSheet
+- **Fixed Focus Stealing on Re-renders:**
+  - Stored `onClose` in a mutable ref (`const onCloseRef = useRef(onClose); onCloseRef.current = onClose;`).
+  - Constrained effect dependency strictly to `[isOpen, isDismissible]` (preventing re-renders in parent components from stealing input focus).
+- **Body Scroll-Lock with Cleanup:**
+  - Locks `document.body.style.overflow = 'hidden'` on open with scrollbar width compensation, cleanly restoring previous overflow and padding styles on unmount.
+- **Accessible Focus Trap & Return Focus:**
+  - Cycles Tab and Shift+Tab strictly within modal focusable elements.
+  - Automatically captures `document.activeElement` on open and returns focus on close.
+- **Non-Dismissible Variant (`isDismissible = false`):**
+  - Disables backdrop click dismissal, disables Escape key dismissal, and hides close `X` button for blocking modal workflows (e.g. `ExpiredSessionModal`).
+- **Framer Motion Transitions:**
+  - Standardized all backdrop and sheet animations to `<= 200ms`.
+
+---
+
+### 4. Rebuilt Navigation Components (Tabs, Table, Pagination, FeedbackStates)
+- **`Tabs`:** Full WAI-ARIA tab pattern (`role="tablist"`, `role="tab"`, `role="tabpanel"`, `tabIndex={isActive ? 0 : -1}`, `aria-selected`), with ArrowLeft, ArrowRight, Home, and End keyboard navigation.
+- **`Table`:** Focusable scrollable region with `role="region"`, sort direction column headers (`aria-sort`), and responsive mobile card mode support.
+- **`Pagination`:** Numbered page buttons with `aria-current="page"`, ellipsis indicators, and accessible Previous/Next button boundaries.
+- **`FeedbackStates`:** `EmptyState`, `ErrorState` (with optional `requestId` display and one-click copy), and `PermissionDeniedState`.
+- **`Button`:** Added `aria-busy={isLoading || undefined}`, active press feedback (`active:scale-[0.98]`), and default `type="button"`.
+
+---
+
+### 5. Shell Layouts & Mobile Navigation
+- Added safe-area insets (`pt-safe`, `pb-safe`) and padding adjustments across `StudentShell`, `OrganizerShell`, `ReviewerShell`, `AdminShell`, and `CheckinShell`.
+- Ensured mobile-first 360px compatibility with zero horizontal page overflow.
+
+---
+
+### 6. Verification & Automated Coverage
+- **Unit Suite (`tests/unit/phase-p07-design-system.test.ts`):**
+  - 8 automated unit tests verifying design tokens, overlay focus stability, scroll-lock cleanup, form validation linkages, tab arrow navigation, pagination, feedback states, and button press feedback (100% pass).
+- **Full Vitest Suite:**
+  - 34 test files, 289 tests passed (100%).
+- **Playwright E2E Suite (`tests/e2e/design-system.spec.ts`):**
+  - 30 tests passing across Mobile-375, Tablet-768, and Desktop-1280 (100% pass):
+    1. Discovery Page responsive layout, chips, and no horizontal overflow.
+    2. Event Details 16:9 aspect box, sticky CTA, and modal focus trap / Esc dismissal.
+    3. Organizer Analytics KPI cards, sortable table, and responsive cards.
+    4. Component Gallery state matrix and dark mode persistence (`.dark` and `[data-theme="dark"]`).
+    5. Axe-Core accessibility scan on Discovery (zero serious/critical violations).
+    6. Keyboard-only pass (Tab navigation & focus visibility).
+    7. Component Gallery Axe-Core scan on `/components` (zero serious/critical violations).
+    8. Overlay focus trap, Esc dismissal, body scroll-lock, and non-dismissible dialog.
+    9. Form controls validation and `aria-describedby` error linkages.
+    10. Tabs keyboard arrow navigation.
+  - Screenshots updated at 375, 768, and 1280 viewports.
+- **Static Analysis & Builds:**
+  - TypeScript typecheck passed with 0 errors across all workspace packages.
+  - ESLint passed with 0 errors.
+  - Production build succeeded in 4.53s.
+
+

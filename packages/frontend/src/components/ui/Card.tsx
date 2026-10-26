@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 
 export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   variant?: 'surface' | 'surface-2';
-  elevation?: 'none' | 'sm' | 'md';
+  elevation?: 'none' | 'sm' | 'md' | 'lg';
 }
 
 export const Card: React.FC<CardProps> = ({
@@ -22,12 +22,13 @@ export const Card: React.FC<CardProps> = ({
     none: '',
     sm: 'shadow-sm',
     md: 'shadow-md',
+    lg: 'shadow-lg',
   };
 
   return (
     <div
       className={cn(
-        'rounded-md border border-border p-4 transition-all duration-normal ease-eventora',
+        'rounded-md border border-border p-4 sm:p-5 transition-all duration-normal ease-eventora min-w-0 w-full',
         variants[variant],
         elevations[elevation],
         className
@@ -54,7 +55,7 @@ export const CardTitle: React.FC<React.HTMLAttributes<HTMLHeadingElement>> = ({
   children,
   ...props
 }) => (
-  <h3 className={cn('text-base font-semibold leading-none tracking-tight text-text', className)} {...props}>
+  <h3 className={cn('text-base sm:text-lg font-semibold leading-none tracking-tight text-text', className)} {...props}>
     {children}
   </h3>
 );
@@ -64,7 +65,7 @@ export const CardDescription: React.FC<React.HTMLAttributes<HTMLParagraphElement
   children,
   ...props
 }) => (
-  <p className={cn('text-xs text-text-muted mt-1', className)} {...props}>
+  <p className={cn('text-xs sm:text-sm text-text-muted mt-1 leading-relaxed', className)} {...props}>
     {children}
   </p>
 );
@@ -74,7 +75,7 @@ export const CardContent: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   children,
   ...props
 }) => (
-  <div className={cn('pt-0', className)} {...props}>
+  <div className={cn('pt-0 min-w-0', className)} {...props}>
     {children}
   </div>
 );

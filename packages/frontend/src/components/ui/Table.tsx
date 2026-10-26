@@ -2,13 +2,22 @@ import React from 'react';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export const Table: React.FC<React.TableHTMLAttributes<HTMLTableElement>> = ({
+export interface TableProps extends React.TableHTMLAttributes<HTMLTableElement> {
+  'aria-label'?: string;
+  responsiveCards?: boolean;
+}
+
+export const Table: React.FC<TableProps> = ({
   className,
   'aria-label': ariaLabel,
+  responsiveCards = false,
   ...props
 }) => (
   <div
-    className="w-full overflow-x-auto focus:outline-none focus:ring-1 focus:ring-brand rounded-md"
+    className={cn(
+      'w-full overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded-md border border-border bg-surface',
+      responsiveCards && 'mobile-card-table'
+    )}
     tabIndex={0}
     role="region"
     aria-label={ariaLabel || 'Data table scrollable region'}
@@ -23,7 +32,7 @@ export const TableHeader: React.FC<React.HTMLAttributes<HTMLTableSectionElement>
 }) => (
   <thead
     className={cn(
-      'sticky top-0 z-10 bg-surface-2 border-b border-border text-xs text-text-muted font-semibold uppercase tracking-wider',
+      'bg-surface-2 border-b border-border text-xs text-text-muted font-semibold uppercase tracking-wider',
       className
     )}
     {...props}
@@ -41,7 +50,7 @@ export const TableRow: React.FC<React.HTMLAttributes<HTMLTableRowElement>> = ({
   className,
   ...props
 }) => (
-  <tr className={cn('hover:bg-surface-2/50 transition-colors duration-fast', className)} {...props} />
+  <tr className={cn('hover:bg-surface-2/60 transition-colors duration-fast', className)} {...props} />
 );
 
 export interface SortableTableHeadProps extends React.ThHTMLAttributes<HTMLTableCellElement> {
@@ -58,8 +67,27 @@ export const TableHead: React.FC<SortableTableHeadProps> = ({
 }) => {
   return (
     <th
-      className={cn('py-3 px-4 font-semibold text-text align-middle', onSort && 'cursor-pointer select-none', className)}
+      scope="col"
+      className={cn(
+        'py-3 px-4 font-semibold text-text align-middle select-none',
+        onSort && 'cursor-pointer hover:text-brand',
+        className
+      )}
       onClick={onSort}
+      onKeyDown={(e) => {
+        if (onSort && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onSort();
+        }
+      }}
+      tabIndex={onSort ? 0 : undefined}
+      aria-sort={
+        sortDirection === 'asc'
+          ? 'ascending'
+          : sortDirection === 'desc'
+            ? 'descending'
+            : undefined
+      }
       {...props}
     >
       <div className="flex items-center gap-1.5">
@@ -67,11 +95,11 @@ export const TableHead: React.FC<SortableTableHeadProps> = ({
         {onSort && (
           <span className="text-text-muted">
             {sortDirection === 'asc' ? (
-              <ArrowUp className="w-3.5 h-3.5 text-brand" />
+              <ArrowUp className="w-3.5 h-3.5 text-brand" aria-label="Sorted ascending" />
             ) : sortDirection === 'desc' ? (
-              <ArrowDown className="w-3.5 h-3.5 text-brand" />
+              <ArrowDown className="w-3.5 h-3.5 text-brand" aria-label="Sorted descending" />
             ) : (
-              <ArrowUpDown className="w-3.5 h-3.5 opacity-40 hover:opacity-100" />
+              <ArrowUpDown className="w-3.5 h-3.5 opacity-40 hover:opacity-100" aria-label="Sort column" />
             )}
           </span>
         )}
@@ -80,9 +108,21 @@ export const TableHead: React.FC<SortableTableHeadProps> = ({
   );
 };
 
-export const TableCell: React.FC<React.TdHTMLAttributes<HTMLTableCellElement>> = ({
+export interface TableCellProps extends React.TdHTMLAttributes<HTMLTableCellElement> {
+  dataLabel?: string;
+}
+
+export const TableCell: React.FC<TableCellProps> = ({
   className,
+  dataLabel,
+  children,
   ...props
 }) => (
-  <td className={cn('py-3 px-4 text-text align-middle', className)} {...props} />
+  <td
+    data-label={dataLabel}
+    className={cn('py-3 px-4 text-text align-middle', className)}
+    {...props}
+  >
+    {children}
+  </td>
 );

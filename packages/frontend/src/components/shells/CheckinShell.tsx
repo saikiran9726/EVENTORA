@@ -22,7 +22,7 @@ export const CheckinShell: React.FC<ShellCommonProps> = ({
       </div>
 
       {/* Dedicated Scanner-First Header */}
-      <header className="sticky top-0 z-40 bg-surface/95 backdrop-blur-md border-b border-border h-14 flex items-center justify-between px-4 w-full">
+      <header className="sticky top-0 z-40 bg-surface/95 backdrop-blur-md border-b border-border h-14 pt-safe flex items-center justify-between px-4 w-full">
         <div className="flex items-center gap-2">
           <button
             onClick={() => onRouteChange('discover')}
@@ -63,7 +63,7 @@ export const CheckinShell: React.FC<ShellCommonProps> = ({
       </header>
 
       {/* Full-screen Scanner Viewport */}
-      <main className="flex-1 w-full max-w-content mx-auto p-4 flex flex-col justify-center">
+      <main className="flex-1 w-full max-w-content mx-auto p-4 pb-safe flex flex-col justify-center">
         {children}
       </main>
     </div>
