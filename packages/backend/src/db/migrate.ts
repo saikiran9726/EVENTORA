@@ -1305,7 +1305,8 @@ export async function runMigrations() {
         (13, 'Phase 13: Active Solo Booking Partial Unique Index & Hold Reconciliation'),
         (14, 'Phase 14: Event Status History System Actor, Completion Index & Scan Outcome'),
         (15, 'Phase 15: Event Pricing Type, Currency & Tier Backfill'),
-        (16, 'Phase 16: Custom Registration Form Builder & Versioned Fields')
+        (16, 'Phase 16: Custom Registration Form Builder & Versioned Fields'),
+        (17, 'Phase 17: YouPI-PG Payments Core, Webhook V2 & Audit Trail')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1400,6 +1401,81 @@ export async function runMigrations() {
 
       CREATE INDEX IF NOT EXISTS idx_registration_answers_booking ON registration_answers(booking_id);
       CREATE INDEX IF NOT EXISTS idx_registration_answers_field ON registration_answers(field_id);
+
+      -- Phase 17: YouPI-PG Payments Core, Webhook V2 & Audit Trail
+      ALTER TYPE payment_status ADD VALUE IF NOT EXISTS 'QUEUED';
+      ALTER TYPE payment_status ADD VALUE IF NOT EXISTS 'VERIFICATION_QUEUE';
+      ALTER TYPE payment_status ADD VALUE IF NOT EXISTS 'SUCCESS';
+      ALTER TYPE payment_status ADD VALUE IF NOT EXISTS 'EXPIRED';
+      ALTER TYPE payment_status ADD VALUE IF NOT EXISTS 'CANCELLED';
+
+      ALTER TYPE refund_status ADD VALUE IF NOT EXISTS 'REFUND_PENDING_MANUAL';
+
+      ALTER TABLE payments ADD COLUMN IF NOT EXISTS utr VARCHAR(50);
+      ALTER TABLE payments ADD COLUMN IF NOT EXISTS slot_active BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE payments ADD COLUMN IF NOT EXISTS queue_position INT;
+      ALTER TABLE payments ADD COLUMN IF NOT EXISTS checkout_url TEXT;
+      ALTER TABLE payments ADD COLUMN IF NOT EXISTS verification_queue_reason TEXT;
+      ALTER TABLE payments ADD COLUMN IF NOT EXISTS manual_reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE payments ADD COLUMN IF NOT EXISTS manual_reviewed_at TIMESTAMPTZ;
+      ALTER TABLE payments ADD COLUMN IF NOT EXISTS raw_webhook_payload JSONB;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_utr ON payments(utr) WHERE utr IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_payments_status_provider ON payments(status, provider);
+
+      CREATE TABLE IF NOT EXISTS payment_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+        event_type VARCHAR(100) NOT NULL,
+        from_status VARCHAR(50),
+        to_status VARCHAR(50) NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_payment_events_payment_id ON payment_events(payment_id);
+
+      CREATE TABLE IF NOT EXISTS webhook_deliveries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        delivery_id VARCHAR(255) NOT NULL UNIQUE,
+        provider VARCHAR(50) NOT NULL DEFAULT 'youpi',
+        event_type VARCHAR(100) NOT NULL,
+        status VARCHAR(50) NOT NULL DEFAULT 'RECEIVED',
+        attempts INT NOT NULL DEFAULT 1,
+        last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        error_message TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_delivery_id ON webhook_deliveries(delivery_id);
+
+      ALTER TABLE refunds ADD COLUMN IF NOT EXISTS refund_utr VARCHAR(50);
+      ALTER TABLE refunds ADD COLUMN IF NOT EXISTS manual_processed_at TIMESTAMPTZ;
+      ALTER TABLE refunds ADD COLUMN IF NOT EXISTS manual_notes TEXT;
+
+      CREATE TABLE IF NOT EXISTS reconciliation_records (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        batch_id VARCHAR(100) NOT NULL UNIQUE,
+        imported_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        filename VARCHAR(255) NOT NULL,
+        total_rows INT NOT NULL DEFAULT 0,
+        matched_count INT NOT NULL DEFAULT 0,
+        unmatched_count INT NOT NULL DEFAULT 0,
+        status VARCHAR(50) NOT NULL DEFAULT 'COMPLETED',
+        imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS reconciliation_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        record_id UUID NOT NULL REFERENCES reconciliation_records(id) ON DELETE CASCADE,
+        utr VARCHAR(50) NOT NULL,
+        amount_paise INT NOT NULL,
+        txn_date TIMESTAMPTZ NOT NULL,
+        matched_payment_id UUID REFERENCES payments(id) ON DELETE SET NULL,
+        status VARCHAR(50) NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_reconciliation_items_utr ON reconciliation_items(utr);
+      CREATE INDEX IF NOT EXISTS idx_reconciliation_items_record_id ON reconciliation_items(record_id);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

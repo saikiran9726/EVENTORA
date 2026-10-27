@@ -873,3 +873,72 @@
 - **Unit & Integration Suite (`tests/unit/phase-p11-form-builder.test.ts`):** 25 automated tests covering HTML stripping, 1000 char limit, required rules, option membership, dietary defaults, safe regex, ReDoS protection, log redaction, optimistic locking (409), frozen form guard (400), unknown field rejection, multi-ticket answer persistence, and organizer-only submissions access. All 25 passed.
 - **Playwright E2E Suite (`tests/e2e/phase-p11-custom-form.spec.ts`):** E2E test verifying organizer form design, live preview, save, and submission inspection.
 - **Typecheck:** Passed with 0 errors across `@eventora/shared`, `@eventora/backend`, and `@eventora/frontend`.
+
+
+---
+
+## [Phase P12] - 2026-10-27: Payments Core: YouPI-PG Integration & Security Hardening
+
+### 1. Database Schema & Migration 17
+- **Additive Migration 17 (`packages/backend/src/db/migrate.ts`):**
+  - Updated enum `payment_status` to support `QUEUED` and `VERIFICATION_QUEUE`.
+  - Updated enum `refund_status` to support `REFUND_PENDING_MANUAL`.
+  - Added columns to `payments`: `utr` (VARCHAR 12, unique constraint), `slot_active` (BOOLEAN), `queue_position` (INTEGER), `checkout_url` (TEXT), `verification_queue_reason` (TEXT), `manual_reviewed_by` (UUID fk users), `manual_reviewed_at` (TIMESTAMPTZ), `raw_webhook_payload` (JSONB).
+  - Created tables:
+    - `payment_events`: Immutable audit trail for payment state changes (`payment_id`, `from_status`, `to_status`, `event_type`, `payload`, `actor_user_id`, `actor_role`).
+    - `webhook_deliveries`: Deduplication log for inbound gateway webhook delivery IDs (`delivery_id`, `provider`, `event_type`, `processed_at`, `payload`).
+    - `reconciliation_records`: Master records for bank statement imports and YouPI reconciliations (`source`, `imported_by`, `total_rows`, `matched_count`, `unmatched_count`, `discrepancy_count`).
+    - `reconciliation_items`: Granular matching line items (`record_id`, `payment_id`, `utr`, `amount_paise`, `status`, `discrepancy_reason`).
+  - Added columns to `refunds`: `refund_utr` (VARCHAR 12), `manual_processed_at` (TIMESTAMPTZ), `manual_notes` (TEXT).
+- **Rollback Migration (`packages/backend/src/db/migrate-down.ts`):**
+  - Reversible down-migration 17 $\to$ 16 dropping added tables and columns with clean schema rollback tested and verified.
+- **ORM & TypeScript Schema (`packages/backend/src/db/schema.ts`):**
+  - Synchronized Drizzle schema definitions, relations, and TypeScript interfaces for all new tables and columns.
+
+### 2. Payment Adapter Layer & Architecture
+- **Adapter Interface (`packages/backend/src/services/payment-adapter.ts`):**
+  - `PaymentAdapter` contract: `createOrder(params)`, `getStatus(orderId)`, `verifyWebhook(payload, signature, headers, rawBody)`, `createRefund(params)`.
+  - `YouPiPaymentAdapter`: Fully integrates with external YouPI-PG gateway endpoints (`POST /api/v1/payments`, `GET /api/v1/payments/:id`), signs and verifies HMAC-SHA256 V2/V1 webhooks.
+  - `SimulatorPaymentAdapter`: Maintained for non-production environments with strict production lockdown.
+- **Startup Guard (`packages/backend/src/services/startup-guard.ts`):**
+  - Updated to validate `PAYMENT_PROVIDER` (`youpi` | `simulator` | `sandbox`) and ensure all monetary calculations strictly compute in integer paise from stored rows.
+
+### 3. Fake YouPI Gateway Server for Automated Testing
+- **Implementation (`tests/fakes/youpi-server.ts`):**
+  - High-fidelity mock server simulating YouPI Payment API (:6100), Checkout UI (:7000), single-slot FIFO queue processing, simulated manual/instant settlements, and HMAC-SHA256 signed webhooks (`X-Gateway-Signature-V2` with `${timestamp}.${rawBody}` and V1 fallback).
+
+### 4. Webhook Security & Order Lifecycle
+- **Endpoints:** Root `POST /webhooks/payments/youpi` and versioned `POST /api/v1/webhooks/payments/youpi`.
+- **Raw Buffer Handling:** Utilizes Fastify `addContentTypeParser` ensuring `req.rawBody` Buffer integrity without lossy re-serialization.
+- **HMAC Verification:** Constant-time `crypto.timingSafeEqual` comparison against `YOUPI_WEBHOOK_SECRET` over `${timestamp}.${rawBody}` (V2) with V1 fallback.
+- **Replay Protection:** Enforces 2-hour freshness window based on `X-Gateway-Timestamp`.
+- **Deduplication:** Idempotent delivery tracking via `webhook_deliveries` using `X-Gateway-Delivery-Id`.
+- **Settlement Verification:** Validates `SUCCESS` status, order ID, exact integer paise amount match, unique 12-digit UTR, and double-checks gateway status API before confirming booking. State mismatches safely divert to `VERIFICATION_QUEUE`.
+- **Error Handling:** Gateway processing errors return 5xx to prompt YouPI's built-in retry backoff.
+
+### 5. Single-Slot Queue, Hold Extension & Throughput Limits
+- When a buyer's payment slot activates in YouPI, seat hold timer is automatically extended by 5 minutes (capped at 30 minutes from booking creation).
+- Configurable `YOUPI_DAILY_LIMIT` (default 20 transactions/day) enforced on adapter level.
+- Throughput status endpoint `GET /api/v1/payments/throughput` reports capacity and queue advisories.
+
+### 6. Offline Manual Refunds & Anti-Self-Dealing
+- Modeled as `REFUND_PENDING_MANUAL` because YouPI direct peer-to-peer UPI does not support automated wallet/API refunds.
+- Organizers perform bank transfer and record 12-digit UTR via `POST /api/v1/organizer/refunds/:id/record-manual`.
+- Checked-in ticket protection: Revocation and refunds blocked if any ticket in the booking has already been used for check-in.
+- Anti-self-dealing guard: Organizers cannot approve, reject, or decide refunds requested by their own user account.
+
+### 7. Bank Statement CSV Reconciliation
+- **Service (`packages/backend/src/services/reconciliation.ts`):**
+  - Dynamic CSV parser (`parseBankStatementCsv`) supporting variable column headers (`Date`, `UTR`, `Amount`, `Description`).
+  - Auto-matching against database payments by UTR and exact paise amount. Flags unmatched rows and amount discrepancies.
+  - Daily reconciliation runner `runDailyYouPiReconciliation` querying YouPI status.
+  - Endpoints: `POST /api/v1/admin/reconciliation/import-csv` and `GET /api/v1/admin/reconciliation/reports`.
+
+### 8. Deployment Documentation
+- `docs/youpi-deploy.md`: Architectural documentation for deploying YouPI-PG alongside Eventora, Node $\ge 22.13$, Litestream SQLite backups, port isolation (6100 private, 7000 public, 6001 admin), UPI observer handset sync, and failover procedures.
+
+### 9. Verification & Quality Gate
+- **Test Suite (`tests/unit/phase-p12-payments-youpi.test.ts`):** 19 dedicated integration tests passing 100%.
+- **IDOR Matrix (`tests/security/idor-matrix.test.ts`):** Anti-self-dealing refund check verified passing (12/12 tests).
+- **Monorepo Test Suite (`pnpm test`):** 388/388 tests passing across 39 files.
+- **Typecheck & Lint:** 0 TypeScript errors, 0 ESLint errors across shared, backend, and frontend.

@@ -4,7 +4,7 @@
  */
 export function verifyPaymentStartupGuard() {
   const env = process.env.NODE_ENV || 'development';
-  const adapter = process.env.PAYMENT_ADAPTER || 'simulator';
+  const adapter = process.env.PAYMENT_PROVIDER || process.env.PAYMENT_ADAPTER || 'simulator';
 
   // Dangerous live keys patterns
   const liveKeyPatterns = [
@@ -24,12 +24,12 @@ export function verifyPaymentStartupGuard() {
       }
     }
 
-    if (adapter !== 'simulator' && adapter !== 'sandbox') {
+    if (adapter !== 'simulator' && adapter !== 'sandbox' && adapter !== 'youpi') {
       throw new Error(
-        `[FATAL STARTUP GUARD] Invalid PAYMENT_ADAPTER="${adapter}". Must be "simulator" or "sandbox".`
+        `[FATAL STARTUP GUARD] Invalid PAYMENT_ADAPTER="${adapter}". Must be "youpi", "simulator" or "sandbox".`
       );
     }
   }
 
-  console.log(`[Payment Startup Guard] Passed. Adapter: "${adapter}" (test mode only; all money simulated integer paise).`);
+  console.log(`[Payment Startup Guard] Passed. Adapter: "${adapter}" (all money integer paise).`);
 }

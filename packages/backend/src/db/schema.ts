@@ -116,8 +116,13 @@ export const teamMemberStatusEnum = pgEnum('team_member_status', [
 export const paymentStatusEnum = pgEnum('payment_status', [
   'CREATED',
   'PENDING',
+  'QUEUED',
+  'VERIFICATION_QUEUE',
+  'SUCCESS',
   'SUCCEEDED',
   'FAILED',
+  'EXPIRED',
+  'CANCELLED',
   'REFUND_PENDING',
   'REFUNDED',
 ]);
@@ -136,6 +141,7 @@ export const refundStatusEnum = pgEnum('refund_status', [
   'PROCESSING',
   'SUCCEEDED',
   'FAILED',
+  'REFUND_PENDING_MANUAL',
 ]);
 
 export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', ['SALE', 'REFUND']);
@@ -861,20 +867,28 @@ export const cancellations = pgTable('cancellations', {
   at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
 });
 
-// 32. Payments (Phase 5 - Paid Ticketing & Simulator)
+// 32. Payments (Phase 5 - Paid Ticketing & Phase 17 YouPI-PG)
 export const payments = pgTable('payments', {
   id: uuid('id').defaultRandom().primaryKey(),
   bookingId: uuid('booking_id')
     .references(() => bookings.id, { onDelete: 'cascade' })
     .notNull(),
-  provider: varchar('provider', { length: 50 }).default('simulator').notNull(),
+  provider: varchar('provider', { length: 50 }).default('youpi').notNull(),
   providerOrderId: varchar('provider_order_id', { length: 255 }).notNull().unique(),
   providerPaymentId: varchar('provider_payment_id', { length: 255 }).unique(),
   amountPaise: integer('amount_paise').notNull(),
   currency: varchar('currency', { length: 10 }).default('INR').notNull(),
-  status: paymentStatusEnum('status').default('CREATED').notNull(),
+  status: paymentStatusEnum('status').default('PENDING').notNull(),
   failureCode: varchar('failure_code', { length: 100 }),
-  isSimulated: boolean('is_simulated').default(true).notNull(),
+  isSimulated: boolean('is_simulated').default(false).notNull(),
+  utr: varchar('utr', { length: 50 }).unique(),
+  slotActive: boolean('slot_active').default(false).notNull(),
+  queuePosition: integer('queue_position'),
+  checkoutUrl: text('checkout_url'),
+  verificationQueueReason: text('verification_queue_reason'),
+  manualReviewedBy: uuid('manual_reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+  manualReviewedAt: timestamp('manual_reviewed_at', { withTimezone: true }),
+  rawWebhookPayload: jsonb('raw_webhook_payload'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -890,7 +904,7 @@ export const paymentAttempts = pgTable('payment_attempts', {
   at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
 });
 
-// 34. Webhook Events
+// 34. Webhook Events (Legacy & Generic)
 export const webhookEvents = pgTable('webhook_events', {
   providerEventId: varchar('provider_event_id', { length: 255 }).primaryKey(),
   provider: varchar('provider', { length: 50 }).notNull(),
@@ -900,6 +914,33 @@ export const webhookEvents = pgTable('webhook_events', {
   processedAt: timestamp('processed_at', { withTimezone: true }),
   processingStatus: webhookProcessingStatusEnum('processing_status').default('RECEIVED').notNull(),
   payloadHash: bytea('payload_hash').notNull(),
+});
+
+// Phase 17: Payment Events Audit Trail
+export const paymentEvents = pgTable('payment_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  paymentId: uuid('payment_id')
+    .references(() => payments.id, { onDelete: 'cascade' })
+    .notNull(),
+  eventType: varchar('event_type', { length: 100 }).notNull(),
+  fromStatus: varchar('from_status', { length: 50 }),
+  toStatus: varchar('to_status', { length: 50 }).notNull(),
+  payload: jsonb('payload').default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// Phase 17: Webhook Deliveries (Deduplication on X-Gateway-Delivery-Id)
+export const webhookDeliveries = pgTable('webhook_deliveries', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  deliveryId: varchar('delivery_id', { length: 255 }).notNull().unique(),
+  provider: varchar('provider', { length: 50 }).default('youpi').notNull(),
+  eventType: varchar('event_type', { length: 100 }).notNull(),
+  status: varchar('status', { length: 50 }).default('RECEIVED').notNull(),
+  attempts: integer('attempts').default(1).notNull(),
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }).defaultNow().notNull(),
+  errorMessage: text('error_message'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 // 35. Refunds
@@ -915,6 +956,36 @@ export const refunds = pgTable('refunds', {
     .references(() => users.id, { onDelete: 'restrict' }),
   decidedBy: uuid('decided_by').references(() => users.id, { onDelete: 'set null' }),
   idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull().unique(),
+  refundUtr: varchar('refund_utr', { length: 50 }),
+  manualProcessedAt: timestamp('manual_processed_at', { withTimezone: true }),
+  manualNotes: text('manual_notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// Phase 17: Reconciliation Records & Items
+export const reconciliationRecords = pgTable('reconciliation_records', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  batchId: varchar('batch_id', { length: 100 }).notNull().unique(),
+  importedBy: uuid('imported_by').references(() => users.id, { onDelete: 'set null' }),
+  filename: varchar('filename', { length: 255 }).notNull(),
+  totalRows: integer('total_rows').default(0).notNull(),
+  matchedCount: integer('matched_count').default(0).notNull(),
+  unmatchedCount: integer('unmatched_count').default(0).notNull(),
+  status: varchar('status', { length: 50 }).default('COMPLETED').notNull(),
+  importedAt: timestamp('imported_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const reconciliationItems = pgTable('reconciliation_items', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  recordId: uuid('record_id')
+    .references(() => reconciliationRecords.id, { onDelete: 'cascade' })
+    .notNull(),
+  utr: varchar('utr', { length: 50 }).notNull(),
+  amountPaise: integer('amount_paise').notNull(),
+  txnDate: timestamp('txn_date', { withTimezone: true }).notNull(),
+  matchedPaymentId: uuid('matched_payment_id').references(() => payments.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 50 }).notNull(),
+  details: jsonb('details').default({}).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -1749,4 +1820,14 @@ export const schemaMigrations = pgTable('schema_migrations', {
 export type OpsRun = typeof opsRuns.$inferSelect;
 export type NewOpsRun = typeof opsRuns.$inferInsert;
 export type SchemaMigration = typeof schemaMigrations.$inferSelect;
+
+export type Payment = typeof payments.$inferSelect;
+export type NewPayment = typeof payments.$inferInsert;
+export type PaymentStatus = typeof paymentStatusEnum.enumValues[number];
+export type PaymentEvent = typeof paymentEvents.$inferSelect;
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
+export type Refund = typeof refunds.$inferSelect;
+export type RefundStatus = typeof refundStatusEnum.enumValues[number];
+export type ReconciliationRecord = typeof reconciliationRecords.$inferSelect;
+export type ReconciliationItem = typeof reconciliationItems.$inferSelect;
 

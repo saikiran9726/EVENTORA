@@ -12,7 +12,7 @@ import { venueRoutes } from './routes/api/v1/venues.js';
 import { calendarRoutes } from './routes/api/v1/calendar.js';
 import { bookingRoutes } from './routes/api/v1/bookings.js';
 import { teamRoutes } from './routes/api/v1/teams.js';
-import { paymentRoutes } from './routes/api/v1/payments.js';
+import { paymentRoutes, handleYouPiWebhookRoute } from './routes/api/v1/payments.js';
 import { ticketRoutes } from './routes/api/v1/tickets.js';
 import { feedbackRoutes } from './routes/api/v1/feedback.js';
 import { volunteerRoutes } from './routes/api/v1/volunteers.js';
@@ -165,6 +165,19 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.register(offlineCheckinRoutes, { prefix: '/api/v1' });
   app.register(crossCollegePassportRoutes, { prefix: '/api/v1' });
   app.register(crossCollegePassportRoutes, { prefix: '' });
+
+  // Direct webhook endpoint for YouPI-PG at /webhooks/payments/youpi (also at /api/v1/webhooks/payments/youpi)
+  app.post(
+    '/webhooks/payments/youpi',
+    {
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    handleYouPiWebhookRoute
+  );
 
   // 404 Handler - Strict Error Envelope
   app.setNotFoundHandler((req, reply) => {

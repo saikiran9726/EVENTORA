@@ -24,6 +24,31 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 17 -> 16: YouPI-PG Payments Core & Webhook V2
+    if (currentVersion >= 17 && targetVersion < 17) {
+      console.log('[Rollback] Rolling back version 17 (Phase 17)...');
+      await client.query(`
+        DROP TABLE IF EXISTS reconciliation_items CASCADE;
+        DROP TABLE IF EXISTS reconciliation_records CASCADE;
+        ALTER TABLE refunds DROP COLUMN IF EXISTS manual_notes;
+        ALTER TABLE refunds DROP COLUMN IF EXISTS manual_processed_at;
+        ALTER TABLE refunds DROP COLUMN IF EXISTS refund_utr;
+        DROP TABLE IF EXISTS webhook_deliveries CASCADE;
+        DROP TABLE IF EXISTS payment_events CASCADE;
+        DROP INDEX IF EXISTS idx_payments_status_provider;
+        DROP INDEX IF EXISTS idx_payments_utr;
+        ALTER TABLE payments DROP COLUMN IF EXISTS raw_webhook_payload;
+        ALTER TABLE payments DROP COLUMN IF EXISTS manual_reviewed_at;
+        ALTER TABLE payments DROP COLUMN IF EXISTS manual_reviewed_by;
+        ALTER TABLE payments DROP COLUMN IF EXISTS verification_queue_reason;
+        ALTER TABLE payments DROP COLUMN IF EXISTS checkout_url;
+        ALTER TABLE payments DROP COLUMN IF EXISTS queue_position;
+        ALTER TABLE payments DROP COLUMN IF EXISTS slot_active;
+        ALTER TABLE payments DROP COLUMN IF EXISTS utr;
+        DELETE FROM schema_migrations WHERE version = 17;
+      `);
+    }
+
     // Rollback step 16 -> 15: Custom Registration Form Builder
     if (currentVersion >= 16 && targetVersion < 16) {
       console.log('[Rollback] Rolling back version 16 (Phase 16)...');
