@@ -20,7 +20,7 @@ import {
 export interface TeamMember {
   userId: string;
   displayName: string;
-  email: string;
+  email?: string;
   role: 'leader' | 'co_leader' | 'member';
   status: string;
 }
@@ -288,7 +288,7 @@ export const TeamsPage: React.FC = () => {
                           </div>
                           <div>
                             <p className="text-sm font-medium text-text">{m.displayName}</p>
-                            <p className="text-xs text-muted">{m.email}</p>
+                            <p className="text-xs text-muted capitalize">{m.role.replace('_', ' ')}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">

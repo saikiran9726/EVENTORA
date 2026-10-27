@@ -24,6 +24,16 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 21 -> 20: Team Security, Invitation Token Index & Paid Registration Lifecycle
+    if (currentVersion >= 21 && targetVersion < 21) {
+      console.log('[Rollback] Rolling back version 21 (Phase 21)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_team_invitations_token_hash;
+        DROP INDEX IF EXISTS idx_team_event_registrations_event_status;
+        DELETE FROM schema_migrations WHERE version = 21;
+      `);
+    }
+
     // Rollback step 20 -> 19: Waitlist Decline, Booking Link & Paid Claim Workflow
     if (currentVersion >= 20 && targetVersion < 20) {
       console.log('[Rollback] Rolling back version 20 (Phase 20)...');

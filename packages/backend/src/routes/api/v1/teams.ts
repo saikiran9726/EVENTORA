@@ -7,6 +7,8 @@ import {
   updateTeam,
   inviteMember,
   acceptInvitation,
+  transferLeadership,
+  leaveTeam,
   registerTeamForEvent,
   submitProject,
   TeamError,
@@ -232,10 +234,36 @@ export const teamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       }
 
       const parseResult = inviteMemberSchema.safeParse(req.body || {});
-      const inviteeId = parseResult.success ? parseResult.data.inviteeId : undefined;
+      if (!parseResult.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid invitation payload',
+            details: parseResult.error.flatten(),
+            requestId: req.id,
+          },
+        });
+      }
+
+      const { inviteeId, email } = parseResult.data;
+      if (!inviteeId && !email) {
+        return reply.code(400).send({
+          error: {
+            code: 'NAMED_INVITEE_REQUIRED',
+            message: 'Invitations must specify a named invitee (inviteeId or email)',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
 
       try {
-        const result = await inviteMember(teamId, user.id, inviteeId);
+        const result = await inviteMember({
+          teamId,
+          inviterId: user.id,
+          inviteeId,
+          email,
+        });
         return reply.code(201).send(result);
       } catch (err: any) {
         if (err instanceof TeamError) {
@@ -267,8 +295,36 @@ export const teamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       const { id: invitationId } = req.params as { id: string };
       const user = req.user!;
 
+      const body = (req.body as any) || {};
+      const query = (req.query as any) || {};
+      const token = body.token || query.token;
+
+      if (!token || typeof token !== 'string' || !token.trim()) {
+        return reply.code(400).send({
+          error: {
+            code: 'MISSING_INVITATION_TOKEN',
+            message: 'Invitation token is required to accept team invitation',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
+
+      // Rate limit invitation acceptance to prevent token brute force
+      const rl = await checkRateLimit(`rate:invitations:accept:${user.id}`, 10, 60);
+      if (!rl.allowed) {
+        return reply.code(429).send({
+          error: {
+            code: 'RATE_LIMIT_EXCEEDED',
+            message: 'Too many invitation acceptance attempts. Please wait.',
+            details: { resetSeconds: rl.resetSeconds },
+            requestId: req.id,
+          },
+        });
+      }
+
       try {
-        const result = await acceptInvitation(invitationId, user.id);
+        const result = await acceptInvitation(invitationId, user.id, token.trim());
         return reply.code(200).send(result);
       } catch (err: any) {
         if (err instanceof TeamError) {
@@ -486,46 +542,27 @@ export const teamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       const user = req.user!;
       const { targetUserId } = (req.body as any) || {};
 
-      if (!targetUserId) {
+      if (!targetUserId || typeof targetUserId !== 'string') {
         return reply.code(400).send({
           error: { code: 'MISSING_FIELD', message: 'targetUserId is required', details: {}, requestId: req.id },
         });
       }
 
-      const client = await pool.connect();
       try {
-        await client.query('BEGIN');
-
-        const leadCheck = await client.query(
-          `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2 AND status = 'ACTIVE';`,
-          [teamId, user.id]
-        );
-        if (leadCheck.rows.length === 0 || leadCheck.rows[0].role !== 'leader') {
-          return reply.code(403).send({
-            error: { code: 'FORBIDDEN', message: 'Only current leader can transfer leadership', details: {}, requestId: req.id },
+        const result = await transferLeadership(teamId, user.id, targetUserId);
+        return reply.code(200).send(result);
+      } catch (err: any) {
+        if (err instanceof TeamError) {
+          return reply.code(err.status).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              details: err.details || {},
+              requestId: req.id,
+            },
           });
         }
-
-        const targetCheck = await client.query(
-          `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2 AND status = 'ACTIVE';`,
-          [teamId, targetUserId]
-        );
-        if (targetCheck.rows.length === 0) {
-          return reply.code(404).send({
-            error: { code: 'MEMBER_NOT_FOUND', message: 'Target user is not an active team member', details: {}, requestId: req.id },
-          });
-        }
-
-        await client.query(`UPDATE team_members SET role = 'member' WHERE team_id = $1 AND user_id = $2;`, [teamId, user.id]);
-        await client.query(`UPDATE team_members SET role = 'leader' WHERE team_id = $1 AND user_id = $2;`, [teamId, targetUserId]);
-
-        await client.query('COMMIT');
-        return reply.code(200).send({ success: true, newLeaderId: targetUserId });
-      } catch (err) {
-        await client.query('ROLLBACK');
         throw err;
-      } finally {
-        client.release();
       }
     }
   );
@@ -543,45 +580,23 @@ export const teamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
     async (req, reply) => {
       const { id: teamId } = req.params as { id: string };
       const user = req.user!;
+      const { successorUserId } = (req.body as any) || {};
 
-      const client = await pool.connect();
       try {
-        await client.query('BEGIN');
-
-        const memRes = await client.query(
-          `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2 AND status = 'ACTIVE';`,
-          [teamId, user.id]
-        );
-        if (memRes.rows.length === 0) {
-          return reply.code(400).send({
-            error: { code: 'NOT_A_MEMBER', message: 'You are not an active member of this team', details: {}, requestId: req.id },
+        const result = await leaveTeam(teamId, user.id, successorUserId);
+        return reply.code(200).send(result);
+      } catch (err: any) {
+        if (err instanceof TeamError) {
+          return reply.code(err.status).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              details: err.details || {},
+              requestId: req.id,
+            },
           });
         }
-
-        const isLeader = memRes.rows[0].role === 'leader';
-        const otherMembersRes = await client.query<{ user_id: string; role: string }>(
-          `SELECT user_id, role FROM team_members WHERE team_id = $1 AND user_id != $2 AND status = 'ACTIVE' ORDER BY joined_at ASC;`,
-          [teamId, user.id]
-        );
-
-        if (otherMembersRes.rows.length === 0) {
-          // Last member leaving: archive team
-          await client.query(`UPDATE teams SET status = 'archived' WHERE id = $1;`, [teamId]);
-        } else if (isLeader) {
-          // Auto-promote oldest co-leader or member
-          const nextLeader = otherMembersRes.rows.find((m) => m.role === 'co_leader') || otherMembersRes.rows[0];
-          await client.query(`UPDATE team_members SET role = 'leader' WHERE team_id = $1 AND user_id = $2;`, [teamId, nextLeader.user_id]);
-        }
-
-        await client.query(`UPDATE team_members SET status = 'REMOVED' WHERE team_id = $1 AND user_id = $2;`, [teamId, user.id]);
-
-        await client.query('COMMIT');
-        return reply.code(200).send({ success: true });
-      } catch (err) {
-        await client.query('ROLLBACK');
         throw err;
-      } finally {
-        client.release();
       }
     }
   );

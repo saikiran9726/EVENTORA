@@ -1,5 +1,91 @@
 # Eventora Overhaul Changelog
 
+## Phase P18 — Teams Hardening, Paid Checkout, PII Removal, Invitations & Atomic Leadership
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Migration 21)
+- **Migration 21 (`Phase 21: Team Invitation Token Index & Event Registration Indexes`):**
+  - Added indexes:
+    - `CREATE INDEX IF NOT EXISTS idx_team_invitations_token_hash ON team_invitations(token_hash);`
+    - `CREATE INDEX IF NOT EXISTS idx_team_event_registrations_event_status ON team_event_registrations(event_id, status);`
+  - Registered version 21 in `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 21 -> 20: drops `idx_team_invitations_token_hash` and `idx_team_event_registrations_event_status`, and deletes migration record 21.
+  - Tested and verified live rollback 21 -> 20 and re-application 20 -> 21 against PostgreSQL.
+
+---
+
+### 2. Team Seat Model & Paid Checkout Integration (`packages/backend/src/services/team.ts`, `packages/backend/src/services/payment.ts`)
+- **Documented Seat Model Invariant:**
+  - Team ticket tiers represent whole-team slots: 1 team slot/seat unit reserved in the ticket tier (`capacity - (sold + held) >= 1`).
+  - Leader pays the team entry fee in integer paise.
+  - All active team members in `memberSnapshot` gain event participation privileges.
+- **Paid Registration Flow (`registerTeamForEvent`):**
+  - Enforces `team_mode !== 'none'`, `team_min`, and `team_max` within the database transaction.
+  - Enforces per-member duplicate booking check: verifies no member has an active solo booking (`CONFIRMED` or `PENDING_PAYMENT`), and no member is part of another registered team for that event (`status IN ('registered', 'pending_payment')`).
+  - Paid tier (`price_paise > 0`):
+    - Atomically increments tier `held` by 1.
+    - Creates booking in `PENDING_PAYMENT` with 15-minute expiration window.
+    - Creates team event registration in `pending_payment` status.
+    - No tickets issued before payment.
+  - Payment confirmation hook (`executePaymentConfirmationTransaction`):
+    - Updates `team_event_registrations.status = 'registered'` upon payment confirmation.
+    - Decrements `held` and increments `sold` by 1.
+    - Issues ticket for the team booking.
+
+---
+
+### 3. PII Protection & Member Email Elimination
+- **Strict Member Privacy (`getTeam` & `GET /api/v1/teams/:id`):**
+  - Under no circumstances does `GET /teams/:id` or `memberSnapshot` expose member emails, passwords, or credentials.
+  - Discoverable teams expose only `display_name`, `role`, `user_id`, and `joined_at`.
+  - Private teams (`visibility === 'private'`) return `404 TEAM_NOT_FOUND` (not 403) to anonymous or non-member authenticated users.
+- **Frontend Roster (`packages/frontend/src/pages/teams/TeamsPage.tsx`):**
+  - Updated `TeamMember` interface to make `email` optional.
+  - Replaced email display with user role in roster UI.
+
+---
+
+### 4. Cryptographic Invitation Security & Misuse Mitigation
+- **Named-Invitee Only (`inviteMember`):**
+  - Requires `inviteeId` or `email` upon invitation creation (`400 NAMED_INVITEE_REQUIRED`).
+  - Generates cryptographically secure base64url token and stores SHA-256 hash in database.
+- **Token Verification & Named Invitee Match (`acceptInvitation`):**
+  - Requires plaintext token parameter (`400 MISSING_INVITATION_TOKEN`).
+  - Computes SHA-256 hash and verifies matching `token_hash` (`400 INVITATION_INVALID`).
+  - Rejects expired invitations with `400 INVITATION_EXPIRED`.
+  - Rejects acceptance by users other than the named invitee with `403 NAMED_INVITEE_MISMATCH`.
+  - Enforces rate limiting: max 20 invitations created per hour (`429 RATE_LIMIT_EXCEEDED`) and max 10 acceptance attempts per minute.
+
+---
+
+### 5. Atomic Leadership Transfers & Last-Leader Leave
+- **Atomic Transfer (`transferLeadership`):**
+  - Locks team and member rows (`FOR UPDATE`).
+  - Demotes current leader to `'member'` and promotes target to `'leader'` atomically.
+- **Leave Team (`leaveTeam`):**
+  - Locks team and member rows (`FOR UPDATE`).
+  - Updates leaving member's status to `'REMOVED'` and role to `'member'`.
+  - If leader leaves with an explicit successor: successor is promoted to `'leader'`.
+  - If leader leaves without explicit successor: auto-promotes the oldest co-leader or member so the team is never leaderless.
+  - If the last member leaves: atomically archives the team (`teams.status = 'archived'`).
+  - Concurrency verified: concurrent transfers and leaves serialize without deadlocks.
+
+---
+
+### 6. Verification & Quality Gates
+- **Comprehensive Test Suite (`tests/unit/phase-p18-teams.test.ts`):** 20 tests covering PII removal, private team 404s, invitation misuse matrix, paid team pending-payment flow, seat model capacity gates, duplicate booking rejection, and atomic leadership concurrency.
+- **Master Test Run:** 45 test files passed (472 passed tests).
+- **Typecheck & Lint:** 0 TypeScript errors across monorepo packages, 0 ESLint errors.
+- **Production Build:** `pnpm build` succeeded for backend, shared, and frontend.
+
+---
+
 ## Phase P17 — Waitlist & Offer Claim Lifecycle Hardening
 
 **Date:** 2026-10-27  

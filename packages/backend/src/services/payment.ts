@@ -922,6 +922,13 @@ export async function resolveVerificationQueue(params: ResolveVerificationQueueP
 
       await client.query(`UPDATE bookings SET status = 'CONFIRMED' WHERE id = $1;`, [payment.booking_id]);
 
+    await client.query(
+      `UPDATE team_event_registrations
+       SET status = 'registered'
+       WHERE booking_id = $1 OR id = (SELECT team_registration_id FROM bookings WHERE id = $1);`,
+      [payment.booking_id]
+    );
+
       // Issue tickets
       const issuedTickets = [];
       for (const it of itemsRes.rows) {
@@ -1260,6 +1267,13 @@ export async function executePaymentConfirmationTransaction(params: {
     }
 
     await client.query(`UPDATE bookings SET status = 'CONFIRMED' WHERE id = $1;`, [payment.booking_id]);
+
+    await client.query(
+      `UPDATE team_event_registrations
+       SET status = 'registered'
+       WHERE booking_id = $1 OR id = (SELECT team_registration_id FROM bookings WHERE id = $1);`,
+      [payment.booking_id]
+    );
 
     const issuedTickets = [];
     for (const item of itemsRes.rows) {

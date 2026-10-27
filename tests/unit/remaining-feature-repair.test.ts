@@ -306,14 +306,16 @@ describe('Phase 6 Complete Remaining Feature Repair & Master Verification Suite'
         },
       });
       expect(inviteRes.statusCode).toBe(201);
-      const inviteId = JSON.parse(inviteRes.body).invitation.id;
+      const inviteData = JSON.parse(inviteRes.body);
+      const inviteId = inviteData.invitation.id;
+      const inviteToken = inviteData.invitationToken || inviteData.invitation.token;
 
       // Student 2 accepts invite
       const acceptRes = await app.inject({
         method: 'POST',
         url: `/api/v1/teams/invitations/${inviteId}/accept`,
         headers: student2.headers,
-        payload: {},
+        payload: { token: inviteToken },
       });
       expect(acceptRes.statusCode).toBe(200);
 
