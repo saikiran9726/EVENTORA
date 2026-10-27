@@ -24,6 +24,16 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 20 -> 19: Waitlist Decline, Booking Link & Paid Claim Workflow
+    if (currentVersion >= 20 && targetVersion < 20) {
+      console.log('[Rollback] Rolling back version 20 (Phase 20)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_waitlist_entries_booking_id;
+        ALTER TABLE waitlist_entries DROP COLUMN IF EXISTS booking_id;
+        DELETE FROM schema_migrations WHERE version = 20;
+      `);
+    }
+
     // Rollback step 19 -> 18: Resend Email Adapter, Suppression List & Outbox Hardening
     if (currentVersion >= 19 && targetVersion < 19) {
       console.log('[Rollback] Rolling back version 19 (Phase 19)...');

@@ -1308,7 +1308,8 @@ export async function runMigrations() {
         (16, 'Phase 16: Custom Registration Form Builder & Versioned Fields'),
         (17, 'Phase 17: YouPI-PG Payments Core, Webhook V2 & Audit Trail'),
         (18, 'Phase 18: Ticket QR Secure Tokens, Rotation & Downloads'),
-        (19, 'Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening')
+        (19, 'Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening'),
+        (20, 'Phase 20: Waitlist Decline, Booking Link & Paid Claim Workflow')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1498,6 +1499,11 @@ export async function runMigrations() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_email_suppressions_email ON email_suppressions(email);
+
+      -- Phase 20: Waitlist Decline, Booking Link & Paid Claim Workflow
+      ALTER TYPE waitlist_status ADD VALUE IF NOT EXISTS 'DECLINED';
+      ALTER TABLE waitlist_entries ADD COLUMN IF NOT EXISTS booking_id UUID REFERENCES bookings(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_waitlist_entries_booking_id ON waitlist_entries(booking_id) WHERE booking_id IS NOT NULL;
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

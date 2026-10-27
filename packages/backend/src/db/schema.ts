@@ -102,6 +102,7 @@ export const waitlistStatusEnum = pgEnum('waitlist_status', [
   'CLAIMED',
   'EXPIRED',
   'LEFT',
+  'DECLINED',
 ]);
 export const teamVisibilityEnum = pgEnum('team_visibility', ['private', 'discoverable']);
 export const teamMemberRoleEnum = pgEnum('team_member_role', ['leader', 'co_leader', 'member']);
@@ -856,6 +857,7 @@ export const waitlistEntries = pgTable('waitlist_entries', {
   offeredAt: timestamp('offered_at', { withTimezone: true }),
   offerExpiresAt: timestamp('offer_expires_at', { withTimezone: true }),
   claimTokenHash: varchar('claim_token_hash', { length: 255 }),
+  bookingId: uuid('booking_id').references(() => bookings.id, { onDelete: 'set null' }),
 });
 
 // 31. Cancellations

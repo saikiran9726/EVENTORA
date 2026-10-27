@@ -1,9 +1,9 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { db, pool } from '../../../db/index.js';
+import { pool } from '../../../db/index.js';
 import { createBooking, BookingError } from '../../../services/booking.js';
-import { joinWaitlist, leaveWaitlist, claimOffer, WaitlistError } from '../../../services/waitlist.js';
+import { joinWaitlist, leaveWaitlist, claimOffer, declineOffer } from '../../../services/waitlist.js';
 import { cancelBooking } from '../../../services/cancellation.js';
 import { checkRateLimit } from '../../../services/redis.js';
 import { checkRegistrationEligibility } from '../../../services/passport-crosscollege.js';
@@ -464,7 +464,7 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
 
       try {
         const res = await client.query(
-          `SELECT w.*, tt.name as ticket_type_name
+          `SELECT w.*, tt.name as ticket_type_name, tt.price_paise
            FROM waitlist_entries w
            JOIN ticket_types tt ON w.ticket_type_id = tt.id
            WHERE w.event_id = $1 AND w.user_id = $2 AND w.status IN ('WAITING', 'OFFERED');`,
@@ -472,7 +472,7 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         );
 
         if (res.rows.length === 0) {
-          return reply.code(200).send({ inWaitlist: false, entry: null });
+          return reply.code(200).send({ inWaitlist: false, entry: null, serverTime: new Date().toISOString() });
         }
 
         const entry = res.rows[0];
@@ -492,6 +492,7 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           inWaitlist: true,
           entry,
           position,
+          serverTime: new Date().toISOString(),
         });
       } finally {
         client.release();
@@ -545,15 +546,59 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       }
 
       const body = (req.body as any) || {};
+      const claimToken = body.claimToken;
+      if (!claimToken || typeof claimToken !== 'string' || !claimToken.trim()) {
+        return reply.code(400).send({
+          error: {
+            code: 'MISSING_CLAIM_TOKEN',
+            message: 'Claim token is required to claim a waitlist offer',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
 
       try {
         const result = await claimOffer({
           entryId,
           userId: user.id,
-          claimToken: body.claimToken,
+          claimToken: claimToken.trim(),
           idempotencyKey: idempotencyKey.trim(),
         });
 
+        return reply.code(200).send(result);
+      } catch (err: any) {
+        if (err instanceof BookingError) {
+          return reply.code(err.status).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              details: err.details || {},
+              requestId: req.id,
+            },
+          });
+        }
+        throw err;
+      }
+    }
+  );
+
+  // 10. POST /api/v1/waitlist/:entryId/decline (Decline offer)
+  fastify.post(
+    '/waitlist/:entryId/decline',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { entryId } = req.params as { entryId: string };
+      const user = req.user!;
+
+      try {
+        const result = await declineOffer(entryId, user.id);
         return reply.code(200).send(result);
       } catch (err: any) {
         if (err instanceof BookingError) {

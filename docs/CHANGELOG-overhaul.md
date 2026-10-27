@@ -1,5 +1,100 @@
 # Eventora Overhaul Changelog
 
+## Phase P17 — Waitlist & Offer Claim Lifecycle Hardening
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Migration 20)
+- **Migration 20 (`Phase 20: Waitlist Decline, Booking Link & Paid Claim Workflow`):**
+  - Updated `waitlist_status` enum: added `'DECLINED'` value.
+  - Added column to `waitlist_entries`:
+    - `booking_id UUID REFERENCES bookings(id) ON DELETE SET NULL`
+  - Added partial index:
+    - `CREATE INDEX IF NOT EXISTS idx_waitlist_entries_booking_id ON waitlist_entries(booking_id) WHERE booking_id IS NOT NULL;`
+  - Registered version 20 in `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 20 -> 19: drops index `idx_waitlist_entries_booking_id`, drops column `booking_id` from `waitlist_entries`, and removes version 20 record.
+  - Tested and verified live rollback 20 -> 19 and re-application 19 -> 20 against PostgreSQL.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Updated `waitlistStatusEnum` to include `'DECLINED'`.
+  - Updated `waitlistEntries` table definition to include `bookingId`.
+
+---
+
+### 2. Waitlist Core Service Architecture (`packages/backend/src/services/waitlist.ts`)
+- **Capacity & Sold-Out Enforcement (`joinWaitlist`):**
+  - Strict capacity check: joining waitlist is allowed **only** when ticket tier is sold out (`capacity - (sold + held) <= 0`). If capacity is available, rejects with `400 TIER_NOT_SOLD_OUT`.
+  - Registration window check: rejects with `400 REGISTRATION_CLOSED` if registration window has closed (`registration_closes_at < now`).
+  - Active booking check: rejects with `409 ALREADY_REGISTERED` if user already holds an active booking (`CONFIRMED` or `PENDING_PAYMENT`) on the event.
+  - Unique violation recovery: catches Postgres `23505` error on `uq_waitlist_active_user` concurrently and returns `{ entry, position, alreadyQueued: true }`.
+- **Promotion Safety (`promoteNext`):**
+  - Event status check: explicitly joins `events` and checks `status === 'published'`. Unpublished / draft events are skipped (`return null`), preventing offers for unlaunched events.
+- **Paid vs Free Claim Workflows (`claimOffer`):**
+  - Claim token enforcement: strictly validates `claimToken` (rejects missing/empty with `400 MISSING_CLAIM_TOKEN`).
+  - Event & registration verification: enforces event is published and within registration window (`registration_opens_at`, `registration_closes_at`).
+  - Duplicate booking prevention: rejects with `409 ALREADY_REGISTERED` if an active booking is already present for user.
+  - Paid tier flow (`price_paise > 0`):
+    - Seat remains in `held` capacity (does not alter `held` or `sold`).
+    - Creates booking in `PENDING_PAYMENT` status with a fresh 15-minute `expires_at` window for checkout.
+    - Does **not** issue a ticket (`ticket` is undefined; tickets only issued post-payment verification).
+    - Links `waitlist_entries.booking_id = booking.id`.
+    - Returns `{ booking, checkoutRequired: true, requiresPayment: true }`.
+  - Free tier flow (`price_paise === 0`):
+    - Atomically converts `held -> sold` (`held = GREATEST(0, held - 1)`, `sold = sold + 1`).
+    - Creates booking in `CONFIRMED` status.
+    - Issues digital ticket immediately with collision-safe `createTicketWithRetry`.
+    - Links `waitlist_entries.booking_id = booking.id`.
+    - Returns `{ booking, ticket }`.
+  - Idempotency replay: repeating claim with identical `Idempotency-Key` returns original booking (and ticket if free) with `idempotentReplay: true`.
+  - High concurrency safety: parallel claims on the same offer atomically resolve with exactly 1 winner and loser receives `409 OFFER_INVALID_OR_EXPIRED`.
+- **Offer Decline Workflow (`declineOffer`):**
+  - Atomically transitions entry from `OFFERED` to `DECLINED`.
+  - Releases held capacity: `UPDATE ticket_types SET held = GREATEST(0, held - 1)`.
+  - Triggers `promoteNext` to immediately offer seat to the next attendee in line if the event is published.
+
+---
+
+### 3. API Routes (`packages/backend/src/routes/api/v1/bookings.ts`)
+- Added `POST /api/v1/waitlist/:entryId/decline`:
+  - Route policy: `{ auth: true, policy: 'authenticated', objectCheck: false }`.
+  - Allows attendee to decline an offered seat and triggers promotion for next attendee.
+- Enhanced `GET /api/v1/events/:id/waitlist/me`:
+  - Returns `serverTime: new Date().toISOString()` to eliminate client clock skew.
+  - Returns tier `price_paise` for dynamic paid vs free claim actions.
+- Enhanced `POST /api/v1/waitlist/:entryId/claim`:
+  - Enforces `Idempotency-Key` header and non-empty `claimToken` in request body.
+
+---
+
+### 4. Frontend Waitlist Offer Experience (`packages/frontend/src/components/booking/WaitlistOfferBanner.tsx`)
+- **Server Clock Synchronization:**
+  - Calculates initial clock offset `(serverTimeMs - clientTimeMs)` from `serverTime`.
+  - Evaluates remaining time against synced clock, eliminating client clock drift and premature/delayed expirations.
+- **Decline Offer Action:**
+  - Added Decline button with popover confirmation ("Release seat?", "Yes, Decline", "Cancel").
+  - Invokes `POST /api/v1/waitlist/:entryId/decline` and notifies parent via `onOfferDeclined`.
+- **Paid vs Free Dynamic Claiming:**
+  - Displays formatted ticket tier price (`₹X` or `Free`).
+  - Action button adapts dynamically: `Claim Free Ticket` vs `Claim & Pay ₹X`.
+  - Handles pending payment redirect guidance if checkout is required.
+
+---
+
+### 5. Verification & Quality Gates
+- **Unit & Integration Suite (`tests/unit/phase-p17-waitlist.test.ts`):**
+  - 12 dedicated tests covering sold-out gate, already registered rejection, 23505 race conditions, token requirements, paid vs free claim semantics, decline release & promotion, idempotency replay, and migration 20 expand/contract rollback.
+- **Full Monorepo Suite:**
+  - All 44 test files (452 / 452 vitest tests) passed with 0 failures.
+  - `pnpm typecheck` passed with 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
+  - `pnpm lint` passed with 0 errors.
+  - `pnpm build` passed with 0 errors across all workspace packages.
+
+---
+
 ## Phase P16 — Real Email with Resend & Outbox Redesign
 
 **Date:** 2026-10-27  

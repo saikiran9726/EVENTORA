@@ -639,15 +639,15 @@ describe.sequential('Phase P16: Resend Email Adapter, Suppression List & Outbox 
   // =========================================================================
   describe('6. Schema Migration 19 Expand / Contract Rollback', () => {
     it('verifies rollback from 19 to 18 and re-application to 19 preserves data integrity', async () => {
-      // 1. Verify currently at version 19
+      // 1. Verify currently at version 19 or above
       const vRes1 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
-      expect(vRes1.rows[0].ver).toBe(19);
+      expect(Number(vRes1.rows[0].ver)).toBeGreaterThanOrEqual(19);
 
       // 2. Rollback to version 18
       await runRollbackToVersion(18);
 
       const vRes2 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
-      expect(vRes2.rows[0].ver).toBe(18);
+      expect(Number(vRes2.rows[0].ver)).toBe(18);
 
       // email_suppressions table should not exist at version 18
       const tableCheck = await pool.query(
@@ -655,11 +655,11 @@ describe.sequential('Phase P16: Resend Email Adapter, Suppression List & Outbox 
       );
       expect(tableCheck.rows.length).toBe(0);
 
-      // 3. Re-apply migrations back to 19
+      // 3. Re-apply migrations back to 19 or above
       await runMigrations();
 
       const vRes3 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
-      expect(vRes3.rows[0].ver).toBe(19);
+      expect(Number(vRes3.rows[0].ver)).toBeGreaterThanOrEqual(19);
 
       // email_suppressions table re-created cleanly
       const tableCheck2 = await pool.query(
