@@ -1207,6 +1207,8 @@ export const exportJobs = pgTable('export_jobs', {
   status: exportJobStatusEnum('status').default('PENDING').notNull(),
   fileKey: text('file_key'),
   downloadUrl: text('download_url'),
+  downloadToken: text('download_token'),
+  fileData: bytea('file_data'),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   completedAt: timestamp('completed_at', { withTimezone: true }),

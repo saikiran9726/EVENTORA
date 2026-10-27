@@ -24,6 +24,17 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 24 -> 23: Durable Export Storage and Download Tokens
+    if (currentVersion >= 24 && targetVersion < 24) {
+      console.log('[Rollback] Rolling back version 24 (Phase 24)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_export_jobs_download_token;
+        ALTER TABLE export_jobs DROP COLUMN IF EXISTS download_token;
+        ALTER TABLE export_jobs DROP COLUMN IF EXISTS file_data;
+        DELETE FROM schema_migrations WHERE version = 24;
+      `);
+    }
+
     // Rollback step 23 -> 22: User Department and Academic Year for Cross-College Eligibility
     if (currentVersion >= 23 && targetVersion < 23) {
       console.log('[Rollback] Rolling back version 23 (Phase 23)...');

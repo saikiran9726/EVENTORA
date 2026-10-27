@@ -17,6 +17,7 @@
     "start:backend": "pnpm --filter @eventora/backend start"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

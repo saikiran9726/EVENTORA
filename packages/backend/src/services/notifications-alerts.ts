@@ -2,6 +2,18 @@ import crypto from 'crypto';
 import { pool } from '../db/index.js';
 import { notifyOutbox } from './outbox-worker.js';
 
+export class NotificationError extends Error {
+  constructor(
+    public code: string,
+    message: string,
+    public statusCode: number = 400,
+    public details: Record<string, any> = {}
+  ) {
+    super(message);
+    this.name = 'NotificationError';
+  }
+}
+
 export interface CreateAlertParams {
   eventId: string;
   createdBy: string;
@@ -43,11 +55,26 @@ export async function createEventAlert(params: CreateAlertParams) {
       [eventId]
     );
     if (eventRes.rows.length === 0) {
-      throw new Error('EVENT_NOT_FOUND');
+      throw new NotificationError('EVENT_NOT_FOUND', 'Event not found', 404);
     }
     const event = eventRes.rows[0];
 
-    // 2. Insert into event_alerts
+    // 2. Per-event alert rate limit: maximum 5 alerts per 10 minutes
+    const recentAlertsRes = await client.query(
+      `SELECT COUNT(*)::int as count FROM event_alerts
+       WHERE event_id = $1 AND created_at > NOW() - INTERVAL '10 minutes';`,
+      [eventId]
+    );
+    if ((recentAlertsRes.rows[0]?.count || 0) >= 5) {
+      throw new NotificationError(
+        'RATE_LIMIT_EXCEEDED',
+        'Alert creation rate limit exceeded for this event (maximum 5 alerts per 10 minutes)',
+        429,
+        { limit: 5, window: '10m' }
+      );
+    }
+
+    // 3. Insert into event_alerts
     const alertRes = await client.query(
       `INSERT INTO event_alerts (event_id, created_by, kind, message, severity)
        VALUES ($1, $2, $3, $4, $5)
@@ -330,17 +357,19 @@ export async function processEmailWebhook(payload: EmailWebhookPayload) {
 }
 
 /**
- * Returns all event alerts for an event.
+ * Returns all event alerts for an event, bound by limit.
  */
-export async function getEventAlerts(eventId: string) {
+export async function getEventAlerts(eventId: string, limit: number = 50) {
+  const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit) || 50));
   const res = await pool.query(
     `SELECT ea.id, ea.event_id, ea.created_by, ea.kind, ea.message, ea.severity, ea.created_at,
             u.display_name as author_name
      FROM event_alerts ea
      LEFT JOIN users u ON ea.created_by = u.id
      WHERE ea.event_id = $1
-     ORDER BY ea.created_at DESC;`,
-    [eventId]
+     ORDER BY ea.created_at DESC
+     LIMIT $2;`,
+    [eventId, boundedLimit]
   );
   return res.rows;
 }

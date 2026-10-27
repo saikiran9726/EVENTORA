@@ -9,12 +9,23 @@ import {
   updateUserNotificationPreferences,
   processEmailWebhook,
   getEventAlerts,
+  NotificationError,
 } from '../../../services/notifications-alerts.js';
+import { pool } from '../../../db/index.js';
 
 const CreateAlertSchema = z.object({
   kind: z.enum(['venue', 'time', 'speaker', 'cancellation', 'safety']),
   message: z.string().min(1).max(2000),
   severity: z.enum(['info', 'important', 'urgent']).default('info'),
+});
+
+const GetAlertsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1, 'Limit must be at least 1').max(100, 'Limit cannot exceed 100').default(50),
+});
+
+const NotificationsQuerySchema = z.object({
+  unreadOnly: z.enum(['true', 'false']).optional().transform((v) => v === 'true'),
+  limit: z.coerce.number().int().min(1, 'Limit must be at least 1').max(100, 'Limit cannot exceed 100').default(50),
 });
 
 const EmailWebhookSchema = z.object({
@@ -56,38 +67,20 @@ export async function notificationRoutes(fastify: FastifyInstance) {
         });
       }
 
-      try {
-        const result = await createEventAlert({
-          eventId,
-          createdBy: req.user!.id,
-          kind: parsed.data.kind,
-          message: parsed.data.message,
-          severity: parsed.data.severity,
-        });
+      // Delegate directly to service and global error handler
+      const result = await createEventAlert({
+        eventId,
+        createdBy: req.user!.id,
+        kind: parsed.data.kind,
+        message: parsed.data.message,
+        severity: parsed.data.severity,
+      });
 
-        return reply.code(201).send(result);
-      } catch (err: any) {
-        if (err.message === 'EVENT_NOT_FOUND') {
-          return reply.code(404).send({
-            error: {
-              code: 'NOT_FOUND',
-              message: 'Event not found',
-              requestId: req.id,
-            },
-          });
-        }
-        return reply.code(500).send({
-          error: {
-            code: 'INTERNAL_ERROR',
-            message: err.message || 'Failed to create alert',
-            requestId: req.id,
-          },
-        });
-      }
+      return reply.code(201).send(result);
     }
   );
 
-  // 2. GET /events/:id/alerts (Public or attendee view)
+  // 2. GET /events/:id/alerts (Public view for published events; restricted to ticket holders/organizers for unpublished)
   fastify.get(
     '/events/:id/alerts',
     {
@@ -99,12 +92,81 @@ export async function notificationRoutes(fastify: FastifyInstance) {
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
       const { id: eventId } = req.params as { id: string };
-      const alerts = await getEventAlerts(eventId);
+
+      // Validate limit query parameter (1-100, NaN-safe)
+      const parsedQuery = GetAlertsQuerySchema.safeParse(req.query);
+      if (!parsedQuery.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid pagination query parameters (limit must be an integer between 1 and 100)',
+            details: parsedQuery.error.format(),
+            requestId: req.id,
+          },
+        });
+      }
+
+      const limit = parsedQuery.data.limit;
+
+      // Check event existence and publication status
+      const eventRes = await pool.query(
+        `SELECT id, status, organizer_id FROM events WHERE id = $1;`,
+        [eventId]
+      );
+
+      if (eventRes.rows.length === 0) {
+        throw new NotificationError('EVENT_NOT_FOUND', 'Event not found', 404);
+      }
+
+      const event = eventRes.rows[0];
+
+      // If event is not published, only ticket holders, organizers, or admins may view alerts
+      if (event.status !== 'published') {
+        if (!req.user) {
+          return reply.code(401).send({
+            error: {
+              code: 'UNAUTHORIZED',
+              message: 'Authentication required to view alerts for unpublished events',
+              details: {},
+              requestId: req.id,
+            },
+          });
+        }
+
+        const isGlobalAdmin = req.user.globalRole === 'admin';
+        let isOrganizer = false;
+        if (!isGlobalAdmin) {
+          const orgMemberRes = await pool.query(
+            `SELECT 1 FROM organizer_members WHERE organizer_id = $1 AND user_id = $2 AND status = 'active' LIMIT 1;`,
+            [event.organizer_id, req.user.id]
+          );
+          isOrganizer = orgMemberRes.rows.length > 0;
+        }
+
+        if (!isGlobalAdmin && !isOrganizer) {
+          const ticketRes = await pool.query(
+            `SELECT 1 FROM tickets WHERE event_id = $1 AND (user_id = $2 OR owner_user_id = $2) LIMIT 1;`,
+            [eventId, req.user.id]
+          );
+          if (ticketRes.rows.length === 0) {
+            return reply.code(403).send({
+              error: {
+                code: 'FORBIDDEN',
+                message: 'Alerts for unpublished events are only accessible to ticket holders and organizers',
+                details: {},
+                requestId: req.id,
+              },
+            });
+          }
+        }
+      }
+
+      const alerts = await getEventAlerts(eventId, limit);
       return reply.send({ alerts });
     }
   );
 
-  // 3. GET /me/notifications (User notification center)
+  // 3. GET /me/notifications (User notification center with bounded limit)
   fastify.get(
     '/me/notifications',
     {
@@ -115,10 +177,19 @@ export async function notificationRoutes(fastify: FastifyInstance) {
       },
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
-      const query = req.query as { unreadOnly?: string; limit?: string };
-      const unreadOnly = query.unreadOnly === 'true';
-      const limit = query.limit ? parseInt(query.limit, 10) : 50;
+      const parsedQuery = NotificationsQuerySchema.safeParse(req.query);
+      if (!parsedQuery.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid notification query parameters (limit must be an integer between 1 and 100)',
+            details: parsedQuery.error.format(),
+            requestId: req.id,
+          },
+        });
+      }
 
+      const { unreadOnly, limit } = parsedQuery.data;
       const result = await getUserNotifications(req.user!.id, { unreadOnly, limit });
       return reply.send(result);
     }

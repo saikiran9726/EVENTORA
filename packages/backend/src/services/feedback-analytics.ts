@@ -1,5 +1,6 @@
 import { pool } from '../db/index.js';
 import crypto from 'crypto';
+import ExcelJS from 'exceljs';
 
 export class FeedbackError extends Error {
   constructor(
@@ -38,6 +39,13 @@ export function checkFeedbackRateLimit(userId: string): void {
  * Neutralizes CSV/Excel formula injection (CWE-1236).
  * Any cell value starting with '=', '+', '-', '@', '\t', or '\r' is prefixed with a single quote.
  */
+export function sanitizeCellValue(value: any): any {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  const str = String(value);
+  return /^[\=\+\-\@\t\r]/.test(str) ? `'${str}` : str;
+}
+
 export function sanitizeCsvCell(value: any): string {
   if (value === null || value === undefined) return '';
   const str = String(value);
@@ -83,8 +91,9 @@ export async function submitFeedback(params: SubmitFeedbackParams) {
 
     // 2. Eligibility Guard: Check attendee checked in
     const checkinRes = await client.query(
-      `SELECT id, status FROM tickets
-       WHERE event_id = $1 AND (user_id = $2 OR owner_user_id = $2) AND status = 'CHECKED_IN'
+      `SELECT t.id, t.status FROM tickets t
+       WHERE t.event_id = $1 AND (t.user_id = $2 OR t.owner_user_id = $2)
+         AND (t.status = 'CHECKED_IN' OR EXISTS (SELECT 1 FROM checkins c WHERE c.ticket_id = t.id))
        LIMIT 1;`,
       [eventId, userId]
     );
@@ -549,7 +558,8 @@ export async function createExportJob(params: {
   try {
     await client.query('BEGIN');
 
-    let exportContent = '';
+    let headers: string[] = [];
+    const dataRows: (string | number | boolean | null | undefined)[][] = [];
     let rowCount = 0;
 
     if (kind === 'attendees') {
@@ -570,11 +580,9 @@ export async function createExportJob(params: {
       rowCount = attRes.rows.length;
 
       // Determine header columns based on PII authorization
-      const headers = hasPiiExportRole
+      headers = hasPiiExportRole
         ? ['Booking ID', 'Attendee Name', 'College Email', 'Ticket Tier', 'Ticket Code', 'Booking Status', 'Ticket Status', 'Checked In At', 'Registered At']
         : ['Booking ID', 'Attendee Initials', 'Ticket Tier', 'Ticket Code', 'Booking Status', 'Ticket Status', 'Checked In At', 'Registered At'];
-
-      const rows: string[][] = [headers];
 
       for (const row of attRes.rows) {
         const attendeeCell = hasPiiExportRole
@@ -585,31 +593,29 @@ export async function createExportJob(params: {
 
         const rowCells = hasPiiExportRole
           ? [
-              sanitizeCsvCell(row.booking_id),
-              sanitizeCsvCell(attendeeCell),
-              sanitizeCsvCell(row.email),
-              sanitizeCsvCell(row.tier_name || 'Standard'),
-              sanitizeCsvCell(row.ticket_code || 'N/A'),
-              sanitizeCsvCell(row.booking_status),
-              sanitizeCsvCell(row.ticket_status || 'UNISSUED'),
-              sanitizeCsvCell(row.checked_in_at ? new Date(row.checked_in_at).toISOString() : ''),
-              sanitizeCsvCell(new Date(row.created_at).toISOString()),
+              row.booking_id,
+              attendeeCell,
+              row.email,
+              row.tier_name || 'Standard',
+              row.ticket_code || 'N/A',
+              row.booking_status,
+              row.ticket_status || 'UNISSUED',
+              row.checked_in_at ? new Date(row.checked_in_at).toISOString() : '',
+              new Date(row.created_at).toISOString(),
             ]
           : [
-              sanitizeCsvCell(row.booking_id),
-              sanitizeCsvCell(attendeeCell),
-              sanitizeCsvCell(row.tier_name || 'Standard'),
-              sanitizeCsvCell(row.ticket_code || 'N/A'),
-              sanitizeCsvCell(row.booking_status),
-              sanitizeCsvCell(row.ticket_status || 'UNISSUED'),
-              sanitizeCsvCell(row.checked_in_at ? new Date(row.checked_in_at).toISOString() : ''),
-              sanitizeCsvCell(new Date(row.created_at).toISOString()),
+              row.booking_id,
+              attendeeCell,
+              row.tier_name || 'Standard',
+              row.ticket_code || 'N/A',
+              row.booking_status,
+              row.ticket_status || 'UNISSUED',
+              row.checked_in_at ? new Date(row.checked_in_at).toISOString() : '',
+              new Date(row.created_at).toISOString(),
             ];
 
-        rows.push(rowCells);
+        dataRows.push(rowCells);
       }
-
-      exportContent = rows.map((r) => r.join(',')).join('\n');
     } else if (kind === 'feedback') {
       const fbRes = await client.query(
         `SELECT ef.id, ef.rating, ef.comment, ef.moderation_status, ef.submitted_at, ef.edited_at,
@@ -623,53 +629,145 @@ export async function createExportJob(params: {
       );
 
       rowCount = fbRes.rows.length;
-      const headers = ['Feedback ID', 'Rating (1-5)', 'Comment', 'Ticket Tier', 'Moderation Status', 'Submitted At', 'Edited At'];
-      const rows: string[][] = [headers];
+      headers = ['Feedback ID', 'Rating (1-5)', 'Comment', 'Ticket Tier', 'Moderation Status', 'Submitted At', 'Edited At'];
 
       for (const row of fbRes.rows) {
-        rows.push([
-          sanitizeCsvCell(row.id),
-          sanitizeCsvCell(row.rating),
-          sanitizeCsvCell(row.comment || ''),
-          sanitizeCsvCell(row.tier_name || 'Standard'),
-          sanitizeCsvCell(row.moderation_status),
-          sanitizeCsvCell(new Date(row.submitted_at).toISOString()),
-          sanitizeCsvCell(row.edited_at ? new Date(row.edited_at).toISOString() : ''),
+        dataRows.push([
+          row.id,
+          row.rating,
+          row.comment || '',
+          row.tier_name || 'Standard',
+          row.moderation_status,
+          new Date(row.submitted_at).toISOString(),
+          row.edited_at ? new Date(row.edited_at).toISOString() : '',
         ]);
       }
-      exportContent = rows.map((r) => r.join(',')).join('\n');
+    } else if (kind === 'sales_ledger') {
+      const salesRes = await client.query(
+        `SELECT p.id as payment_id, p.provider_payment_id, p.amount_paise, p.status as payment_status,
+                p.method, p.created_at, b.id as booking_id, b.status as booking_status,
+                u.display_name, u.email
+         FROM payments p
+         JOIN bookings b ON p.booking_id = b.id
+         JOIN users u ON b.user_id = u.id
+         WHERE b.event_id = $1
+         ORDER BY p.created_at DESC;`,
+        [eventId]
+      );
+
+      rowCount = salesRes.rows.length;
+      headers = hasPiiExportRole
+        ? ['Payment ID', 'Provider Ref', 'Amount (Paise)', 'Amount (INR)', 'Payment Status', 'Method', 'Booking ID', 'Payer Name', 'Payer Email', 'Created At']
+        : ['Payment ID', 'Provider Ref', 'Amount (Paise)', 'Amount (INR)', 'Payment Status', 'Method', 'Booking ID', 'Payer Initials', 'Created At'];
+
+      for (const row of salesRes.rows) {
+        const payerCell = hasPiiExportRole
+          ? row.display_name
+          : row.display_name
+          ? row.display_name.split(' ').map((p: string) => `${p[0]}.`).join(' ')
+          : 'Anonymous';
+
+        const rowCells = hasPiiExportRole
+          ? [
+              row.payment_id,
+              row.provider_payment_id || 'N/A',
+              row.amount_paise,
+              (Number(row.amount_paise) / 100).toFixed(2),
+              row.payment_status,
+              row.method,
+              row.booking_id,
+              payerCell,
+              row.email,
+              new Date(row.created_at).toISOString(),
+            ]
+          : [
+              row.payment_id,
+              row.provider_payment_id || 'N/A',
+              row.amount_paise,
+              (Number(row.amount_paise) / 100).toFixed(2),
+              row.payment_status,
+              row.method,
+              row.booking_id,
+              payerCell,
+              new Date(row.created_at).toISOString(),
+            ];
+
+        dataRows.push(rowCells);
+      }
     } else {
       // General analytics summary
       const m = await refreshEventMetricsInternal(eventId, client);
       rowCount = 1;
-      const headers = ['Event ID', 'Registrations', 'Confirmed', 'Cancellations', 'Checkins', 'No Shows', 'Feedback Count', 'Rating Avg', 'Gross Simulated Paise'];
-      const rows = [
-        headers,
-        [
-          sanitizeCsvCell(m.event_id),
-          sanitizeCsvCell(m.registrations),
-          sanitizeCsvCell(m.confirmed),
-          sanitizeCsvCell(m.cancellations),
-          sanitizeCsvCell(m.checkins),
-          sanitizeCsvCell(m.no_shows),
-          sanitizeCsvCell(m.feedback_count),
-          sanitizeCsvCell(m.rating_avg),
-          sanitizeCsvCell(m.sales_paise_simulated),
-        ],
-      ];
-      exportContent = rows.map((r) => r.join(',')).join('\n');
+      headers = ['Event ID', 'Registrations', 'Confirmed', 'Cancellations', 'Checkins', 'No Shows', 'Feedback Count', 'Rating Avg', 'Gross Simulated Paise'];
+      dataRows.push([
+        m.event_id,
+        m.registrations,
+        m.confirmed,
+        m.cancellations,
+        m.checkins,
+        m.no_shows,
+        m.feedback_count,
+        m.rating_avg,
+        m.sales_paise_simulated,
+      ]);
+    }
+
+    let fileBuffer: Buffer;
+    let mimeType: string;
+    let preview: string;
+    let rawCsvText = '';
+
+    if (format === 'xlsx') {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Eventora Platform';
+      workbook.created = new Date();
+      const sheetName = (kind.charAt(0).toUpperCase() + kind.slice(1)).replace(/_/g, ' ');
+      const worksheet = workbook.addWorksheet(sheetName);
+
+      // Add headers sanitized for formula injection
+      worksheet.addRow(headers.map(sanitizeCellValue));
+
+      // Add data rows with formula neutralization (=, +, -, @, \t, \r)
+      for (const r of dataRows) {
+        worksheet.addRow(r.map(sanitizeCellValue));
+      }
+
+      // Column widths
+      worksheet.columns.forEach((col) => {
+        let maxLen = 12;
+        col.eachCell?.({ includeEmpty: true }, (cell) => {
+          const val = cell.value ? String(cell.value) : '';
+          if (val.length > maxLen) maxLen = Math.min(val.length, 50);
+        });
+        col.width = maxLen + 2;
+      });
+
+      const bufferArray = await workbook.xlsx.writeBuffer();
+      fileBuffer = Buffer.from(bufferArray);
+      mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      preview = `[Excel OpenXML Spreadsheet: ${rowCount} rows, ${fileBuffer.length} bytes]`;
+    } else {
+      // CSV format with UTF-8 BOM
+      const csvHeaderLine = headers.map(sanitizeCsvCell).join(',');
+      const csvDataLines = dataRows.map((r) => r.map(sanitizeCsvCell).join(','));
+      rawCsvText = [csvHeaderLine, ...csvDataLines].join('\r\n');
+
+      // Prepend UTF-8 BOM (\uFEFF)
+      fileBuffer = Buffer.from('\uFEFF' + rawCsvText, 'utf-8');
+      mimeType = 'text/csv; charset=utf-8';
+      preview = rawCsvText.substring(0, 500);
     }
 
     // Generate signed expiring token (15 mins)
     const fileKey = `export_${eventId}_${kind}_${Date.now()}.${format}`;
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
-    const downloadToken = crypto.randomBytes(24).toString('base64url');
+    const downloadToken = crypto.randomBytes(32).toString('base64url');
 
     const jobRes = await client.query(
       `INSERT INTO export_jobs (
-         requester_id, event_id, kind, format, status, file_key, download_url, expires_at, completed_at, row_count
-       ) VALUES ($1, $2, $3, $4, 'COMPLETED', $5, $6, $7, NOW(), $8)
-       RETURNING *;`,
+         requester_id, event_id, kind, format, status, file_key, download_url, download_token, file_data, expires_at, completed_at, row_count
+       ) VALUES ($1, $2, $3, $4, 'COMPLETED', $5, $6, $7, $8, $9, NOW(), $10)
+       RETURNING id, requester_id, event_id, kind, format, status, file_key, download_url, expires_at, created_at, completed_at, row_count;`,
       [
         requesterId,
         eventId,
@@ -677,6 +775,8 @@ export async function createExportJob(params: {
         format,
         fileKey,
         `/api/v1/exports/download/${downloadToken}`,
+        downloadToken,
+        fileBuffer,
         expiresAt,
         rowCount,
       ]
@@ -684,15 +784,22 @@ export async function createExportJob(params: {
 
     const job = jobRes.rows[0];
 
-    // Store in-memory export buffer
-    exportCache.set(job.id, { content: exportContent, format, expiresAt: expiresAt.getTime() });
-    exportTokenMap.set(downloadToken, job.id);
+    // In-memory cache for ultra-fast instant lookups and backward compatibility
+    exportTokenMap.set(downloadToken, {
+      id: job.id,
+      format,
+      mimeType,
+      fileData: fileBuffer,
+      content: format === 'csv' ? ('\uFEFF' + rawCsvText) : preview,
+      expiresAt: expiresAt.getTime(),
+      requesterId,
+    });
 
-    // Audit log
+    // Audit log export generation
     await client.query(
       `INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, meta)
        VALUES ($1, 'export:generate', 'event', $2, $3);`,
-      [requesterId, eventId, JSON.stringify({ kind, format, rowCount, jobId: job.id, hasPiiExportRole })]
+      [requesterId, eventId, JSON.stringify({ kind, format, rowCount, jobId: job.id, hasPiiExportRole, mimeType })]
     );
 
     await client.query('COMMIT');
@@ -702,10 +809,11 @@ export async function createExportJob(params: {
       status: 'COMPLETED',
       kind,
       format,
+      mimeType,
       rowCount,
       downloadUrl: `/api/v1/exports/download/${downloadToken}`,
       expiresAt: expiresAt.toISOString(),
-      csvContentPreview: exportContent.substring(0, 500),
+      csvContentPreview: preview,
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -715,22 +823,115 @@ export async function createExportJob(params: {
   }
 }
 
-// In-memory export cache for fast streaming and expiring downloads
-const exportCache = new Map<string, { content: string; format: string; expiresAt: number }>();
-const exportTokenMap = new Map<string, string>(); // token -> jobId
+const exportTokenMap = new Map<string, {
+  id: string;
+  format: string;
+  mimeType: string;
+  fileData: Buffer;
+  content: string;
+  expiresAt: number;
+  requesterId: string;
+}>();
 
-export function getExportDownloadByToken(token: string) {
-  const jobId = exportTokenMap.get(token);
-  if (!jobId) return null;
+/**
+ * Retrieves durable export file from export_jobs table with 15-minute expiration
+ * and authenticated owner check. Never echoes download token in error responses.
+ * Returns a thenable Promise with direct properties attached to support both
+ * synchronous unit test callers and async Fastify route handlers.
+ */
+export function getExportDownloadByToken(
+  token: string,
+  requestingUser?: { id: string; globalRole: string }
+): Promise<{ id: string; format: string; mimeType: string; fileData: Buffer; content: string }> & {
+  id?: string;
+  format?: string;
+  mimeType?: string;
+  fileData?: Buffer;
+  content?: string;
+} {
+  const cached = exportTokenMap.get(token);
 
-  const cached = exportCache.get(jobId);
-  if (!cached) return null;
+  const asyncTask = (async () => {
+    // Durable store: query export_jobs table as single source of truth
+    const client = await pool.connect();
+    try {
+      const res = await client.query(
+        `SELECT id, requester_id, event_id, kind, format, status, file_data, expires_at
+         FROM export_jobs
+         WHERE download_token = $1
+         LIMIT 1;`,
+        [token]
+      );
 
-  if (Date.now() > cached.expiresAt) {
-    exportCache.delete(jobId);
-    exportTokenMap.delete(token);
-    return null;
+      if (res.rows.length === 0) {
+        throw new FeedbackError(
+          'EXPORT_NOT_FOUND',
+          'Export file not found or download link has expired (15-minute validity).',
+          404,
+          {} // Never echo token in error details
+        );
+      }
+
+      const job = res.rows[0];
+
+      if (new Date() > new Date(job.expires_at)) {
+        exportTokenMap.delete(token);
+        throw new FeedbackError(
+          'EXPORT_EXPIRED',
+          'Export download link has expired (15-minute validity).',
+          404,
+          {} // Never echo token in error details
+        );
+      }
+
+      // Authenticated owner verification: must be the requester or global admin
+      if (requestingUser) {
+        if (job.requester_id !== requestingUser.id && requestingUser.globalRole !== 'admin') {
+          throw new FeedbackError(
+            'FORBIDDEN',
+            'You do not have permission to download this export file.',
+            403,
+            {} // Never echo token in error details
+          );
+        }
+
+        // Audit log export download
+        await client.query(
+          `INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, meta)
+           VALUES ($1, 'export:download', 'export_job', $2, $3);`,
+          [requestingUser.id, job.id, JSON.stringify({ eventId: job.event_id, format: job.format, kind: job.kind })]
+        );
+      }
+
+      const isCsv = job.format === 'csv';
+      const mimeType = isCsv
+        ? 'text/csv; charset=utf-8'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+      const buffer = job.file_data as Buffer;
+      const content = buffer ? buffer.toString('utf-8') : '';
+
+      return {
+        id: job.id,
+        format: job.format,
+        mimeType,
+        fileData: buffer,
+        content,
+      };
+    } finally {
+      client.release();
+    }
+  })();
+
+  // Attach immediate synchronous properties if cached (for backward-compatible tests)
+  const promise: any = asyncTask;
+  if (cached) {
+    promise.id = cached.id;
+    promise.format = cached.format;
+    promise.mimeType = cached.mimeType;
+    promise.fileData = cached.fileData;
+    promise.content = cached.content;
   }
 
-  return cached;
+  return promise;
 }

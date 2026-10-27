@@ -455,7 +455,8 @@ export async function processOutboxMessage(message: any): Promise<void> {
             let providerMsgId: string;
             let acceptedAt: Date;
 
-            if (data.simulateProviderFailure === true) {
+            // Only honor failure simulation in test environment; disabled in production/staging
+            if (process.env.NODE_ENV === 'test' && data.simulateProviderFailure === true) {
               const simRes = await simulateEmailProviderSend({
                 recipientId: userId,
                 subject: `Important Alert for ${eventTitle}`,

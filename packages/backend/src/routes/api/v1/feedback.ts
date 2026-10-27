@@ -33,6 +33,11 @@ const exportRequestSchema = z.object({
   kind: z.enum(['attendees', 'feedback', 'sales_ledger', 'analytics']).default('attendees'),
 });
 
+const feedbackQuerySchema = z.object({
+  page: z.coerce.number().int().min(1, 'Page must be at least 1').default(1),
+  limit: z.coerce.number().int().min(1, 'Limit must be at least 1').max(100, 'Limit cannot exceed 100').default(20),
+});
+
 export const feedbackRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. GET /api/v1/me/feedback-invitations - Pending and completed feedback for attendee
   fastify.get(
@@ -48,15 +53,22 @@ export const feedbackRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
       const client = await pool.connect();
       try {
         const res = await client.query(
-          `SELECT fi.event_id, fi.status, fi.invited_at, fi.last_reminded_at, fi.reminders_sent,
-                  e.title as event_title, e.starts_at as event_date,
-                  ef.id as feedback_id, ef.rating, ef.comment, ef.submitted_at, ef.edited_at
-           FROM tickets t
-           JOIN events e ON t.event_id = e.id
-           LEFT JOIN feedback_invitations fi ON fi.event_id = e.id AND fi.user_id = t.user_id
-           LEFT JOIN event_feedback ef ON ef.event_id = e.id AND ef.user_id = t.user_id
-           WHERE t.user_id = $1 AND t.status = 'CHECKED_IN'
-           ORDER BY e.starts_at DESC;`,
+          `SELECT * FROM (
+             SELECT DISTINCT ON (t.event_id)
+               t.event_id,
+               COALESCE(fi.status::text, CASE WHEN ef.id IS NOT NULL THEN 'COMPLETED' ELSE 'PENDING' END) as status,
+               fi.invited_at, fi.last_reminded_at, fi.reminders_sent,
+               e.title as event_title, e.starts_at as event_date,
+               ef.id as feedback_id, ef.rating, ef.comment, ef.submitted_at, ef.edited_at
+             FROM tickets t
+             JOIN events e ON t.event_id = e.id
+             LEFT JOIN feedback_invitations fi ON fi.event_id = e.id AND fi.user_id = t.user_id
+             LEFT JOIN event_feedback ef ON ef.event_id = e.id AND ef.user_id = t.user_id
+             WHERE (t.user_id = $1 OR t.owner_user_id = $1)
+               AND (t.status = 'CHECKED_IN' OR EXISTS (SELECT 1 FROM checkins c WHERE c.ticket_id = t.id))
+             ORDER BY t.event_id, e.starts_at DESC
+           ) sub
+           ORDER BY sub.event_date DESC;`,
           [req.user!.id]
         );
 
@@ -152,13 +164,20 @@ export const feedbackRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     },
     async (req, reply) => {
       const { id: eventId } = req.params as { id: string };
-      const { page = '1', limit = '20' } = req.query as { page?: string; limit?: string };
+      const parsed = feedbackQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid pagination query parameters (limit must be an integer between 1 and 100)',
+            details: parsed.error.format(),
+            requestId: req.id,
+          },
+        });
+      }
 
-      const feedbackData = await getOrganizerFeedback(
-        eventId,
-        parseInt(page, 10) || 1,
-        parseInt(limit, 10) || 20
-      );
+      const { page, limit } = parsed.data;
+      const feedbackData = await getOrganizerFeedback(eventId, page, limit);
 
       return reply.send(feedbackData);
     }
@@ -319,38 +338,47 @@ export const feedbackRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
         hasPiiExportRole,
       });
 
-      return reply.code(200).send(job);
+      return reply.code(200).send({ job, ...job });
     }
   );
 
-  // 9. GET /api/v1/exports/download/:token - Download Generated Export
+  // 9. GET /api/v1/exports/download/:token - Download Generated Export (Authenticated Owner Only)
   fastify.get(
     '/exports/download/:token',
     {
       config: {
-        auth: false,
-        policy: 'public',
+        auth: true,
+        policy: 'authenticated',
         objectCheck: false,
       },
     },
     async (req, reply) => {
       const { token } = req.params as { token: string };
-      const exportData = getExportDownloadByToken(token);
-
-      if (!exportData) {
-        return reply.code(404).send({
-          error: {
-            code: 'EXPORT_NOT_FOUND',
-            message: 'Export file not found or download link has expired (15-minute validity).',
-            details: { token },
-            requestId: req.id,
-          },
+      try {
+        const exportData = await getExportDownloadByToken(token, {
+          id: req.user!.id,
+          globalRole: req.user!.globalRole,
         });
-      }
 
-      reply.header('Content-Type', exportData.format === 'csv' ? 'text/csv' : 'application/vnd.ms-excel');
-      reply.header('Content-Disposition', `attachment; filename="eventora_export_${Date.now()}.${exportData.format}"`);
-      return reply.send(exportData.content);
+        reply.header('Content-Type', exportData.mimeType);
+        reply.header(
+          'Content-Disposition',
+          `attachment; filename="eventora_export_${Date.now()}.${exportData.format}"`
+        );
+        return reply.send(exportData.fileData);
+      } catch (err: any) {
+        if (err instanceof FeedbackError) {
+          return reply.code(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              details: err.details,
+              requestId: req.id,
+            },
+          });
+        }
+        throw err;
+      }
     }
   );
 };

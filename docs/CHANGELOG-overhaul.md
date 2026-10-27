@@ -1,5 +1,96 @@
 # Eventora Overhaul Changelog
 
+## Phase P21 — Feedback, Notifications, Alerts & Durable Exports Hardening
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Migration 24)
+- **Migration 24 (`Phase 24: Durable Export Storage & Download Tokens`):**
+  - Added additive columns and index to `export_jobs`:
+    - `ALTER TABLE export_jobs ADD COLUMN IF NOT EXISTS file_data BYTEA;`
+    - `ALTER TABLE export_jobs ADD COLUMN IF NOT EXISTS download_token TEXT;`
+    - `CREATE INDEX IF NOT EXISTS idx_export_jobs_download_token ON export_jobs(download_token);`
+  - Registered version 24 in `schema_migrations`.
+  - Updated Drizzle ORM definition in `packages/backend/src/db/schema.ts`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 24 -> 23: drops `idx_export_jobs_download_token`, `download_token`, and `file_data`, and removes migration record 24.
+  - Tested and verified live rollback 24 -> 23 and re-application 23 -> 24 against PostgreSQL.
+
+---
+
+### 2. Feedback Invitations & Attendee Eligibility
+- **Deduplication with `DISTINCT ON (event_id)`:**
+  - Updated `GET /api/v1/me/feedback-invitations` query to use `DISTINCT ON (t.event_id)` sorted by `event_date DESC`.
+  - Prevents attendees holding multiple checked-in tickets for the same event from receiving duplicate invitations.
+- **Checked-In Eligibility & 48-Hour Edit Window:**
+  - Enforced that only checked-in attendees (`status = 'CHECKED_IN'` or verified in `checkins` table) can submit feedback; non-checked-in users receive 403 `INELIGIBLE_NOT_ATTENDED`.
+  - Reviews can be edited within 48 hours of initial submission (`edited_at` set); editing after 48 hours is strictly rejected with 409 `FEEDBACK_LOCKED`.
+
+---
+
+### 3. Alerts Security, Rate Limiting & Global Error Handling
+- **Published vs. Unpublished Event Access Control:**
+  - `GET /events/:id/alerts` on `published` events is open to public/unauthenticated callers.
+  - On unpublished events (`draft`, `under_review`, etc.), unauthenticated requests receive 401 `UNAUTHORIZED`.
+  - Unrelated authenticated users receive 403 `FORBIDDEN`.
+  - Only event ticket holders, event organizers, and global administrators may view unpublished event alerts.
+- **Per-Event Alert Rate Limiting:**
+  - Enforced a hard limit of maximum 5 alerts per 10 minutes per event in `createEventAlert` via index-backed count on `event_alerts(event_id, created_at DESC)`.
+  - Excessive alert creations are rejected with 429 `RATE_LIMIT_EXCEEDED`.
+- **Global Error Handling & Zero Internal Leaks:**
+  - Refactored alert routes to use Fastify's global error handler and typed `NotificationError`.
+  - Eliminated local try/catch blocks that previously leaked `err.message` on 500 internal errors.
+- **Provider Failure Simulation Guard:**
+  - Guarded `simulateProviderFailure` in `packages/backend/src/services/outbox-worker.ts` with `process.env.NODE_ENV === 'test'`, ensuring failure simulation cannot be triggered outside of unit/integration tests.
+
+---
+
+### 4. Durable Exports, ExcelJS, UTF-8 BOM & Security Hardening
+- **Real `.xlsx` Generation via ExcelJS:**
+  - Added `exceljs` library.
+  - Generates authentic OpenXML spreadsheets with correct MIME type `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
+- **UTF-8 BOM on CSV Exports:**
+  - Prepend standard UTF-8 Byte Order Mark (`\uFEFF`, bytes `0xEF, 0xBB, 0xBF`) to all CSV export files to ensure immediate, clean rendering in Microsoft Excel and spreadsheet tools.
+- **Formula Injection Neutralization (CWE-1236):**
+  - All cells starting with formula trigger characters (`=`, `+`, `-`, `@`, `\t`, `\r`) are automatically neutralized with a leading single quote (`'`) across both CSV and XLSX generators.
+- **Durable Database Storage:**
+  - Export payloads are saved as binary `file_data BYTEA` with unique `download_token` in `export_jobs` table, surviving process restarts and serverless cold starts.
+- **Authenticated Owner Download & 15-Minute Expiry:**
+  - Secured `GET /api/v1/exports/download/:token` with `{ auth: true, policy: 'authenticated' }`.
+  - Enforced requester owner verification: only the creating user or global admin can download the export file; other users receive 403 `FORBIDDEN`.
+  - Links expire after 15 minutes (`404 EXPORT_EXPIRED`).
+- **Never Echo Token in Errors:**
+  - Neither `EXPORT_NOT_FOUND` nor `EXPORT_EXPIRED` nor `FORBIDDEN` echoes the download token in `details` or `message`.
+- **Audit Logging:**
+  - Structured immutable entries written to `audit_logs` for both `export:generate` and `export:download`.
+- **NaN-Safe Bounded Pagination:**
+  - Bounded `limit` parameters to 1–100 with NaN-safe Zod validation across `/events/:id/alerts`, `/me/notifications`, and `/organizer/events/:id/feedback`.
+
+---
+
+### 5. Verification & Test Suite
+- `tests/unit/phase-p21-feedback-notifications-exports.test.ts`: 13 quality gate tests covering:
+  1. `DISTINCT ON (event_id)` deduplication in feedback invitations.
+  2. Checked-in eligibility check (`403 INELIGIBLE_NOT_ATTENDED`).
+  3. 48-hour feedback edit window (`409 FEEDBACK_LOCKED`).
+  4. Alerts visibility authorization (public on published; restricted to ticket holders/organizers on draft).
+  5. NaN-safe 1–100 bounds on `limit` query parameters across alerts, notifications, and feedback.
+  6. Per-event alert rate limit (`429 RATE_LIMIT_EXCEEDED` on >5 alerts in 10 mins).
+  7. Global error handler usage without leaking internal 500 error messages.
+  8. Formula injection neutralization (`= + - @ \t \r`).
+  9. UTF-8 BOM on CSV exports (`\uFEFF`).
+  10. Real `.xlsx` OpenXML generation via ExcelJS with verified MIME type.
+  11. Durable export store, authenticated owner download, and audit logging.
+  12. 15-minute export expiry and zero token echo in error responses.
+  13. Migration 24 rollback (24 -> 23) and re-application (23 -> 24).
+- Full suite verification across all unit and security tests.
+
+---
+
 ## Phase P20 — Passport, Cross-College, Certificates & Eligibility Hardening
 
 **Date:** 2026-10-27  
