@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { apiClient } from '@/lib/api-client';
+import { VerificationQueueView } from '@/components/admin/VerificationQueueView';
 import {
   Activity,
   Users,
@@ -408,6 +409,19 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
           <FileText className="w-3.5 h-3.5" />
           <span>Audit Trail</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => handleTabChange('admin-verification')}
+          className={`px-3 py-1.5 font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
+            activeTab === 'admin-verification'
+              ? 'bg-brand text-white shadow-xs'
+              : 'text-text-muted hover:text-text bg-surface-2'
+          }`}
+        >
+          <ShieldAlert className="w-3.5 h-3.5" />
+          <span>Verification Queue (P13)</span>
+        </button>
       </div>
 
       {/* Tab 1: Platform Health */}
@@ -769,6 +783,11 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Tab 5: Verification Queue */}
+      {activeTab === 'admin-verification' && (
+        <VerificationQueueView isAdmin={true} />
       )}
 
       {/* Role Change Modal */}

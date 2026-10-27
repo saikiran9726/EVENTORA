@@ -30,6 +30,7 @@ import { ExportDialog } from '@/components/analytics/ExportDialog';
 import { AlertComposer } from '@/components/organizer/AlertComposer';
 import { FormBuilder } from '@/components/form-builder/FormBuilder';
 import { FormSubmissionsView } from '@/components/form-builder/FormSubmissionsView';
+import { VerificationQueueView } from '@/components/admin/VerificationQueueView';
 import { apiClient } from '@/lib/api-client';
 import { reportError } from '@/lib/error-reporter';
 
@@ -117,7 +118,7 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
   onProposeEvent,
 }) => {
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights' | 'volunteers' | 'alerts' | 'form'>('roster');
+  const [activeTab, setActiveTab] = useState<'roster' | 'ledger' | 'insights' | 'volunteers' | 'alerts' | 'form' | 'verification'>('roster');
   const [formSubTab, setFormSubTab] = useState<'builder' | 'submissions'>('builder');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'studentName' | 'rollNumber' | 'checkInStatus'>('studentName');
@@ -609,6 +610,16 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
               }`}
             >
               Registration Forms (P11)
+            </button>
+            <button
+              onClick={() => setActiveTab('verification')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                activeTab === 'verification'
+                  ? 'bg-surface text-text shadow-sm'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Verification Queue (P13)
             </button>
           </div>
 
@@ -1682,6 +1693,10 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
             <FormSubmissionsView eventId={selectedEventId} />
           )}
         </div>
+      )}
+
+      {activeTab === 'verification' && (
+        <VerificationQueueView />
       )}
 
       {/* Export Dialog Modal */}

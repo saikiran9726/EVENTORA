@@ -224,6 +224,52 @@ export class FakeYouPiServer {
         );
       }
 
+      // 3. GET /youpi.js (One-script checkout client)
+      if (method === 'GET' && (url.pathname === '/youpi.js' || url.pathname === '/checkout.js')) {
+        res.writeHead(200, {
+          'Content-Type': 'application/javascript',
+          'Access-Control-Allow-Origin': '*',
+        });
+        return res.end(`
+          (function() {
+            window.Youpi = {
+              pay: function(opts) {
+                console.log('[FakeYouPi] pay invoked for order:', opts.order_id);
+                if (typeof opts.handler === 'function') {
+                  setTimeout(function() {
+                    opts.handler({
+                      order_id: opts.order_id,
+                      payment_id: 'fake_pay_' + opts.order_id,
+                      status: 'SUCCESS'
+                    });
+                  }, 50);
+                }
+              }
+            };
+          })();
+        `);
+      }
+
+      // 4. GET /pay/:id (Hosted checkout portal mock)
+      if (method === 'GET' && url.pathname.startsWith('/pay/')) {
+        res.writeHead(200, {
+          'Content-Type': 'text/html',
+          'Access-Control-Allow-Origin': '*',
+        });
+        return res.end(`
+          <!DOCTYPE html>
+          <html>
+            <head><title>YouPI-PG Hosted Checkout</title></head>
+            <body>
+              <div id="youpi-portal">
+                <h2>YouPI-PG UPI QR Portal</h2>
+                <p>Simulated hosted payment session</p>
+              </div>
+            </body>
+          </html>
+        `);
+      }
+
       // Fallback 404
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } }));

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { pool } from '../../../db/index.js';
 import {
   initiateCheckout,
+  getPaymentStatus,
   verifyPayment,
   processWebhook,
   processYouPiWebhook,
@@ -117,6 +118,59 @@ export async function handleYouPiWebhookRoute(req: FastifyRequest, reply: Fastif
   }
 }
 
+export async function checkPaymentStatusOwnership(req: FastifyRequest) {
+  const { id } = req.params as { id: string };
+  const user = req.user!;
+  if (user.globalRole === 'admin') return true;
+  const client = await pool.connect();
+  try {
+    const res = await client.query(
+      `SELECT b.user_id, e.organizer_id
+       FROM payments p
+       JOIN bookings b ON p.booking_id = b.id
+       JOIN events e ON b.event_id = e.id
+       WHERE (p.id::text = $1 OR p.provider_order_id = $1 OR p.booking_id::text = $1);`,
+      [id]
+    );
+    if (res.rows.length === 0) return true; // Let service throw 404
+    if (res.rows[0].user_id === user.id) return true;
+    const orgCheck = await client.query(
+      `SELECT 1 FROM organizer_members WHERE organizer_id = $1 AND user_id = $2 AND status = 'active';`,
+      [res.rows[0].organizer_id, user.id]
+    );
+    return orgCheck.rows.length > 0;
+  } finally {
+    client.release();
+  }
+}
+
+export async function handleGetPaymentStatusRoute(req: FastifyRequest, reply: FastifyReply) {
+  const { id: paymentId } = req.params as { id: string };
+  const user = req.user!;
+
+  try {
+    const status = await getPaymentStatus({
+      paymentId,
+      userId: user.id,
+      userRole: user.globalRole,
+    });
+
+    return reply.code(200).send(status);
+  } catch (err: any) {
+    if (err instanceof PaymentError) {
+      return reply.code(err.status).send({
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details || {},
+          requestId: req.id,
+        },
+      });
+    }
+    throw err;
+  }
+}
+
 export const paymentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. POST /api/v1/bookings/:id/checkout (Owner creates hold + payment order)
   fastify.post(
@@ -165,6 +219,19 @@ export const paymentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         throw err;
       }
     }
+  );
+
+  // 1b. GET /api/v1/payments/:id/status (Owner, Admin, or Organizer checks authoritative status)
+  fastify.get(
+    '/payments/:id/status',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: checkPaymentStatusOwnership,
+      },
+    },
+    handleGetPaymentStatusRoute
   );
 
   // 2. POST /api/v1/payments/verify (Server re-queries adapter; browser result is a hint only)
@@ -545,7 +612,7 @@ export const paymentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     {
       config: {
         auth: true,
-        policy: 'event:manage:owned',
+        policy: 'authenticated',
         objectCheck: async (req) => {
           const { id: refundId } = req.params as { id: string };
           const user = req.user!;
@@ -620,8 +687,21 @@ export const paymentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     {
       config: {
         auth: true,
-        policy: 'event:manage:owned',
-        objectCheck: false,
+        policy: 'authenticated',
+        objectCheck: async (req) => {
+          const user = req.user!;
+          if (user.globalRole === 'admin') return true;
+          const client = await pool.connect();
+          try {
+            const orgRes = await client.query(
+              `SELECT 1 FROM organizer_members WHERE user_id = $1 AND status = 'active';`,
+              [user.id]
+            );
+            return orgRes.rows.length > 0;
+          } finally {
+            client.release();
+          }
+        },
       },
     },
     async (req, reply) => {
@@ -637,7 +717,7 @@ export const paymentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
                    p.currency, p.status, p.utr, p.verification_queue_reason,
                    p.raw_webhook_payload, p.created_at, p.updated_at,
                    b.event_id, e.title as event_title, e.organizer_id,
-                   u.email as attendee_email, u.name as attendee_name
+                   u.email as attendee_email, u.display_name as attendee_name
             FROM payments p
             JOIN bookings b ON p.booking_id = b.id
             JOIN events e ON b.event_id = e.id
@@ -652,7 +732,7 @@ export const paymentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
                    p.currency, p.status, p.utr, p.verification_queue_reason,
                    p.raw_webhook_payload, p.created_at, p.updated_at,
                    b.event_id, e.title as event_title, e.organizer_id,
-                   u.email as attendee_email, u.name as attendee_name
+                   u.email as attendee_email, u.display_name as attendee_name
             FROM payments p
             JOIN bookings b ON p.booking_id = b.id
             JOIN events e ON b.event_id = e.id
@@ -681,7 +761,7 @@ export const paymentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     {
       config: {
         auth: true,
-        policy: 'event:manage:owned',
+        policy: 'authenticated',
         objectCheck: async (req) => {
           const { id: paymentId } = req.params as { id: string };
           const user = req.user!;
