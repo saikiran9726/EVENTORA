@@ -1,6 +1,7 @@
 import { pool } from '../db/index.js';
 import crypto from 'crypto';
 import { BookingError } from './booking.js';
+import { createTicketWithRetry } from './qr-ticket.js';
 
 export interface JoinWaitlistParams {
   userId: string;
@@ -326,17 +327,13 @@ export async function claimOffer(params: ClaimOfferParams) {
     );
 
     // 6. Generate digital ticket
-    const rawToken = crypto.randomBytes(32).toString('base64url');
-    const qrHash = crypto.createHash('sha256').update(rawToken).digest();
-    const ticketCode = `TCK-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-
-    const ticketRes = await client.query(
-      `INSERT INTO tickets (
-         booking_id, ticket_type_id, user_id, owner_user_id, event_id, ticket_code, qr_payload_hash, qr_token_hash, status
-       ) VALUES ($1, $2, $3, $3, $4, $5, $6, $6, 'VALID')
-       RETURNING id, ticket_code, status, created_at;`,
-      [booking.id, tt.id, userId, claimedEntry.event_id, ticketCode, qrHash]
-    );
+    const ticketRes = await createTicketWithRetry(client, {
+      bookingId: booking.id,
+      ticketTypeId: tt.id,
+      userId,
+      ownerUserId: userId,
+      eventId: claimedEntry.event_id,
+    });
 
     // 7. Write outbox
     await client.query(
@@ -359,8 +356,11 @@ export async function claimOffer(params: ClaimOfferParams) {
     return {
       booking,
       ticket: {
-        ...ticketRes.rows[0],
-        qrTokenPreview: rawToken,
+        id: ticketRes.id,
+        ticket_code: ticketRes.ticket_code,
+        status: ticketRes.status,
+        created_at: ticketRes.created_at,
+        qrTokenPreview: ticketRes.rawToken,
       },
     };
   } catch (err) {

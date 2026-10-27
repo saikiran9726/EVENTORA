@@ -24,6 +24,17 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 18 -> 17: Ticket QR Secure Tokens, Rotation & Downloads
+    if (currentVersion >= 18 && targetVersion < 18) {
+      console.log('[Rollback] Rolling back version 18 (Phase 18)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_tickets_qr_token;
+        ALTER TABLE tickets DROP COLUMN IF EXISTS qr_token_rotated_at;
+        ALTER TABLE tickets DROP COLUMN IF EXISTS qr_token;
+        DELETE FROM schema_migrations WHERE version = 18;
+      `);
+    }
+
     // Rollback step 17 -> 16: YouPI-PG Payments Core & Webhook V2
     if (currentVersion >= 17 && targetVersion < 17) {
       console.log('[Rollback] Rolling back version 17 (Phase 17)...');

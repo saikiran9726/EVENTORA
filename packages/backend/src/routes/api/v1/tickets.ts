@@ -1,4 +1,4 @@
-import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { FastifyInstance, FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   scanTicket,
@@ -10,8 +10,142 @@ import {
   getUserCertificates,
   getCertificateDownload,
   TicketScanError,
+  buildTicketQrPayload,
+  generateTicketQrSvg,
+  generateTicketPdf,
+  generateTicketPng,
+  rotateTicketToken,
+  getInitials,
 } from '../../../services/qr-ticket.js';
 import { pool } from '../../../db/index.js';
+
+export async function checkTicketAccess(req: FastifyRequest): Promise<boolean> {
+  const { id } = req.params as { id: string };
+  const user = req.user!;
+  if (user.globalRole === 'admin') return true;
+
+  const client = await pool.connect();
+  try {
+    const res = await client.query(
+      `SELECT user_id, owner_user_id, event_id FROM tickets WHERE id = $1;`,
+      [id]
+    );
+    if (res.rows.length === 0) return false;
+    const t = res.rows[0];
+    if (t.user_id === user.id || t.owner_user_id === user.id) return true;
+
+    // Check staff checkin assignment
+    const staffRes = await client.query(
+      `SELECT 1 FROM event_staff_assignments
+       WHERE event_id = $1 AND user_id = $2 AND capability = 'checkin';`,
+      [t.event_id, user.id]
+    );
+    if (staffRes.rows.length > 0) return true;
+
+    // Check organizer membership
+    const orgRes = await client.query(
+      `SELECT 1 FROM events e
+       JOIN organizer_members om ON om.organizer_id = e.organizer_id
+       WHERE e.id = $1 AND om.user_id = $2 AND om.status = 'active';`,
+      [t.event_id, user.id]
+    );
+    return orgRes.rows.length > 0;
+  } finally {
+    client.release();
+  }
+}
+
+export async function handleGetTicketQrSvgRoute(req: FastifyRequest, reply: FastifyReply) {
+  const { id } = req.params as { id: string };
+  const ticket = await getTicketById(id);
+  if (!ticket) {
+    return reply.code(404).send({
+      error: {
+        code: 'TICKET_NOT_FOUND',
+        message: `Ticket ${id} not found`,
+        details: { ticketId: id },
+        requestId: req.id,
+      },
+    });
+  }
+
+  if (ticket.status === 'REVOKED' || ticket.status === 'CANCELLED') {
+    return reply.code(410).send({
+      error: {
+        code: 'TICKET_REVOKED',
+        message: `Ticket is ${ticket.status}. QR cannot be displayed.`,
+        details: { ticketId: id, status: ticket.status },
+        requestId: req.id,
+      },
+    });
+  }
+
+  const qrPayload = buildTicketQrPayload(ticket.id, ticket.qr_token, ticket.ticket_code);
+  const svg = await generateTicketQrSvg({
+    ticketId: ticket.id,
+    qrPayload,
+    ticketCode: ticket.ticket_code,
+  });
+
+  return reply
+    .type('image/svg+xml')
+    .header('Cache-Control', 'private, no-cache, no-store, must-revalidate')
+    .send(svg);
+}
+
+export async function handleGetTicketDownloadRoute(req: FastifyRequest, reply: FastifyReply) {
+  const { id } = req.params as { id: string };
+  const { format = 'pdf' } = (req.query as any) || {};
+
+  const ticket = await getTicketById(id);
+  if (!ticket) {
+    return reply.code(404).send({
+      error: {
+        code: 'TICKET_NOT_FOUND',
+        message: `Ticket ${id} not found`,
+        details: { ticketId: id },
+        requestId: req.id,
+      },
+    });
+  }
+
+  if (ticket.status === 'REVOKED' || ticket.status === 'CANCELLED') {
+    return reply.code(410).send({
+      error: {
+        code: 'TICKET_REVOKED',
+        message: `Ticket is ${ticket.status} and cannot be downloaded.`,
+        details: { ticketId: id, status: ticket.status },
+        requestId: req.id,
+      },
+    });
+  }
+
+  const qrPayload = buildTicketQrPayload(ticket.id, ticket.qr_token, ticket.ticket_code);
+  const attendeeInitials = getInitials(ticket.attendee_name);
+
+  if (format === 'png') {
+    const pngBuffer = await generateTicketPng({ qrPayload });
+    return reply
+      .type('image/png')
+      .header('Content-Disposition', `attachment; filename="ticket-${ticket.ticket_code}.png"`)
+      .send(pngBuffer);
+  }
+
+  const pdfBuffer = await generateTicketPdf({
+    ticketCode: ticket.ticket_code,
+    eventTitle: ticket.event_title,
+    eventStartsAt: ticket.event_starts_at,
+    venueName: ticket.venue_name,
+    tierName: ticket.tier_name,
+    attendeeInitials,
+    qrPayload,
+  });
+
+  return reply
+    .type('application/pdf')
+    .header('Content-Disposition', `attachment; filename="ticket-${ticket.ticket_code}.pdf"`)
+    .send(pdfBuffer);
+}
 
 const scanRequestSchema = z.object({
   token: z.string().min(1, 'Scan token or QR URL is required'),
@@ -47,41 +181,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       config: {
         auth: true,
         policy: 'authenticated',
-        objectCheck: async (req) => {
-          const { id } = req.params as { id: string };
-          const user = req.user!;
-          if (user.globalRole === 'admin') return true;
-
-          const client = await pool.connect();
-          try {
-            const res = await client.query(
-              `SELECT user_id, owner_user_id, event_id FROM tickets WHERE id = $1;`,
-              [id]
-            );
-            if (res.rows.length === 0) return false;
-            const t = res.rows[0];
-            if (t.user_id === user.id || t.owner_user_id === user.id) return true;
-
-            // Check staff checkin assignment
-            const staffRes = await client.query(
-              `SELECT 1 FROM event_staff_assignments
-               WHERE event_id = $1 AND user_id = $2 AND capability = 'checkin';`,
-              [t.event_id, user.id]
-            );
-            if (staffRes.rows.length > 0) return true;
-
-            // Check organizer membership
-            const orgRes = await client.query(
-              `SELECT 1 FROM events e
-               JOIN organizer_members om ON om.organizer_id = e.organizer_id
-               WHERE e.id = $1 AND om.user_id = $2 AND om.status = 'active';`,
-              [t.event_id, user.id]
-            );
-            return orgRes.rows.length > 0;
-          } finally {
-            client.release();
-          }
-        },
+        objectCheck: checkTicketAccess,
       },
     },
     async (req, reply) => {
@@ -99,6 +199,63 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       }
       return reply.send({ ticket });
     }
+  );
+
+  // 2b. GET /api/v1/tickets/:id/qr.svg - Render vector SVG QR code with human code
+  fastify.get(
+    '/tickets/:id/qr.svg',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: checkTicketAccess,
+      },
+    },
+    handleGetTicketQrSvgRoute
+  );
+
+  // 2c. POST /api/v1/tickets/:id/regenerate-qr - Rotates ticket QR token
+  fastify.post(
+    '/tickets/:id/regenerate-qr',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: checkTicketAccess,
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      try {
+        const result = await rotateTicketToken(id, req.user!.id, 'Regenerated via ticket portal');
+        return reply.code(200).send(result);
+      } catch (err: any) {
+        if (err instanceof TicketScanError) {
+          return reply.code(err.statusCode).send({
+            error: {
+              code: err.outcome,
+              message: err.message,
+              details: err.details,
+              requestId: req.id,
+            },
+          });
+        }
+        throw err;
+      }
+    }
+  );
+
+  // 2d. GET /api/v1/tickets/:id/download - Download ticket pass as PDF or PNG
+  fastify.get(
+    '/tickets/:id/download',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: checkTicketAccess,
+      },
+    },
+    handleGetTicketDownloadRoute
   );
 
   // 3. POST /api/v1/events/:id/check-in/scan - Staff Check-in Scanner

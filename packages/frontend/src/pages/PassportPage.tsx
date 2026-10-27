@@ -468,7 +468,9 @@ export const PassportPage: React.FC<{
 
                     <div className="p-2.5 bg-surface-2 rounded-lg flex items-center justify-center border border-border">
                       <QRDisplay
-                        ticketId={t.ticket_code}
+                        ticketId={t.id}
+                        actualTicketId={t.id}
+                        ticketCode={t.ticket_code}
                         qrPayloadPreview={`https://eventora-jet.vercel.app/verify/${t.ticket_code}`}
                         status={t.status === 'VALID' ? 'VALID' : 'CANCELLED'}
                         eventName={t.event_title || 'Campus Event'}

@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { getPaymentAdapter, PaymentAdapterError } from './payment-adapter.js';
 import { promoteNext } from './waitlist.js';
 import { BookingError } from './booking.js';
+import { createTicketWithRetry } from './qr-ticket.js';
 
 export class PaymentError extends BookingError {
   constructor(code: string, message: string, status = 400, details?: Record<string, any>) {
@@ -131,7 +132,7 @@ export async function initiateCheckout(params: InitiateCheckoutParams) {
 
     // 1. Fetch booking with row lock
     const bRes = await client.query(
-      `SELECT b.id, b.user_id, b.event_id, b.status, b.total_paise, b.expires_at, b.created_at, e.organizer_id
+      `SELECT b.id, b.user_id, b.event_id, b.status, b.total_paise, b.expires_at, b.created_at, e.organizer_id, e.title as event_title
        FROM bookings b
        JOIN events e ON b.event_id = e.id
        WHERE b.id = $1 FOR UPDATE;`,
@@ -184,7 +185,7 @@ export async function initiateCheckout(params: InitiateCheckoutParams) {
 
     // 3. Compute exact server total from stored items
     const itemsRes = await client.query(
-      `SELECT bi.ticket_type_id, bi.quantity, tt.price_paise
+      `SELECT bi.ticket_type_id, bi.quantity, tt.name as ticket_name, tt.price_paise
        FROM booking_items bi
        JOIN ticket_types tt ON bi.ticket_type_id = tt.id
        WHERE bi.booking_id = $1;`,
@@ -293,6 +294,9 @@ export async function initiateCheckout(params: InitiateCheckoutParams) {
 
     await client.query('COMMIT');
 
+    const firstTicketName = itemsRes.rows[0]?.ticket_name || 'Standard Admission';
+    const totalQuantity = itemsRes.rows.reduce((acc: number, r: any) => acc + (Number(r.quantity) || 1), 0) || 1;
+
     return {
       bookingId,
       paymentId,
@@ -304,6 +308,10 @@ export async function initiateCheckout(params: InitiateCheckoutParams) {
       queueStatus,
       expiresAt: booking.expires_at,
       isSimulated: adapter.name === 'simulator',
+      eventId: booking.event_id,
+      eventTitle: booking.event_title,
+      ticketName: firstTicketName,
+      quantity: totalQuantity,
       warning:
         'YouPI-PG operates a single-slot FIFO queue per receiving VPA. If your payment is queued, seat hold will be extended once your slot activates.',
     };
@@ -764,20 +772,15 @@ export async function processYouPiWebhook(params: YouPiWebhookProcessParams) {
     const issuedTickets = [];
     for (const item of itemsRes.rows) {
       for (let i = 0; i < item.quantity; i++) {
-        const rawToken = crypto.randomBytes(32).toString('base64url');
-        const tokenHash = crypto.createHash('sha256').update(rawToken).digest();
-        const ticketCode = `TCK-${Date.now().toString().slice(-6)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-
-        const tRes = await client.query(
-          `INSERT INTO tickets (
-             booking_id, ticket_type_id, user_id, owner_user_id, event_id, ticket_code, qr_payload_hash, qr_token_hash, status
-           ) VALUES ($1, $2, $3, $3, $4, $5, $6, $6, 'VALID')
-           RETURNING id, ticket_code;`,
-          [payment.booking_id, item.ticket_type_id, payment.user_id, payment.event_id, ticketCode, tokenHash]
-        );
+        const tRes = await createTicketWithRetry(client, {
+          bookingId: payment.booking_id,
+          ticketTypeId: item.ticket_type_id,
+          userId: payment.user_id,
+          eventId: payment.event_id,
+        });
         issuedTickets.push({
-          id: tRes.rows[0].id,
-          ticketCode: tRes.rows[0].ticket_code,
+          id: tRes.id,
+          ticketCode: tRes.ticket_code,
         });
       }
     }
@@ -923,18 +926,16 @@ export async function resolveVerificationQueue(params: ResolveVerificationQueueP
       const issuedTickets = [];
       for (const it of itemsRes.rows) {
         for (let i = 0; i < it.quantity; i++) {
-          const rawToken = crypto.randomBytes(32).toString('base64url');
-          const tokenHash = crypto.createHash('sha256').update(rawToken).digest();
-          const ticketCode = `TCK-MANUAL-${Date.now().toString().slice(-6)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-
-          const tRes = await client.query(
-            `INSERT INTO tickets (
-               booking_id, ticket_type_id, user_id, owner_user_id, event_id, ticket_code, qr_payload_hash, qr_token_hash, status
-             ) VALUES ($1, $2, $3, $3, $4, $5, $6, $6, 'VALID')
-             RETURNING id, ticket_code;`,
-            [payment.booking_id, it.ticket_type_id, payment.user_id, payment.event_id, ticketCode, tokenHash]
-          );
-          issuedTickets.push(tRes.rows[0]);
+          const tRes = await createTicketWithRetry(client, {
+            bookingId: payment.booking_id,
+            ticketTypeId: it.ticket_type_id,
+            userId: payment.user_id,
+            eventId: payment.event_id,
+          });
+          issuedTickets.push({
+            id: tRes.id,
+            ticket_code: tRes.ticket_code,
+          });
         }
       }
 
@@ -1263,21 +1264,16 @@ export async function executePaymentConfirmationTransaction(params: {
     const issuedTickets = [];
     for (const item of itemsRes.rows) {
       for (let i = 0; i < item.quantity; i++) {
-        const rawToken = crypto.randomBytes(32).toString('base64url');
-        const tokenHash = crypto.createHash('sha256').update(rawToken).digest();
-        const ticketCode = `TCK-${Date.now().toString().slice(-6)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-
-        const tRes = await client.query(
-          `INSERT INTO tickets (
-             booking_id, ticket_type_id, user_id, owner_user_id, event_id, ticket_code, qr_payload_hash, qr_token_hash, status
-           ) VALUES ($1, $2, $3, $3, $4, $5, $6, $6, 'VALID')
-           RETURNING id, ticket_code;`,
-          [payment.booking_id, item.ticket_type_id, payment.user_id, payment.event_id, ticketCode, tokenHash]
-        );
+        const tRes = await createTicketWithRetry(client, {
+          bookingId: payment.booking_id,
+          ticketTypeId: item.ticket_type_id,
+          userId: payment.user_id,
+          eventId: payment.event_id,
+        });
         issuedTickets.push({
-          id: tRes.rows[0].id,
-          ticketCode: tRes.rows[0].ticket_code,
-          qrPayload: rawToken,
+          id: tRes.id,
+          ticketCode: tRes.ticket_code,
+          qrPayload: tRes.rawToken,
         });
       }
     }
@@ -1653,3 +1649,90 @@ export async function reconcileExpiredHolds(): Promise<{ reconciledCount: number
     client.release();
   }
 }
+
+export interface GetPaymentStatusParams {
+  paymentId: string;
+  userId: string;
+  userRole?: string;
+}
+
+/**
+ * Retrieves authoritative payment status, seat hold, and fulfillment details.
+ * Owner-only, admin, or event organizer access enforced.
+ */
+export async function getPaymentStatus(params: GetPaymentStatusParams) {
+  const { paymentId, userId, userRole } = params;
+  const client = await pool.connect();
+  try {
+    const res = await client.query(
+      `SELECT p.id, p.booking_id, p.provider, p.provider_order_id, p.amount_paise,
+              p.currency, p.status, p.utr, p.slot_active, p.queue_position,
+              p.checkout_url, p.verification_queue_reason, p.created_at, p.updated_at,
+              b.user_id, b.status as booking_status, b.expires_at as booking_expires_at,
+              e.id as event_id, e.title as event_title, e.organizer_id,
+              r.number as receipt_number, r.issued_at as receipt_issued_at
+       FROM payments p
+       JOIN bookings b ON p.booking_id = b.id
+       JOIN events e ON b.event_id = e.id
+       LEFT JOIN receipts r ON b.id = r.booking_id
+       WHERE (p.id::text = $1 OR p.provider_order_id = $1 OR p.booking_id::text = $1);`,
+      [paymentId]
+    );
+
+    if (res.rows.length === 0) {
+      throw new PaymentError('PAYMENT_NOT_FOUND', 'Payment session not found', 404);
+    }
+
+    const row = res.rows[0];
+
+    // Authorization: owner or admin or event organizer
+    if (userRole !== 'admin' && row.user_id !== userId) {
+      const orgMember = await client.query(
+        `SELECT 1 FROM organizer_members WHERE organizer_id = $1 AND user_id = $2 AND status = 'active';`,
+        [row.organizer_id, userId]
+      );
+      if (orgMember.rows.length === 0) {
+        throw new PaymentError('FORBIDDEN', 'Access denied to payment status', 403);
+      }
+    }
+
+    // If payment or booking is confirmed/success, fetch issued tickets
+    let tickets: any[] = [];
+    if (row.status === 'SUCCESS' || row.booking_status === 'CONFIRMED') {
+      const tRes = await client.query(
+        `SELECT id, ticket_code, status, created_at
+         FROM tickets
+         WHERE booking_id = $1;`,
+        [row.booking_id]
+      );
+      tickets = tRes.rows;
+    }
+
+    return {
+      id: row.id,
+      bookingId: row.booking_id,
+      orderId: row.provider_order_id,
+      provider: row.provider,
+      status: row.status,
+      bookingStatus: row.booking_status,
+      bookingExpiresAt: row.booking_expires_at,
+      amountPaise: Number(row.amount_paise),
+      currency: row.currency,
+      utr: row.utr,
+      slotActive: Boolean(row.slot_active),
+      queuePosition: row.queue_position || 0,
+      checkoutUrl: row.checkout_url,
+      verificationQueueReason: row.verification_queue_reason,
+      receiptNumber: row.receipt_number,
+      receiptIssuedAt: row.receipt_issued_at,
+      eventId: row.event_id,
+      eventTitle: row.event_title,
+      tickets,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  } finally {
+    client.release();
+  }
+}
+

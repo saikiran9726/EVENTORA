@@ -13,6 +13,7 @@ import { apiClient } from '@/lib/api-client';
 
 export interface BookingRecord {
   id: string;
+  ticketId?: string;
   eventId: string;
   eventTitle: string;
   status: string;
@@ -53,6 +54,7 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
           const tCode = b.ticket_code || associatedTicket?.ticket_code || b.ticketCode;
           return {
             id: b.id,
+            ticketId: associatedTicket?.id || b.ticket_id,
             eventId: b.event_id || b.eventId,
             eventTitle: b.event_title || b.eventTitle || associatedTicket?.event_title || 'Campus Event',
             status: b.status || (associatedTicket ? 'CONFIRMED' : 'PENDING'),
@@ -71,6 +73,7 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
           if (!mapped.some((m) => m.id === t.booking_id || m.ticketCode === t.ticket_code)) {
             mapped.push({
               id: t.booking_id || t.id,
+              ticketId: t.id,
               eventId: t.event_id,
               eventTitle: t.event_title || 'Campus Event',
               status: t.status === 'VALID' ? 'CONFIRMED' : t.status,
@@ -239,11 +242,14 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
                 {/* Digital QR Pass */}
                 <div className="mt-3 p-3 bg-surface-2 rounded-lg flex items-center justify-center border border-border/80">
                   <QRDisplay
-                    ticketId={booking.ticketCode || booking.id.slice(0, 8)}
+                    ticketId={booking.ticketId || booking.id}
+                    actualTicketId={booking.ticketId}
+                    ticketCode={booking.ticketCode}
                     qrPayloadPreview={booking.qrPayload || `dGVzdF9xcl90b2tlbl8zMl9ieXRlc19yYW5kb21fc2VjdXJl_${booking.id.slice(0, 8)}`}
                     status={booking.status === 'CONFIRMED' ? 'VALID' : 'CANCELLED'}
                     eventName={booking.eventTitle}
                     attendeeName="Student Attendee"
+                    onRotated={fetchBookings}
                   />
                 </div>
               </div>

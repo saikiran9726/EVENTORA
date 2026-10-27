@@ -16,6 +16,8 @@ const ConfigSchema = z.object({
   WORKER_HEARTBEAT_THRESHOLD_SECONDS: z.coerce.number().default(30),
   INTERNAL_NETWORK_CIDR: z.string().default('127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'),
   AUTH_RATE_LIMIT_REGISTER_MAX: z.coerce.number().default(10),
+  APP_HOST: z.string().default('campus.eventora.org'),
+  QR_HMAC_SECRET: z.string().default('qr_hmac_secret_key_32_bytes_min_prod'),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;

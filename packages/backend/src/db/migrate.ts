@@ -1306,7 +1306,8 @@ export async function runMigrations() {
         (14, 'Phase 14: Event Status History System Actor, Completion Index & Scan Outcome'),
         (15, 'Phase 15: Event Pricing Type, Currency & Tier Backfill'),
         (16, 'Phase 16: Custom Registration Form Builder & Versioned Fields'),
-        (17, 'Phase 17: YouPI-PG Payments Core, Webhook V2 & Audit Trail')
+        (17, 'Phase 17: YouPI-PG Payments Core, Webhook V2 & Audit Trail'),
+        (18, 'Phase 18: Ticket QR Secure Tokens, Rotation & Downloads')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1476,6 +1477,11 @@ export async function runMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_reconciliation_items_utr ON reconciliation_items(utr);
       CREATE INDEX IF NOT EXISTS idx_reconciliation_items_record_id ON reconciliation_items(record_id);
+
+      -- Phase 18: Ticket QR Secure Tokens, Rotation & Downloads
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS qr_token TEXT;
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS qr_token_rotated_at TIMESTAMPTZ;
+      CREATE INDEX IF NOT EXISTS idx_tickets_qr_token ON tickets(qr_token) WHERE qr_token IS NOT NULL;
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

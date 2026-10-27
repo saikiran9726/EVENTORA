@@ -1,5 +1,8 @@
 import crypto from 'crypto';
+import QRCode from 'qrcode';
+import PDFDocument from 'pdfkit';
 import { pool } from '../db/index.js';
+import { config } from '../config.js';
 
 // Crockford Base32 alphabet (32 characters, excludes I, L, O, U to avoid visual ambiguity)
 const CROCKFORD_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -67,6 +70,264 @@ export function generateQrToken(host: string = 'eventora.campus.edu'): {
   const qrUrl = `https://${host}/t/${token}`;
 
   return { token, tokenHash, qrUrl };
+}
+
+/**
+ * Ambiguous-character-free ticket code with high random entropy (48 bits).
+ * Format: TCK-YYYY-BASE36TIMESTAMP-12HEXCHARS
+ * e.g. TCK-2026-M2X5Y8-9F4B7A1C3E2D
+ */
+export function generateTicketCode(): string {
+  const year = new Date().getFullYear();
+  const timePart = Date.now().toString(36).toUpperCase();
+  const randPart = crypto.randomBytes(6).toString('hex').toUpperCase();
+  return `TCK-${year}-${timePart}-${randPart}`;
+}
+
+export interface CreateTicketParams {
+  bookingId: string;
+  ticketTypeId: string;
+  userId: string;
+  ownerUserId?: string;
+  eventId: string;
+  rawToken?: string;
+}
+
+/**
+ * Inserts a new ticket row with collision-safe retry loop catching Postgres 23505 uniqueness violations.
+ */
+export async function createTicketWithRetry(
+  client: any,
+  params: CreateTicketParams,
+  maxRetries = 5
+) {
+  const rawToken = params.rawToken || crypto.randomBytes(32).toString('base64url');
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest();
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const ticketCode = generateTicketCode();
+    try {
+      const res = await client.query(
+        `INSERT INTO tickets (
+           booking_id, ticket_type_id, user_id, owner_user_id, event_id,
+           ticket_code, qr_payload_hash, qr_token_hash, qr_token, status
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, 'VALID')
+         RETURNING id, ticket_code, status, qr_token, created_at;`,
+        [
+          params.bookingId,
+          params.ticketTypeId,
+          params.userId,
+          params.ownerUserId || params.userId,
+          params.eventId,
+          ticketCode,
+          tokenHash,
+          rawToken,
+        ]
+      );
+      return {
+        ...res.rows[0],
+        rawToken,
+      };
+    } catch (err: any) {
+      if (err.code === '23505' && err.constraint === 'tickets_ticket_code_key' && attempt < maxRetries) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Failed to generate unique ticket code after maximum retries');
+}
+
+/**
+ * Builds the canonical QR payload URL with APP_HOST strictly from config (never request headers)
+ * and an HMAC-signed compact payload signature.
+ */
+export function buildTicketQrPayload(ticketId: string, token: string, ticketCode: string): string {
+  const appHost = config.APP_HOST || process.env.APP_HOST || 'campus.eventora.org';
+  const secret = config.QR_HMAC_SECRET || process.env.QR_HMAC_SECRET || 'qr_hmac_secret_key_32_bytes_min_prod';
+  const hmacSig = crypto
+    .createHmac('sha256', secret)
+    .update(`${ticketId}:${token}:${ticketCode}`)
+    .digest('base64url')
+    .substring(0, 16);
+  return `https://${appHost}/t/${token}?h=${hmacSig}`;
+}
+
+/**
+ * Generates high-contrast vector SVG containing the QR code and centered human ticket code below.
+ */
+export async function generateTicketQrSvg(params: {
+  ticketId: string;
+  qrPayload: string;
+  ticketCode: string;
+}): Promise<string> {
+  const qrSvg = await QRCode.toString(params.qrPayload, {
+    type: 'svg',
+    margin: 2,
+    errorCorrectionLevel: 'M',
+    width: 280,
+  });
+
+  const heightMatch = qrSvg.match(/viewBox="0 0 (\d+) (\d+)"/);
+  const size = heightMatch ? parseInt(heightMatch[1], 10) : 280;
+  const totalHeight = size + 36;
+  const innerContent = qrSvg.replace(/<\/?svg[^>]*>/g, '');
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${totalHeight}" width="100%" height="100%" style="background-color: #ffffff; border-radius: 8px;">
+  <g transform="translate(0, 0)">
+    ${innerContent}
+  </g>
+  <text x="${size / 2}" y="${size + 24}" text-anchor="middle" font-family="monospace, Courier, monospace" font-size="12" font-weight="bold" fill="#0f172a" letter-spacing="1.5px">${params.ticketCode}</text>
+</svg>`;
+}
+
+/**
+ * Generates downloadable PDF ticket card with event details, tier name, attendee initials, and embedded QR.
+ */
+export async function generateTicketPdf(params: {
+  ticketCode: string;
+  eventTitle: string;
+  eventStartsAt?: string | null;
+  venueName?: string | null;
+  tierName?: string | null;
+  attendeeInitials: string;
+  qrPayload: string;
+}): Promise<Buffer> {
+  const qrPngBuffer = await QRCode.toBuffer(params.qrPayload, {
+    type: 'png',
+    margin: 2,
+    width: 220,
+    errorCorrectionLevel: 'M',
+  });
+
+  return new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: [360, 560],
+      margins: { top: 28, bottom: 28, left: 24, right: 24 },
+    });
+
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', (err) => reject(err));
+
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#4338ca').text('EVENTORA CAMPUS PASS', { align: 'center' });
+    doc.moveDown(0.4);
+
+    doc.fontSize(16).font('Helvetica-Bold').fillColor('#0f172a').text(params.eventTitle, { align: 'center' });
+    doc.moveDown(0.2);
+
+    doc.fontSize(10).font('Helvetica').fillColor('#64748b').text(`Tier: ${params.tierName || 'General Admission'}`, { align: 'center' });
+    doc.moveDown(0.6);
+
+    const qrX = (360 - 200) / 2;
+    doc.image(qrPngBuffer, qrX, doc.y, { width: 200 });
+    doc.y += 208;
+
+    doc.fontSize(12).font('Courier-Bold').fillColor('#0f172a').text(params.ticketCode, { align: 'center' });
+    doc.moveDown(0.8);
+
+    doc.fontSize(10).font('Helvetica').fillColor('#334155').text(`Attendee: ${params.attendeeInitials}`, { align: 'center' });
+
+    if (params.eventStartsAt) {
+      doc.moveDown(0.2);
+      const dateStr = new Date(params.eventStartsAt).toLocaleString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      doc.fontSize(9).font('Helvetica').fillColor('#64748b').text(`Date: ${dateStr}`, { align: 'center' });
+    }
+
+    if (params.venueName) {
+      doc.moveDown(0.2);
+      doc.fontSize(9).font('Helvetica').fillColor('#64748b').text(`Venue: ${params.venueName}`, { align: 'center' });
+    }
+
+    doc.moveDown(1);
+    doc.fontSize(8).font('Helvetica').fillColor('#94a3b8').text('Zero PII • Cryptographically Signed Entry Pass', { align: 'center' });
+
+    doc.end();
+  });
+}
+
+/**
+ * Generates PNG QR code buffer for direct download.
+ */
+export async function generateTicketPng(params: {
+  qrPayload: string;
+}): Promise<Buffer> {
+  return await QRCode.toBuffer(params.qrPayload, {
+    type: 'png',
+    margin: 3,
+    width: 480,
+    errorCorrectionLevel: 'M',
+  });
+}
+
+/**
+ * Rotates a ticket's QR token, immediately invalidating any previously issued QR code.
+ */
+export async function rotateTicketToken(ticketId: string, actorId: string, reason = 'Attendee rotated QR token') {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const tRes = await client.query(
+      `SELECT id, status, ticket_code, event_id FROM tickets WHERE id = $1 FOR UPDATE;`,
+      [ticketId]
+    );
+
+    if (tRes.rows.length === 0) {
+      throw new TicketScanError('INVALID', `Ticket ${ticketId} not found`, 404);
+    }
+
+    const ticket = tRes.rows[0];
+    if (ticket.status === 'REVOKED' || ticket.status === 'CANCELLED') {
+      throw new TicketScanError('REVOKED', `Cannot rotate QR for ${ticket.status} ticket`, 400);
+    }
+
+    const rawToken = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest();
+
+    await client.query(
+      `UPDATE tickets
+       SET qr_token = $1,
+           qr_token_hash = $2,
+           qr_payload_hash = $2,
+           qr_token_rotated_at = NOW(),
+           version = version + 1
+       WHERE id = $3;`,
+      [rawToken, tokenHash, ticketId]
+    );
+
+    // Audit log
+    await client.query(
+      `INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, meta)
+       VALUES ($1, 'ticket:rotate_qr', 'ticket', $2, $3);`,
+      [actorId, ticketId, JSON.stringify({ reason })]
+    );
+
+    await client.query('COMMIT');
+
+    const qrPayload = buildTicketQrPayload(ticketId, rawToken, ticket.ticket_code);
+
+    return {
+      success: true,
+      ticketId,
+      ticketCode: ticket.ticket_code,
+      qrPayload,
+      rotatedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -150,6 +411,8 @@ export async function scanTicket(params: ScanTicketParams): Promise<ScanOutcomeR
   const urlMatch = token.match(/\/t\/([A-Za-z0-9_-]{43})/);
   if (urlMatch && urlMatch[1]) {
     token = urlMatch[1];
+  } else if (token.includes('?')) {
+    token = token.split('?')[0].replace(/^.*\/t\//, '').trim();
   }
 
   const qrTokenHash = crypto.createHash('sha256').update(token).digest();
@@ -453,6 +716,8 @@ export async function revokeTicket(params: {
        SET status = 'REVOKED',
            revoked_at = NOW(),
            revoke_reason = $1,
+           qr_token = NULL,
+           qr_token_rotated_at = NOW(),
            version = version + 1
        WHERE id = $2
        RETURNING id, event_id, user_id, status;`,
@@ -689,6 +954,7 @@ export async function getTicketById(ticketId: string) {
   try {
     const res = await client.query(
       `SELECT t.id, t.ticket_code, t.status, t.issued_at, t.checked_in_at, t.created_at, t.user_id, t.owner_user_id,
+              t.qr_token, t.qr_token_rotated_at,
               e.id as event_id, e.title as event_title, e.starts_at as event_starts_at, e.ends_at as event_ends_at,
               tt.name as tier_name, tt.price_paise,
               b.id as booking_id,
@@ -703,7 +969,19 @@ export async function getTicketById(ticketId: string) {
        WHERE t.id = $1;`,
       [ticketId]
     );
-    return res.rows[0] || null;
+    const ticket = res.rows[0] || null;
+    if (ticket && !ticket.qr_token && ticket.status === 'VALID') {
+      const rawToken = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest();
+      await client.query(
+        `UPDATE tickets
+         SET qr_token = $1, qr_token_hash = $2, qr_payload_hash = $2
+         WHERE id = $3 AND qr_token IS NULL;`,
+        [rawToken, tokenHash, ticketId]
+      );
+      ticket.qr_token = rawToken;
+    }
+    return ticket;
   } finally {
     client.release();
   }

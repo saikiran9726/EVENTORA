@@ -942,3 +942,176 @@
 - **IDOR Matrix (`tests/security/idor-matrix.test.ts`):** Anti-self-dealing refund check verified passing (12/12 tests).
 - **Monorepo Test Suite (`pnpm test`):** 388/388 tests passing across 39 files.
 - **Typecheck & Lint:** 0 TypeScript errors, 0 ESLint errors across shared, backend, and frontend.
+
+---
+
+## Phase P13 — Checkout UI with YouPI Checkout & Verification Queue
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Checkout Page Overhaul (`packages/frontend/src/pages/CheckoutPage.tsx`)
+- **API Client Hygiene:** All network calls route exclusively through `lib/api-client.ts`. Zero token storage in `localStorage`.
+- **Prototype Logic Removal:** Deleted all prototype mock branches (`bookingId.startsWith('proto-')`, `bkg_demo_`, mock receipt generation).
+- **DEV Simulator Lockdown:** Simulator test controls strictly isolated behind `import.meta.env.DEV && booking.isSimulated`. Completely omitted from production builds.
+- **State Machine:**
+  - `LOADING`: Initial state fetching booking and checkout session with screen-reader announcement.
+  - `READY`: Active order summary, countdown timer (`Hold expires in: mm:ss`), UPI launch button, and mobile bottom sheet.
+  - `QUEUED`: FIFO queue position badge (`#X in line`), hold timer paused notice, standing by for slot activation.
+  - `CONFIRMING`: "Confirming Payment with Bank..." state with progress indicator awaiting authoritative webhook.
+  - `VERIFICATION_QUEUE`: Friendly notice that payment is undergoing manual review ("Payment Verification in Progress").
+  - `SUCCESS`: Renders digital tax invoice (`ReceiptView`) with ticket links and print action.
+  - `FAILED`: Clear decline explanation with retry payment trigger.
+  - `EXPIRED`: Informs user that seat hold lapsed and seats were freed, providing return to discovery.
+  - `CANCELLED`: Notice of cancelled order.
+- **Browser Invariant Enforced:** Browser handler callback is **NEVER** proof of payment. Payment transitions to `CONFIRMING` while polling `GET /payments/:id/status` (exponential backoff 2s $\to$ 10s, stops at terminal state).
+- **Accessibility & Mobile-First:** Added `aria-live` polite region for screen readers, focus management via heading ref on state changes, and responsive mobile bottom-sheet action bar.
+
+---
+
+### 2. Dynamic YouPI Script Loader (`packages/frontend/src/lib/youpi-loader.ts`)
+- Dynamically loads `youpi.js` only upon entering checkout from the configured YouPI checkout origin (`VITE_YOUPI_CHECKOUT_URL`).
+- Auto-cleans up `<script>` tag upon component unmount.
+- Fallback modal / redirection mechanism if the external script fails to load or window modal is blocked.
+
+---
+
+### 3. Digital Receipt & Tax Invoice (`packages/frontend/src/components/checkout/ReceiptView.tsx`)
+- Tax invoice with compliant GST layout and placeholders (`GSTIN: 29AAAAA0000A1Z5`, SAC `9996`, 0% CGST/SGST).
+- Server-side integer paise displayed formatted in ₹ and paise.
+- Built-in `@media print` CSS rules hiding interactive chrome and navigation buttons for high-resolution printable PDF invoices.
+- "View QR Tickets in Passport" button directly navigating attendee to their valid QR passes.
+
+---
+
+### 4. Organizer & Admin Verification Queue (`packages/frontend/src/components/admin/VerificationQueueView.tsx`)
+- Filterable organizer & admin dashboard view listing payments in `VERIFICATION_QUEUE`.
+- Displays amount in ₹/paise, UTR, flag reason, and inspect modal for raw webhook payload.
+- **Approve Resolution:** Runs identical atomic transaction as webhook path: transitions payment to `SUCCESS`, transfers held inventory to sold, sets booking to `CONFIRMED`, generates tickets, and creates ledger entries.
+- **Reject Resolution:** Transitions payment to `FAILED`, releases held seats back to ticket capacity, and cancels booking.
+- Seamlessly mounted in `OrganizerDashboardPage.tsx` and `AdminPortalPage.tsx`.
+
+---
+
+### 5. Backend Route Authorization & Policy Fixes (`packages/backend/src/routes/api/v1/payments.ts`)
+- **Status Route (`GET /payments/:id/status` & `GET /api/v1/payments/:id/status`):**
+  - Enforced ownership via `checkPaymentStatusOwnership` (allows booking owner, admin, or organizer member of the event; denies other users with 403 `FORBIDDEN`).
+  - Corrected ticket query to fetch valid tickets (`id, ticket_code, status, created_at`) without querying deprecated or non-existent columns.
+- **Verification Queue Routes:**
+  - `GET /api/v1/organizer/payments/verification-queue`: declared explicit `{ auth: true, policy: 'authenticated', objectCheck }`, filtering payments to those belonging to caller's active organizer memberships.
+  - `POST /api/v1/organizer/payments/:id/resolve-verification`: declared explicit `{ auth: true, policy: 'authenticated', objectCheck }`, asserting organizer membership before processing resolution.
+  - `POST /api/v1/organizer/refunds/:id/record-manual`: aligned policy and objectCheck for offline manual refund recordings.
+
+---
+
+### 6. Content Security Policy (CSP) Updates
+- Updated `vercel.json`, `packages/frontend/vercel.json`, and backend `security-headers.ts` to allow YouPI origins in `script-src`, `frame-src`, and `connect-src` (`http://localhost:7000`, `http://127.0.0.1:7000`, `https://pay.eventora.org`).
+
+---
+
+### 7. Verification & Quality Gate
+- **Dedicated Test Suite (`tests/unit/phase-p13-checkout-ui.test.ts`):** 10/10 automated tests passing (100%):
+  1. Route ownership & IDOR isolation on `/payments/:id/status` (owner 200, stranger 403, organizer 200).
+  2. Invariant: Browser callback alone never marks payment `SUCCESS` or confirms booking without webhook.
+  3. Happy path: Webhook arrival -> authoritative fulfillment -> polling status returns `SUCCESS` with digital receipt & tickets.
+  4. Flagged mismatch routes to `VERIFICATION_QUEUE`, organizer manual approval executes atomic fulfillment.
+  5. Flagged mismatch organizer rejection cancels booking and releases held seats back to capacity pool.
+  6. FIFO queue slot activation extends hold timer by 5 minutes.
+  7. Expired hold reconciler frees seats and rejects checkout with `HOLD_EXPIRED`.
+  8. Webhook idempotency: Duplicate webhook deliveries return 200 without double-crediting.
+- **Monorepo Test Suite (`pnpm test`):** 40 test files, 398 tests passing (100%).
+- **Static Analysis & Builds:**
+  - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
+  - `pnpm lint`: 0 errors.
+
+---
+
+## Phase P14 — Ticket QR, Token Rotation, Downloads & Offline Mode
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Phase 18)
+- **Migration 18 (`Phase 18: Ticket QR Tokens & Rotation Timestamp`):**
+  - Added additive columns to `tickets` table:
+    - `qr_token TEXT` (storing 32-byte URL-safe base64 token)
+    - `qr_token_rotated_at TIMESTAMPTZ` (tracking rotation and invalidation timestamps)
+  - Created partial index `idx_tickets_qr_token` on `tickets(qr_token) WHERE qr_token IS NOT NULL` for $O(1)$ fast gate lookup.
+  - Added migration record 18 into `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Implemented rollback step 18 -> 17: drops partial index `idx_tickets_qr_token`, drops columns `qr_token` and `qr_token_rotated_at` from `tickets`, and clears migration 18 record.
+  - Verified live database rollback 18 -> 17 and re-application 17 -> 18.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Synchronized `qrToken` and `qrTokenRotatedAt` in Drizzle `tickets` table definition.
+
+---
+
+### 2. QR Payload & Host Isolation Invariant
+- **Config Lockdown (`packages/backend/src/config.ts`):**
+  - Added `APP_HOST` (default `campus.eventora.org`) and `QR_HMAC_SECRET`.
+  - **Host Header Injection Defense:** QR URL payload strictly constructed via `https://${config.APP_HOST}/t/${rawToken}?h=${sig}`. Ignores incoming request `Host` or `X-Forwarded-Host` headers completely.
+  - Compact HMAC-SHA256 signature calculated over canonical URL ensuring tamper resistance.
+  - High-entropy human ticket codes: `TCK-YYYY-TIMESTAMPBASE36-12HEXCHARS` (48 bits of entropy) with collision-safe retry loop catching Postgres 23505 unique constraint errors.
+
+---
+
+### 3. Backend QR Services & Route Authorization (`packages/backend/src/services/qr-ticket.ts`, `routes/api/v1/tickets.ts`)
+- **Generation & Formats:**
+  - `generateTicketQrSvg()`: Builds vector SVG with embedded human ticket code.
+  - `generateTicketPdf()`: PDF pass via `pdfkit` containing event title, tier, attendee initials (Zero PII leak: initials `A. S.` only, no email/phone), human code, and QR PNG.
+  - `generateTicketPng()`: Direct raster PNG QR buffer via `qrcode`.
+- **Token Rotation & Revocation:**
+  - `rotateTicketToken()`: Generates fresh token, rotates `qr_token`, `qr_token_hash`, `qr_payload_hash`, `qr_token_rotated_at`, increments version, and logs audit record. **The old QR code is immediately and permanently invalidated upon gate scan.**
+  - `revokeTicket()`: Clears `qr_token = NULL`, sets `qr_token_rotated_at = NOW()`. Subsequent QR fetches return 410 `GONE` and scans are rejected.
+- **Strict Route Authorization (`checkTicketAccess`):**
+  - Declared deny-by-default object check protecting:
+    - `GET /tickets/:id/qr.svg`
+    - `GET /tickets/:id/download?format=pdf|png`
+    - `POST /tickets/:id/regenerate-qr`
+    - App root aliases `/tickets/:id/qr.svg` and `/tickets/:id/download`
+  - Allows: Attendee owner, booking owner, platform admin, and event check-in staff / organizers.
+  - Rejects: Unauthorized strangers with 403 `FORBIDDEN` and unauthenticated callers with 401.
+
+---
+
+### 4. Ticket Issuance Pipeline Modernization
+- Updated all ticket issuance sites to use `createTicketWithRetry` and store `qr_token`:
+  - `packages/backend/src/services/booking.ts` (instant free event registration).
+  - `packages/backend/src/services/payment.ts` (3 sites: webhook settlement, simulator settlement, verification queue approval).
+  - `packages/backend/src/services/waitlist.ts` (waitlist promotion).
+
+---
+
+### 5. Frontend Gate Pass & Offline Mode (`packages/frontend/src/components/ui/QRDisplay.tsx`)
+- **Offline Gate Entry:**
+  - Caches SVG vector QR in `localStorage.setItem('eventora_offline_qr_' + id, svg)`.
+  - When network is offline, seamlessly loads cached pass and displays "Offline Ready • Gate Cached" badge for venues with zero cell reception.
+- **Max-Brightness Gate Mode:**
+  - Full-screen high-contrast modal with Screen Wake Lock API (`navigator.wakeLock.request('screen')`) to prevent mobile display sleep at gate check-in.
+- **Ticket Downloads & Self-Service Token Rotation:**
+  - One-click downloads for PDF Pass (`?format=pdf`) and PNG QR (`?format=png`).
+  - Interactive "Rotate QR" button with confirmation modal calling `/api/v1/tickets/:id/regenerate-qr` to regenerate compromised passes.
+  - Human ticket code display with copy-to-clipboard.
+
+---
+
+### 6. Verification & Quality Gate
+- **Dedicated Test Suite (`tests/unit/phase-p14-ticket-qr.test.ts`):** 15/15 automated tests passing (100%):
+  1. Ticket code format & 48-bit entropy validation.
+  2. Host isolation: QR payload strictly uses `config.APP_HOST`, immune to Host header injection.
+  3. Route authorization: Owner 200, check-in staff 200, organizer 200, stranger 403 `FORBIDDEN`, anonymous 401.
+  4. Token rotation: Rotated token immediately invalidates old QR on gate scan.
+  5. Revocation: Cleared token returns 410 `GONE` and fails scan.
+  6. Downloads: Generates valid PDF pass (`%PDF-`) and PNG raster (`\x89PNG`).
+  7. Migration 18 expand/contract: Rollback (18 -> 17) and re-run (17 -> 18) verified.
+- **Monorepo Test Suite (`pnpm test`):** 41 test files, 413 tests passing (100%).
+- **Static Analysis & Builds:**
+  - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
+  - `pnpm lint`: 0 errors.
+

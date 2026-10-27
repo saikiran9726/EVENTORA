@@ -764,6 +764,8 @@ export const tickets = pgTable('tickets', {
   ticketCode: varchar('ticket_code', { length: 100 }).notNull().unique(),
   qrPayloadHash: bytea('qr_payload_hash').notNull().unique(),
   qrTokenHash: bytea('qr_token_hash').unique(),
+  qrToken: text('qr_token'),
+  qrTokenRotatedAt: timestamp('qr_token_rotated_at', { withTimezone: true }),
   status: ticketStatusEnum('status').default('VALID').notNull(),
   issuedAt: timestamp('issued_at', { withTimezone: true }).defaultNow().notNull(),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),

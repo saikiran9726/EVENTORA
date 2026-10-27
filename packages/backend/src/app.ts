@@ -12,8 +12,8 @@ import { venueRoutes } from './routes/api/v1/venues.js';
 import { calendarRoutes } from './routes/api/v1/calendar.js';
 import { bookingRoutes } from './routes/api/v1/bookings.js';
 import { teamRoutes } from './routes/api/v1/teams.js';
-import { paymentRoutes, handleYouPiWebhookRoute } from './routes/api/v1/payments.js';
-import { ticketRoutes } from './routes/api/v1/tickets.js';
+import { paymentRoutes, handleYouPiWebhookRoute, handleGetPaymentStatusRoute, checkPaymentStatusOwnership } from './routes/api/v1/payments.js';
+import { ticketRoutes, checkTicketAccess, handleGetTicketQrSvgRoute, handleGetTicketDownloadRoute } from './routes/api/v1/tickets.js';
 import { feedbackRoutes } from './routes/api/v1/feedback.js';
 import { volunteerRoutes } from './routes/api/v1/volunteers.js';
 import { notificationRoutes } from './routes/api/v1/notifications.js';
@@ -177,6 +177,44 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
       },
     },
     handleYouPiWebhookRoute
+  );
+
+  // Direct status endpoint for YouPI checkout at /payments/:id/status (also at /api/v1/payments/:id/status)
+  app.get(
+    '/payments/:id/status',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: checkPaymentStatusOwnership,
+      },
+    },
+    handleGetPaymentStatusRoute
+  );
+
+  // Direct ticket QR and download routes at /tickets/:id/qr.svg and /tickets/:id/download
+  app.get(
+    '/tickets/:id/qr.svg',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: checkTicketAccess,
+      },
+    },
+    handleGetTicketQrSvgRoute
+  );
+
+  app.get(
+    '/tickets/:id/download',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: checkTicketAccess,
+      },
+    },
+    handleGetTicketDownloadRoute
   );
 
   // 404 Handler - Strict Error Envelope

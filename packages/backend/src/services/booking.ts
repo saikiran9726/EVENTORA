@@ -1,6 +1,7 @@
 import { pool } from '../db/index.js';
 import crypto from 'crypto';
 import { validateAnswerValue, FormBuilderError } from './form-builder.js';
+import { createTicketWithRetry } from './qr-ticket.js';
 
 export class BookingError extends Error {
   public readonly code: string;
@@ -574,21 +575,20 @@ export async function createBooking(params: CreateBookingParams): Promise<Bookin
     if (bookingStatus === 'CONFIRMED') {
       for (const item of bookingItemsToInsert) {
         for (let q = 0; q < item.quantity; q++) {
-          const rawToken = crypto.randomBytes(32).toString('base64url');
-          const tokenHash = crypto.createHash('sha256').update(rawToken).digest();
-          const ticketCode = `TCK-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-
-          const ticketRes = await client.query(
-            `INSERT INTO tickets (
-               booking_id, ticket_type_id, user_id, owner_user_id, event_id, ticket_code, qr_payload_hash, qr_token_hash, status
-             ) VALUES ($1, $2, $3, $3, $4, $5, $6, $6, 'VALID')
-             RETURNING id, ticket_code, status, created_at;`,
-            [booking.id, item.ticketTypeId, userId, eventId, ticketCode, tokenHash]
-          );
+          const ticketRes = await createTicketWithRetry(client, {
+            bookingId: booking.id,
+            ticketTypeId: item.ticketTypeId,
+            userId,
+            ownerUserId: userId,
+            eventId,
+          });
 
           insertedTickets.push({
-            ...ticketRes.rows[0],
-            qrTokenPreview: rawToken, // ephemeral for client display
+            id: ticketRes.id,
+            ticket_code: ticketRes.ticket_code,
+            status: ticketRes.status,
+            created_at: ticketRes.created_at,
+            qrTokenPreview: ticketRes.rawToken, // ephemeral for client display
           });
         }
       }
