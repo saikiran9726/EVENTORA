@@ -1412,6 +1412,36 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         });
       }
 
+      // Public GET visibility guard: reject drafts for unauthorized callers
+      if (event.status !== 'published') {
+        const user = req.user;
+        const isAdmin = user?.globalRole === 'admin';
+        const isCreator = user?.id === event.createdBy;
+
+        let isOrganizerMember = false;
+        if (user) {
+          const membership = await db.query.organizerMembers.findFirst({
+            where: and(
+              eq(organizerMembers.organizerId, event.organizerId),
+              eq(organizerMembers.userId, user.id),
+              eq(organizerMembers.status, 'active')
+            ),
+          });
+          isOrganizerMember = !!membership;
+        }
+
+        if (!isAdmin && !isCreator && !isOrganizerMember) {
+          return reply.code(404).send({
+            error: {
+              code: 'EVENT_NOT_FOUND',
+              message: 'Event not found or not publicly available',
+              details: {},
+              requestId: req.id,
+            },
+          });
+        }
+      }
+
       const icsData = generateIcsCalendar(event, event.venue);
 
       reply

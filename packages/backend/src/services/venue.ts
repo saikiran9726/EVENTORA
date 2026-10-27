@@ -1,7 +1,5 @@
 import { pool } from '../db/index.js';
-import { db } from '../db/index.js';
-import { venues, venueBookings, type VenueBooking } from '../db/schema.js';
-import { eq, and, sql } from 'drizzle-orm';
+import { type VenueBooking } from '../db/schema.js';
 
 export class VenueConflictError extends Error {
   public readonly code = 'VENUE_CONFLICT';

@@ -24,6 +24,17 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 22 -> 21: Volunteer Records & Application Indexes
+    if (currentVersion >= 22 && targetVersion < 22) {
+      console.log('[Rollback] Rolling back version 22 (Phase 22)...');
+      await client.query(`
+        DROP INDEX IF EXISTS uq_volunteer_records_user_shift;
+        DROP INDEX IF EXISTS idx_volunteer_shifts_role_time;
+        DROP INDEX IF EXISTS idx_volunteer_applications_user_status;
+        DELETE FROM schema_migrations WHERE version = 22;
+      `);
+    }
+
     // Rollback step 21 -> 20: Team Security, Invitation Token Index & Paid Registration Lifecycle
     if (currentVersion >= 21 && targetVersion < 21) {
       console.log('[Rollback] Rolling back version 21 (Phase 21)...');

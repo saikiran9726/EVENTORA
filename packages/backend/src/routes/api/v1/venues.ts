@@ -1,9 +1,10 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../../db/index.js';
-import { venues, colleges } from '../../../db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { venues } from '../../../db/schema.js';
+import { eq } from 'drizzle-orm';
 import { logAuditEvent } from '../../../services/audit.js';
+import { checkVenueAvailability } from '../../../services/venue.js';
 
 const createVenueSchema = z.object({
   name: z.string().min(2).max(255),
@@ -96,6 +97,46 @@ export const venueRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         venue: newVenue,
         message: 'Venue created successfully',
       });
+    }
+  );
+
+  // 3. GET /api/v1/venues/:id/availability
+  fastify.get(
+    '/:id/availability',
+    {
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { startsAt, endsAt, excludeEventId } = req.query as {
+        startsAt?: string;
+        endsAt?: string;
+        excludeEventId?: string;
+      };
+
+      if (!startsAt || !endsAt) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'startsAt and endsAt query parameters are required',
+            details: {},
+            requestId: req.id,
+          },
+        });
+      }
+
+      const avail = await checkVenueAvailability(
+        id,
+        new Date(startsAt),
+        new Date(endsAt),
+        excludeEventId
+      );
+
+      return reply.code(200).send(avail);
     }
   );
 };

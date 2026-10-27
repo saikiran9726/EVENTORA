@@ -35,7 +35,10 @@ export const calendarRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
 
       const { start, end } = parseResult.data;
 
-      const conditions: any[] = [eq(events.status, 'published')];
+      const conditions: any[] = [
+        eq(events.status, 'published'),
+        eq(events.visibility, 'public'),
+      ];
 
       if (start) {
         conditions.push(gte(events.startsAt, new Date(start)));

@@ -1310,7 +1310,8 @@ export async function runMigrations() {
         (18, 'Phase 18: Ticket QR Secure Tokens, Rotation & Downloads'),
         (19, 'Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening'),
         (20, 'Phase 20: Waitlist Decline, Booking Link & Paid Claim Workflow'),
-        (21, 'Phase 21: Team Security, Invitation Token Index & Paid Registration Lifecycle')
+        (21, 'Phase 21: Team Security, Invitation Token Index & Paid Registration Lifecycle'),
+        (22, 'Phase 22: Volunteer Records Unique Constraint & Application Indexes')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1509,6 +1510,11 @@ export async function runMigrations() {
       -- Phase 21: Team Security, Invitation Token Index & Paid Registration Lifecycle
       CREATE INDEX IF NOT EXISTS idx_team_invitations_token_hash ON team_invitations(token_hash) WHERE token_hash IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_team_event_registrations_event_status ON team_event_registrations(event_id, status);
+
+      -- Phase 22: Volunteer Records & Application Indexes
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_volunteer_records_user_shift ON volunteer_records (user_id, shift_id);
+      CREATE INDEX IF NOT EXISTS idx_volunteer_shifts_role_time ON volunteer_shifts (role_id, starts_at, ends_at);
+      CREATE INDEX IF NOT EXISTS idx_volunteer_applications_user_status ON volunteer_applications (user_id, status);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

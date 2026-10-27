@@ -1,5 +1,75 @@
 # Eventora Overhaul Changelog
 
+## Phase P19 — Volunteers, Venues, Calendar & RFC 5545 Hardening
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Migration 22)
+- **Migration 22 (`Phase 22: Volunteer Unique Records & Performance Indexes`):**
+  - Added unique constraint index to prevent duplicate volunteer record logging and guarantee idempotent passport credits:
+    - `CREATE UNIQUE INDEX IF NOT EXISTS uq_volunteer_records_user_shift ON volunteer_records (user_id, shift_id);`
+  - Added query performance indexes:
+    - `CREATE INDEX IF NOT EXISTS idx_volunteer_shifts_role_time ON volunteer_shifts (role_id, starts_at, ends_at);`
+    - `CREATE INDEX IF NOT EXISTS idx_volunteer_applications_user_status ON volunteer_applications (user_id, status);`
+  - Registered version 22 in `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 22 -> 21: drops `uq_volunteer_records_user_shift`, `idx_volunteer_shifts_role_time`, and `idx_volunteer_applications_user_status`, and cleans up migration record 22.
+  - Tested and verified live rollback 22 -> 21 and re-application 21 -> 22 against PostgreSQL.
+
+---
+
+### 2. Volunteer Route & Shift Concurrency Hardening
+- **Explicit Role -> Event Joins & Policy Checks:**
+  - Audited all volunteer endpoints (`/events/:id/volunteer-roles`, `/volunteer-roles/:id/shifts`, `/shifts/:id/applications`, `/applications/:id/*`).
+  - Implemented explicit joins traversing `application -> shift -> role -> event` with `policy: 'event:manage:owned'` and `resolveEventId`.
+  - Added typed error hierarchy via `VolunteerError` with standardized JSON error envelopes.
+- **Pessimistic Locking & Shift Capacity Guard:**
+  - `assignVolunteerApplication` locks `volunteer_shifts` rows with `FOR UPDATE` inside a PostgreSQL transaction.
+  - Rejects over-assignment with `409 CAPACITY_EXCEEDED` once assigned count reaches capacity.
+  - Verified under 50 concurrent requests into a 5-seat shift: exactly 5 succeed, 45 fail.
+- **Overlapping Shift Concurrency Guard:**
+  - Pre-assignment and pre-application queries verify candidate does not hold concurrent `ASSIGNED` or `CHECKED_IN` shifts with overlapping time intervals (`starts_at < shift.ends_at AND ends_at > shift.starts_at`).
+  - Throws `409 OVERLAPPING_SHIFT_ASSIGNMENT`.
+  - Verified with parallel concurrent assignments for the same candidate.
+- **Strictly Idempotent Shift Completion:**
+  - `completeVolunteerShift` utilizes `ON CONFLICT (user_id, shift_id) DO UPDATE SET verified_at = NOW()` and short-circuits completed applications returning `{ alreadyCompleted: true }`.
+  - Guaranteed single verified passport hours credit per completed shift.
+
+---
+
+### 3. Venue GiST Double-Booking Concurrency & Availability
+- **PostgreSQL GiST Exclusion Constraints (`venue_bookings`):**
+  - Hardened `bookVenueWindow` to catch SQLSTATE `23P01` (`exclusion_violation`) from `uq_venue_booking_overlap` and throw typed `VenueConflictError`.
+  - Parallel concurrent bookings for the same venue with overlapping `tstzrange` windows result in exactly 1 success and immediate exclusion error for conflicting calls.
+- **Public Availability Route (`GET /api/v1/venues/:id/availability`):**
+  - Provides date-window conflict inspection queries returning `{ available: boolean, conflict?: { eventId, during } }`.
+
+---
+
+### 4. Calendar Engine & RFC 5545 Strict Compliance
+- **Line Folding at 75 Octets:**
+  - Implemented `foldIcsLine` enforcing the RFC 5545 75-octet limit with CRLF + single space continuation.
+- **Text Escaping & UTC Time Format:**
+  - Escaped special characters (`;`, `,`, `\`, `\n`) per RFC 5545 §3.3.11.
+  - Formatted dates in UTC `YYYYMMDDTHHMMSSZ` format.
+- **Parser Validation:**
+  - Validated calendar export strings with `ical.js` (`ICAL.parse`) ensuring syntax conformance and round-trip preservation.
+- **Public GETs Draft & PII Isolation:**
+  - Hardened `/api/v1/calendar` to filter strictly `events.status = 'published'` and `events.visibility = 'public'`. Excluded all organizer and personal PII.
+  - Hardened `GET /api/v1/events/:id/ics` and `GET /api/v1/events/:id/volunteer-roles` to return `404 EVENT_NOT_FOUND` on draft events for unauthenticated/unauthorized callers.
+
+---
+
+### 5. Verification & Test Suite
+- `tests/unit/phase-p19-volunteers-venues-calendar.test.ts`: 7 acceptance tests covering shift capacity concurrency (50 parallel), overlapping shift concurrency, idempotent completion, venue GiST double-booking concurrency, RFC 5545 ical.js parser verification, public GET draft/PII isolation, and migration 22 rollback.
+- Full suite test results: 46 test files, 479 tests passed (0 failures).
+
+---
+
 ## Phase P18 — Teams Hardening, Paid Checkout, PII Removal, Invitations & Atomic Leadership
 
 **Date:** 2026-10-27  

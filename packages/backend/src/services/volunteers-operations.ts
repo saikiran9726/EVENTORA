@@ -1,6 +1,20 @@
 import crypto from 'crypto';
 import { pool } from '../db/index.js';
 
+export class VolunteerError extends Error {
+  public readonly code: string;
+  public readonly status: number;
+  public readonly details?: Record<string, any>;
+
+  constructor(code: string, message: string, status = 400, details?: Record<string, any>) {
+    super(message.includes(code) ? message : `${code}: ${message}`);
+    this.name = 'VolunteerError';
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
 export interface CreateVolunteerRoleInput {
   eventId: string;
   title: string;
@@ -62,10 +76,43 @@ export async function createVolunteerRole(input: CreateVolunteerRoleInput, actor
   }
 }
 
-// 2. Get Volunteer Roles for Event
-export async function getVolunteerRoles(eventId: string) {
+// 2. Get Volunteer Roles for Event (Draft/Private Event Isolation)
+export async function getVolunteerRoles(eventId: string, userId?: string) {
   const client = await pool.connect();
   try {
+    // Audit join: Verify event exists and is published (or caller is authorized)
+    const eventCheck = await client.query(
+      `SELECT id, status, visibility, organizer_id FROM events WHERE id = $1;`,
+      [eventId]
+    );
+
+    if (eventCheck.rows.length === 0) {
+      throw new VolunteerError('EVENT_NOT_FOUND', 'Event not found', 404);
+    }
+
+    const event = eventCheck.rows[0];
+    if (event.status !== 'published') {
+      let allowed = false;
+      if (userId) {
+        const authCheck = await client.query(
+          `SELECT 1 FROM organizer_members om
+           JOIN events e ON e.organizer_id = om.organizer_id
+           WHERE e.id = $1 AND om.user_id = $2 AND om.status = 'active';`,
+          [eventId, userId]
+        );
+        const adminCheck = await client.query(
+          `SELECT global_role FROM users WHERE id = $1;`,
+          [userId]
+        );
+        if (authCheck.rows.length > 0 || ['admin', 'super_admin'].includes(adminCheck.rows[0]?.global_role)) {
+          allowed = true;
+        }
+      }
+      if (!allowed) {
+        throw new VolunteerError('EVENT_NOT_FOUND', 'Event not found or not published', 404);
+      }
+    }
+
     const rolesRes = await client.query(
       `SELECT r.id, r.event_id, r.title, r.requirements, r.capacity, r.created_at,
               COALESCE(
@@ -96,18 +143,31 @@ export async function getVolunteerRoles(eventId: string) {
   }
 }
 
-// 3. Create Volunteer Shift
+// 3. Create Volunteer Shift (Explicit role->event join & time window validation)
 export async function createVolunteerShift(input: CreateVolunteerShiftInput, actorId: string) {
   const client = await pool.connect();
   try {
     const startsAt = new Date(input.startsAt);
     const endsAt = new Date(input.endsAt);
 
-    if (endsAt <= startsAt) {
-      throw new Error('Shift ends_at must be strictly greater than starts_at');
+    if (isNaN(startsAt.getTime()) || isNaN(endsAt.getTime()) || endsAt <= startsAt) {
+      throw new VolunteerError('VALIDATION_ERROR', 'Shift ends_at must be strictly greater than starts_at', 400);
     }
     if (input.capacity <= 0) {
-      throw new Error('Shift capacity must be greater than 0');
+      throw new VolunteerError('VALIDATION_ERROR', 'Shift capacity must be greater than 0', 400);
+    }
+
+    // Explicit join to event to validate role exists and belongs to a valid event
+    const roleCheck = await client.query(
+      `SELECT r.id, r.event_id
+       FROM volunteer_roles r
+       JOIN events e ON e.id = r.event_id
+       WHERE r.id = $1;`,
+      [input.roleId]
+    );
+
+    if (roleCheck.rows.length === 0) {
+      throw new VolunteerError('ROLE_NOT_FOUND', 'Volunteer role not found', 404);
     }
 
     const res = await client.query(
@@ -130,10 +190,50 @@ export async function createVolunteerShift(input: CreateVolunteerShiftInput, act
   }
 }
 
-// 4. Apply for Shift
+// 4. Apply for Shift (Explicit shift->role->event join & time window validation)
 export async function applyForShift(shiftId: string, userId: string) {
   const client = await pool.connect();
   try {
+    // Explicit join to verify shift exists and event is published
+    const shiftCheck = await client.query(
+      `SELECT s.id, s.role_id, s.starts_at, s.ends_at, s.capacity, s.assigned,
+              r.event_id, e.status as event_status
+       FROM volunteer_shifts s
+       JOIN volunteer_roles r ON r.id = s.role_id
+       JOIN events e ON e.id = r.event_id
+       WHERE s.id = $1;`,
+      [shiftId]
+    );
+
+    if (shiftCheck.rows.length === 0) {
+      throw new VolunteerError('SHIFT_NOT_FOUND', 'Volunteer shift not found', 404);
+    }
+
+    if (shiftCheck.rows[0].event_status === 'cancelled') {
+      throw new VolunteerError('EVENT_CANCELLED', 'Cannot apply to shifts for a cancelled event', 400);
+    }
+
+    const shiftData = shiftCheck.rows[0];
+
+    // Check if user already holds an assigned or checked-in overlapping shift
+    const overlapRes = await client.query(
+      `SELECT a.id, s2.starts_at, s2.ends_at
+       FROM volunteer_applications a
+       JOIN volunteer_shifts s2 ON s2.id = a.shift_id
+       WHERE a.user_id = $1
+         AND a.status IN ('ASSIGNED', 'CHECKED_IN')
+         AND (s2.starts_at < $3 AND s2.ends_at > $2);`,
+      [userId, shiftData.starts_at, shiftData.ends_at]
+    );
+
+    if (overlapRes.rows.length > 0) {
+      throw new VolunteerError(
+        'OVERLAPPING_SHIFT_ASSIGNMENT',
+        'User is already assigned to a concurrent overlapping shift',
+        409
+      );
+    }
+
     const res = await client.query(
       `INSERT INTO volunteer_applications (shift_id, user_id, status)
        VALUES ($1, $2, 'APPLIED')
@@ -178,7 +278,7 @@ export async function approveVolunteerApplication(applicationId: string, actorId
     );
 
     if (res.rowCount === 0) {
-      throw new Error('INVALID_TRANSITION: Application is not in APPLIED state or does not exist');
+      throw new VolunteerError('INVALID_TRANSITION', 'Application is not in APPLIED state or does not exist', 400);
     }
 
     const app = res.rows[0];
@@ -210,16 +310,19 @@ export async function assignVolunteerApplication(applicationId: string, actorId:
 
     if (appRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      throw new Error('APPLICATION_NOT_FOUND');
+      throw new VolunteerError('APPLICATION_NOT_FOUND', 'Application not found', 404);
     }
 
     const app = appRes.rows[0];
     if (app.status !== 'APPROVED') {
       await client.query('ROLLBACK');
-      throw new Error(`INVALID_TRANSITION: Cannot assign application in status ${app.status}`);
+      throw new VolunteerError('INVALID_TRANSITION', `Cannot assign application in status ${app.status}`, 400);
     }
 
-    // 2. Lock shift row FOR UPDATE to protect capacity
+    // 2. Lock user row FOR UPDATE to serialize concurrent assignment operations for this volunteer
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE;', [app.user_id]);
+
+    // 3. Lock shift row FOR UPDATE to protect capacity
     const shiftRes = await client.query(
       `SELECT s.id, s.role_id, s.starts_at, s.ends_at, s.capacity, s.assigned, r.event_id
        FROM volunteer_shifts s
@@ -230,18 +333,16 @@ export async function assignVolunteerApplication(applicationId: string, actorId:
 
     if (shiftRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      throw new Error('SHIFT_NOT_FOUND');
+      throw new VolunteerError('SHIFT_NOT_FOUND', 'Shift not found', 404);
     }
 
     const shift = shiftRes.rows[0];
     if (shift.assigned >= shift.capacity) {
       await client.query('ROLLBACK');
-      const err: any = new Error('CAPACITY_EXCEEDED');
-      err.code = 'CAPACITY_EXCEEDED';
-      throw err;
+      throw new VolunteerError('CAPACITY_EXCEEDED', 'Volunteer shift has reached maximum allocated capacity', 409);
     }
 
-    // 3. Overlap Guard: Ensure user is not already ASSIGNED or CHECKED_IN to an overlapping shift
+    // 4. Overlap Guard: Ensure user is not already ASSIGNED or CHECKED_IN to an overlapping shift
     const overlapRes = await client.query(
       `SELECT a.id, s2.starts_at, s2.ends_at
        FROM volunteer_applications a
@@ -255,16 +356,14 @@ export async function assignVolunteerApplication(applicationId: string, actorId:
 
     if (overlapRes.rowCount && overlapRes.rowCount > 0) {
       await client.query('ROLLBACK');
-      const err: any = new Error('OVERLAPPING_SHIFT_ASSIGNMENT');
-      err.code = 'OVERLAPPING_SHIFT_ASSIGNMENT';
-      throw err;
+      throw new VolunteerError('OVERLAPPING_SHIFT_ASSIGNMENT', 'Volunteer is already assigned to a concurrent overlapping shift', 409);
     }
 
-    // 4. Generate shift-scoped checkin token hash
+    // 5. Generate shift-scoped checkin token hash
     const rawCheckinToken = `vchk_${crypto.randomBytes(32).toString('hex')}`;
     const tokenHash = crypto.createHash('sha256').update(rawCheckinToken).digest();
 
-    // 5. Increment shift assigned count
+    // 6. Increment shift assigned count
     await client.query(
       `UPDATE volunteer_shifts
        SET assigned = assigned + 1
@@ -272,7 +371,7 @@ export async function assignVolunteerApplication(applicationId: string, actorId:
       [shift.id]
     );
 
-    // 6. Update application status to ASSIGNED
+    // 7. Update application status to ASSIGNED
     await client.query(
       `UPDATE volunteer_applications
        SET status = 'ASSIGNED', checkin_token_hash = $1
@@ -280,7 +379,7 @@ export async function assignVolunteerApplication(applicationId: string, actorId:
       [tokenHash, applicationId]
     );
 
-    // 7. Write audit log & outbox
+    // 8. Write audit log & outbox
     await client.query(
       `INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, meta)
        VALUES ($1, 'VOLUNTEER_ASSIGNED', 'volunteer_application', $2, $3);`,
@@ -341,7 +440,7 @@ export async function rejectVolunteerApplication(applicationId: string, actorId:
     );
 
     if (res.rowCount === 0) {
-      throw new Error('INVALID_TRANSITION: Application cannot be rejected in its current state');
+      throw new VolunteerError('INVALID_TRANSITION', 'Application cannot be rejected in its current state', 400);
     }
 
     const app = res.rows[0];
@@ -372,13 +471,13 @@ export async function cancelVolunteerApplication(applicationId: string, actorId:
 
     if (appRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      throw new Error('APPLICATION_NOT_FOUND');
+      throw new VolunteerError('APPLICATION_NOT_FOUND', 'Application not found', 404);
     }
 
     const app = appRes.rows[0];
     if (app.status === 'COMPLETED' || app.status === 'CANCELLED') {
       await client.query('ROLLBACK');
-      throw new Error(`INVALID_TRANSITION: Cannot cancel application in status ${app.status}`);
+      throw new VolunteerError('INVALID_TRANSITION', `Cannot cancel application in status ${app.status}`, 400);
     }
 
     const wasAssigned = app.status === 'ASSIGNED' || app.status === 'CHECKED_IN';
@@ -425,7 +524,7 @@ export async function cancelVolunteerApplication(applicationId: string, actorId:
   }
 }
 
-// 9. Volunteer Check-In (uses shift-scoped token or lead override within window)
+// 9. Volunteer Check-In (uses shift-scoped token with time-window validation)
 export async function checkInVolunteer(applicationId: string, actorId: string, token?: string) {
   const client = await pool.connect();
   try {
@@ -440,19 +539,32 @@ export async function checkInVolunteer(applicationId: string, actorId: string, t
     );
 
     if (appRes.rowCount === 0) {
-      throw new Error('APPLICATION_NOT_FOUND');
+      throw new VolunteerError('APPLICATION_NOT_FOUND', 'Application not found', 404);
     }
 
     const app = appRes.rows[0];
     if (app.status !== 'ASSIGNED') {
-      throw new Error(`INVALID_TRANSITION: Cannot check in application in status ${app.status}`);
+      throw new VolunteerError('INVALID_TRANSITION', `Cannot check in application in status ${app.status}`, 400);
+    }
+
+    // Time-window validation: Check-in window opens 60 minutes before shift starts for self check-in; closes 24 hours after shift ends
+    const now = Date.now();
+    const startMs = new Date(app.starts_at).getTime();
+    const endMs = new Date(app.ends_at).getTime();
+    const isSelfCheckin = actorId === app.user_id;
+
+    if (isSelfCheckin && now < startMs - 60 * 60 * 1000) {
+      throw new VolunteerError('CHECKIN_WINDOW_NOT_OPEN', 'Check-in window opens 60 minutes before shift starts', 400);
+    }
+    if (now > endMs + 24 * 60 * 60 * 1000) {
+      throw new VolunteerError('SHIFT_ALREADY_ENDED', 'Shift has already concluded; check-in window is closed', 400);
     }
 
     // Verify token if provided
     if (token && app.checkin_token_hash) {
       const hash = crypto.createHash('sha256').update(token).digest();
       if (!crypto.timingSafeEqual(hash, app.checkin_token_hash)) {
-        throw new Error('INVALID_CHECKIN_TOKEN');
+        throw new VolunteerError('INVALID_CHECKIN_TOKEN', 'Invalid volunteer check-in token provided', 400);
       }
     }
 
@@ -466,7 +578,7 @@ export async function checkInVolunteer(applicationId: string, actorId: string, t
     );
 
     if (updateRes.rowCount === 0) {
-      throw new Error('CHECKIN_FAILED');
+      throw new VolunteerError('CHECKIN_FAILED', 'Failed to record check-in', 400);
     }
 
     await client.query(
@@ -481,7 +593,7 @@ export async function checkInVolunteer(applicationId: string, actorId: string, t
   }
 }
 
-// 10. Complete Volunteer Shift (Completion only after CHECKED_IN; creates volunteer_records row)
+// 10. Complete Volunteer Shift (IDEMPOTENT: hours credited once via unique constraint & idempotent return)
 export async function completeVolunteerShift(applicationId: string, actorId: string) {
   const client = await pool.connect();
   try {
@@ -499,13 +611,35 @@ export async function completeVolunteerShift(applicationId: string, actorId: str
 
     if (appRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      throw new Error('APPLICATION_NOT_FOUND');
+      throw new VolunteerError('APPLICATION_NOT_FOUND', 'Application not found', 404);
     }
 
     const app = appRes.rows[0];
+
+    // Idempotent completion: If already COMPLETED, fetch existing record and return it cleanly
+    if (app.status === 'COMPLETED') {
+      const recRes = await client.query(
+        `SELECT id, user_id, event_id, shift_id, hours, verified_by, verified_at
+         FROM volunteer_records
+         WHERE user_id = $1 AND shift_id = $2;`,
+        [app.user_id, app.shift_id]
+      );
+      await client.query('COMMIT');
+      return {
+        applicationId,
+        status: 'COMPLETED',
+        record: recRes.rows[0],
+        alreadyCompleted: true,
+      };
+    }
+
     if (app.status !== 'CHECKED_IN') {
       await client.query('ROLLBACK');
-      throw new Error(`INVALID_TRANSITION: Cannot complete shift in status ${app.status}. Must be CHECKED_IN.`);
+      throw new VolunteerError(
+        'INVALID_TRANSITION',
+        `Cannot complete shift in status ${app.status}. Must be CHECKED_IN.`,
+        400
+      );
     }
 
     // Calculate hours served
@@ -521,11 +655,12 @@ export async function completeVolunteerShift(applicationId: string, actorId: str
       [applicationId]
     );
 
-    // Create volunteer_records row (feeds Passport)
+    // Create volunteer_records row (strictly once via unique constraint uq_volunteer_records_user_shift)
     const recRes = await client.query(
       `INSERT INTO volunteer_records (user_id, event_id, shift_id, hours, verified_by)
        VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, user_id, event_id, shift_id, hours, verified_at;`,
+       ON CONFLICT (user_id, shift_id) DO UPDATE SET verified_at = NOW()
+       RETURNING id, user_id, event_id, shift_id, hours, verified_by, verified_at;`,
       [app.user_id, app.event_id, app.shift_id, durationHours, actorId]
     );
 
@@ -643,15 +778,13 @@ export async function requestEquipment(input: EquipmentRequestInput, actorId: st
 
     if (itemRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      throw new Error('EQUIPMENT_ITEM_NOT_FOUND');
+      throw new VolunteerError('EQUIPMENT_ITEM_NOT_FOUND', 'Equipment item not found', 404);
     }
 
     const item = itemRes.rows[0];
     if (input.qty > item.qty_total) {
       await client.query('ROLLBACK');
-      const err: any = new Error('EQUIPMENT_UNAVAILABLE: Requested qty exceeds total campus inventory');
-      err.code = 'EQUIPMENT_UNAVAILABLE';
-      throw err;
+      throw new VolunteerError('EQUIPMENT_UNAVAILABLE', 'Requested qty exceeds total campus inventory', 409);
     }
 
     // Check overlapping approved equipment requests
@@ -667,9 +800,7 @@ export async function requestEquipment(input: EquipmentRequestInput, actorId: st
     const currentlyBooked = Number(overlapRes.rows[0].bookedQty || 0);
     if (currentlyBooked + input.qty > item.qty_total) {
       await client.query('ROLLBACK');
-      const err: any = new Error('EQUIPMENT_UNAVAILABLE: Equipment is fully reserved during requested time window');
-      err.code = 'EQUIPMENT_UNAVAILABLE';
-      throw err;
+      throw new VolunteerError('EQUIPMENT_UNAVAILABLE', 'Equipment is fully reserved during requested time window', 409);
     }
 
     const insertRes = await client.query(
@@ -784,7 +915,7 @@ export async function updateSupportIssue(issueId: string, actorId: string, input
 
     if (curRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      throw new Error('ISSUE_NOT_FOUND');
+      throw new VolunteerError('ISSUE_NOT_FOUND', 'Support issue not found', 404);
     }
 
     const cur = curRes.rows[0];
@@ -830,13 +961,11 @@ export async function registerGuest(eventId: string, name: string, contact: stri
     );
 
     if (eventRes.rowCount === 0) {
-      throw new Error('EVENT_NOT_FOUND');
+      throw new VolunteerError('EVENT_NOT_FOUND', 'Event not found', 404);
     }
 
     if (!eventRes.rows[0].allow_guests) {
-      const err: any = new Error('GUEST_REGISTRATION_DISABLED: This event does not permit external guest registrations');
-      err.code = 'GUEST_REGISTRATION_DISABLED';
-      throw err;
+      throw new VolunteerError('GUEST_REGISTRATION_DISABLED', 'This event does not permit external guest registrations', 403);
     }
 
     const contactHash = crypto.createHash('sha256').update(contact.trim().toLowerCase()).digest('hex');

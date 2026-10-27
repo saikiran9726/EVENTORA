@@ -19,6 +19,7 @@ import {
   getSupportIssues,
   updateSupportIssue,
   registerGuest,
+  VolunteerError,
 } from '../../../services/volunteers-operations.js';
 
 // Request Validation Schemas
@@ -109,9 +110,14 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
     },
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       try {
-        const roles = await getVolunteerRoles(req.params.id);
+        const roles = await getVolunteerRoles(req.params.id, req.user?.id);
         return reply.code(200).send({ roles });
       } catch (err: any) {
+        if (err instanceof VolunteerError) {
+          return reply.code(err.status).send({
+            error: { code: err.code, message: err.message, details: err.details || {}, requestId: req.id },
+          });
+        }
         return reply.code(500).send({
           error: { code: 'FETCH_ROLES_FAILED', message: err.message, requestId: req.id },
         });
@@ -180,6 +186,11 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         const application = await applyForShift(req.params.id, req.user!.id);
         return reply.code(201).send({ application });
       } catch (err: any) {
+        if (err instanceof VolunteerError) {
+          return reply.code(err.status).send({
+            error: { code: err.code, message: err.message, details: err.details || {}, requestId: req.id },
+          });
+        }
         return reply.code(500).send({
           error: { code: 'APPLICATION_FAILED', message: err.message, requestId: req.id },
         });
@@ -374,8 +385,9 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         const checkedIn = await checkInVolunteer(req.params.id, req.user!.id, req.body?.token);
         return reply.code(200).send({ application: checkedIn });
       } catch (err: any) {
-        return reply.code(400).send({
-          error: { code: 'CHECKIN_FAILED', message: err.message, requestId: req.id },
+        const status = err.status || 400;
+        return reply.code(status).send({
+          error: { code: err.code || 'CHECKIN_FAILED', message: err.message, requestId: req.id },
         });
       }
     }
@@ -397,8 +409,9 @@ export async function volunteerRoutes(fastify: FastifyInstance) {
         const completed = await completeVolunteerShift(req.params.id, req.user!.id);
         return reply.code(200).send({ completed });
       } catch (err: any) {
-        return reply.code(400).send({
-          error: { code: 'COMPLETION_FAILED', message: err.message, requestId: req.id },
+        const status = err.status || 400;
+        return reply.code(status).send({
+          error: { code: err.code || 'COMPLETION_FAILED', message: err.message, requestId: req.id },
         });
       }
     }
