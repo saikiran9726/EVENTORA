@@ -1,5 +1,91 @@
 # Eventora Overhaul Changelog
 
+## Phase P20 — Passport, Cross-College, Certificates & Eligibility Hardening
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Migration 23)
+- **Migration 23 (`Phase 23: Add Department and Year to Users`):**
+  - Added additive columns to `users` table:
+    - `ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);`
+    - `ALTER TABLE users ADD COLUMN IF NOT EXISTS year INTEGER;`
+  - Added query performance composite index:
+    - `CREATE INDEX IF NOT EXISTS idx_users_college_dept ON users(college_id, department) WHERE department IS NOT NULL;`
+  - Registered version 23 in `schema_migrations`.
+  - Updated Drizzle ORM definition in `packages/backend/src/db/schema.ts`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 23 -> 22: drops `idx_users_college_dept`, drops columns `department` and `year` from `users`, and removes migration record 23.
+  - Tested and verified live rollback 23 -> 22 and re-application 22 -> 23 against PostgreSQL.
+
+---
+
+### 2. Passport & Certificate Security Hardening
+- **Zero PII Exposure on Public Endpoints:**
+  - Hardened `/p/:slug` and `/api/v1/p/:slug` to strictly expose public achievements and display names only when `is_public` is true. Personal emails, phone numbers, and private data are completely excluded.
+  - Hardened `/verify/:code` and `/api/v1/verify/:code` to return attendee initials (`A. S.`) instead of full personal names or emails.
+- **Server-Side Privacy Enforcement:**
+  - Enforced server-side checks for `is_public`, `show_attendance`, `show_volunteer`, and `show_certificates` toggles, preventing hidden categories from leaking through API responses.
+- **Brute Force & Rate Limit Protection:**
+  - Enforced per-IP (30 req/min) and global (300 req/min) rate limiting on `/verify/:code` and `/p/:slug` lookups.
+- **Constant-Time Verification Code Comparison:**
+  - Implemented `crypto.timingSafeEqual` in `verifyCertificateByCode` to prevent timing attack side-channels on certificate verification codes.
+- **Slug Generation Collision Retry:**
+  - Added 5-attempt retry loop with random hex entropy in `getOrCreatePassportSettings` to gracefully handle slug collisions.
+- **Wildcard Injection Prevention & Pagination:**
+  - Implemented `escapeIlikeWildcards` to sanitize `%`, `_`, and `\` in search filters for cross-college discovery (`filter.q`, `filter.category`).
+  - Added hard pagination limits (`LIMIT 50` on cross-college events, `LIMIT 100` on colleges and achievements).
+
+---
+
+### 3. Route Hygiene & Cleanup
+- **Route Prefix Duplication Fix:**
+  - Removed duplicate registration of `crossCollegePassportRoutes` with empty prefix `''` in `packages/backend/src/app.ts`, eliminating 12 redundant route registrations at the root level.
+  - Mounted explicit root endpoints for `GET /p/:slug` and `GET /verify/:code` with explicit `{ auth: false, policy: 'public', objectCheck: false }`.
+- **Obsolete Endpoint Removal:**
+  - Deleted obsolete public stub `POST /student_achievements`.
+
+---
+
+### 4. Real Department & Year Eligibility Engine
+- **Direct Database Column Access:**
+  - Eliminated untyped `(user as any).department` casting in `packages/backend/src/routes/api/v1/bookings.ts`.
+  - Eligibility engine now directly evaluates typed `user.department` and `user.year` against ticket type restrictions (`allowed_departments`, `allowed_years`).
+- **Profile Attributes API & UI:**
+  - Updated `GET /api/v1/me` and `PATCH /api/v1/me` to expose and validate `department` and `year`.
+  - Updated frontend `AuthContext` and `ProfilePreferencesPage.tsx` with department and academic year input fields.
+
+---
+
+### 5. Idempotent Certificate Issuance & Deep Linking
+- **Idempotent Issuance Target:**
+  - Updated `issueCertificateIfEligibleInternal` conflict resolution to `ON CONFLICT (user_id, event_id) DO UPDATE SET issued_at = certificates.issued_at`, guaranteeing immutable verification codes and hashes across replays.
+- **Frontend Deep Linking:**
+  - Updated `PublicVerifyPage.tsx` to accept verification codes from both URL path parameters (`/verify/:code`) and query string parameters (`/verify?code=...`).
+  - Updated `PassportPage.tsx` to deep-link directly to `/verify/:code`.
+
+---
+
+### 6. Verification & Test Suite
+- `tests/unit/phase-p20-passport-certificates.test.ts`: 11 quality gate tests verifying:
+  1. Zero PII leak on public passport and verify endpoints.
+  2. Server-side privacy toggles for attendance, volunteer, and certificate records.
+  3. Per-IP and global brute-force rate limits on `/verify/:code`.
+  4. Constant-time code comparison via `timingSafeEqual`.
+  5. Slug collision retries with entropy.
+  6. Wildcard escaping on `ILIKE` searches.
+  7. Result size capping (`LIMIT 50` / `LIMIT 100`).
+  8. Real department and academic year eligibility checks.
+  9. Idempotent certificate issuance preserving existing verification codes and hashes.
+  10. Complete removal of `/student_achievements` and root route duplication.
+  11. Migration 23 rollback to 22 and re-application to 23.
+- Full suite verification across all unit and security tests.
+
+---
+
 ## Phase P19 — Volunteers, Venues, Calendar & RFC 5545 Hardening
 
 **Date:** 2026-10-27  

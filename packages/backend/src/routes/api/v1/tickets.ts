@@ -157,6 +157,38 @@ const revokeRequestSchema = z.object({
   reason: z.string().min(3, 'Revocation reason must be at least 3 characters').max(500),
 });
 
+export async function handleVerifyCertificateRoute(req: any, reply: any) {
+  const { code } = req.params as { code: string };
+  const clientIp = req.ip || '127.0.0.1';
+
+  try {
+    const result = await verifyCertificateByCode(code, clientIp);
+    if (!result.found) {
+      return reply.code(404).send({
+        error: {
+          code: 'CERTIFICATE_NOT_FOUND',
+          message: result.message,
+          details: { code },
+          requestId: req.id,
+        },
+      });
+    }
+    return reply.send(result);
+  } catch (err: any) {
+    if (err.message && err.message.includes('rate limit exceeded')) {
+      return reply.code(429).send({
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: err.message,
+          details: { limit: 30, window: '60s' },
+          requestId: req.id,
+        },
+      });
+    }
+    throw err;
+  }
+}
+
 export const ticketRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // 1. GET /api/v1/me/tickets - Current user's digital tickets
   fastify.get(
@@ -443,36 +475,6 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
         objectCheck: false,
       },
     },
-    async (req, reply) => {
-      const { code } = req.params as { code: string };
-      const clientIp = req.ip || '127.0.0.1';
-
-      try {
-        const result = await verifyCertificateByCode(code, clientIp);
-        if (!result.found) {
-          return reply.code(404).send({
-            error: {
-              code: 'CERTIFICATE_NOT_FOUND',
-              message: result.message,
-              details: { code },
-              requestId: req.id,
-            },
-          });
-        }
-        return reply.send(result);
-      } catch (err: any) {
-        if (err.message && err.message.includes('rate limit exceeded')) {
-          return reply.code(429).send({
-            error: {
-              code: 'RATE_LIMIT_EXCEEDED',
-              message: err.message,
-              details: { limit: 30, window: '60s' },
-              requestId: req.id,
-            },
-          });
-        }
-        throw err;
-      }
-    }
+    handleVerifyCertificateRoute
   );
 };

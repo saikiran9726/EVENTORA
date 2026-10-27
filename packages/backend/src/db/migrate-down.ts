@@ -24,6 +24,17 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 23 -> 22: User Department and Academic Year for Cross-College Eligibility
+    if (currentVersion >= 23 && targetVersion < 23) {
+      console.log('[Rollback] Rolling back version 23 (Phase 23)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_users_college_dept;
+        ALTER TABLE users DROP COLUMN IF EXISTS department;
+        ALTER TABLE users DROP COLUMN IF EXISTS year;
+        DELETE FROM schema_migrations WHERE version = 23;
+      `);
+    }
+
     // Rollback step 22 -> 21: Volunteer Records & Application Indexes
     if (currentVersion >= 22 && targetVersion < 22) {
       console.log('[Rollback] Rolling back version 22 (Phase 22)...');

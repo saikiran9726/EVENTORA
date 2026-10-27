@@ -329,6 +329,8 @@ export const users = pgTable('users', {
   globalRole: globalRoleEnum('global_role').default('student').notNull(),
   status: userStatusEnum('status').default('pending').notNull(),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
+  department: varchar('department', { length: 100 }),
+  year: integer('year'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

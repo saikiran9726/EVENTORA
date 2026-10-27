@@ -8,6 +8,8 @@ export interface UserProfile {
   displayName: string;
   globalRole: 'student' | 'reviewer' | 'admin';
   status: 'active' | 'suspended' | 'pending';
+  department?: string | null;
+  year?: number | null;
   college?: {
     id: string;
     name: string;
@@ -41,7 +43,7 @@ interface AuthContextType {
   register: (data: { email: string; password: string; displayName: string }) => Promise<{ success: boolean; verificationToken?: string; error?: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
-  updateProfile: (displayName: string) => Promise<{ success: boolean; error?: string }>;
+  updateProfile: (data: string | { displayName?: string; department?: string | null; year?: number | null }) => Promise<{ success: boolean; error?: string }>;
   updatePreferences: (prefs: { emailEnabled?: boolean; inappEnabled?: boolean; theme?: string }) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -179,9 +181,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const updateProfile = async (displayName: string) => {
+  const updateProfile = async (data: string | { displayName?: string; department?: string | null; year?: number | null }) => {
     try {
-      const res = await apiClient.patch<{ user: UserProfile }>('/api/v1/me', { displayName });
+      const payload = typeof data === 'string' ? { displayName: data } : data;
+      const res = await apiClient.patch<{ user: UserProfile }>('/api/v1/me', payload);
       if (res?.user) {
         updateUser(res.user);
         return { success: true };

@@ -37,6 +37,41 @@ const PublicEventsFilterSchema = z.object({
   to: z.string().optional(),
 });
 
+export async function handleGetPublicPassportRoute(req: FastifyRequest, reply: FastifyReply) {
+  const { slug } = req.params as { slug: string };
+
+  // Ensure no CDN caching so visibility changes take immediate effect
+  reply.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  reply.header('Pragma', 'no-cache');
+
+  try {
+    const passport = await getPublicPassport(slug, req.ip || '127.0.0.1');
+    if (!passport) {
+      return reply.code(404).send({
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Public passport not found.',
+          requestId: req.id,
+        },
+      });
+    }
+
+    return reply.send(passport);
+  } catch (err: any) {
+    if (err.message && err.message.includes('rate limit exceeded')) {
+      return reply.code(429).send({
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: err.message,
+          details: { limit: 30, window: '60s' },
+          requestId: req.id,
+        },
+      });
+    }
+    throw err;
+  }
+}
+
 export async function crossCollegePassportRoutes(fastify: FastifyInstance) {
   // 1. GET /colleges (Public list of participating institutions)
   fastify.get(
@@ -291,26 +326,7 @@ export async function crossCollegePassportRoutes(fastify: FastifyInstance) {
         objectCheck: false,
       },
     },
-    async (req: FastifyRequest, reply: FastifyReply) => {
-      const { slug } = req.params as { slug: string };
-
-      // Ensure no CDN caching so visibility changes take immediate effect
-      reply.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-      reply.header('Pragma', 'no-cache');
-
-      const passport = await getPublicPassport(slug);
-      if (!passport) {
-        return reply.code(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Public passport not found.',
-            requestId: req.id,
-          },
-        });
-      }
-
-      return reply.send(passport);
-    }
+    handleGetPublicPassportRoute
   );
 
   // 10. REJECTION OF SELF-ENTERED ACHIEVEMENTS (Security Gate Rule)
@@ -327,5 +343,4 @@ export async function crossCollegePassportRoutes(fastify: FastifyInstance) {
 
   fastify.post('/me/achievements', { config: { auth: true, policy: 'authenticated', objectCheck: false } }, rejectSelfEnteredAchievements);
   fastify.post('/users/me/achievements', { config: { auth: true, policy: 'authenticated', objectCheck: false } }, rejectSelfEnteredAchievements);
-  fastify.post('/student_achievements', { config: { auth: false, policy: 'public', objectCheck: false } }, rejectSelfEnteredAchievements);
 }

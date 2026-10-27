@@ -1,4 +1,33 @@
+import crypto from 'node:crypto';
 import { pool } from '../db/index.js';
+
+export function escapeIlikeWildcards(str: string): string {
+  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+let globalPassportTimestamps: number[] = [];
+const passportIpLimitMap = new Map<string, number[]>();
+
+export function checkPassportRateLimit(ip: string): void {
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+
+  // 1. Global brute force limit: max 300 lookups/min across all clients
+  globalPassportTimestamps = globalPassportTimestamps.filter((t) => now - t < windowMs);
+  if (globalPassportTimestamps.length >= 300) {
+    throw new Error('Global passport lookup rate limit exceeded (max 300 requests/min)');
+  }
+
+  // 2. Per-IP brute force limit: max 30 lookups/min per IP
+  const ipTimestamps = (passportIpLimitMap.get(ip) || []).filter((t) => now - t < windowMs);
+  if (ipTimestamps.length >= 30) {
+    throw new Error('Passport lookup rate limit exceeded (max 30 requests/min per IP)');
+  }
+
+  globalPassportTimestamps.push(now);
+  ipTimestamps.push(now);
+  passportIpLimitMap.set(ip, ipTimestamps);
+}
 
 export interface CollegeRecord {
   id: string;
@@ -86,7 +115,8 @@ export async function getColleges(): Promise<CollegeRecord[]> {
       verified_at AS "verifiedAt",
       verified_by AS "verifiedBy"
     FROM colleges
-    ORDER BY participation_status DESC, name ASC;
+    ORDER BY participation_status DESC, name ASC
+    LIMIT 100;
   `;
   const { rows } = await pool.query(query);
   return rows;
@@ -261,12 +291,12 @@ export async function getPublicCrossCollegeEvents(filter: {
 
   if (filter.category) {
     conditions.push(`e.category ILIKE $${paramIdx++}`);
-    params.push(filter.category);
+    params.push(`%${escapeIlikeWildcards(filter.category.trim())}%`);
   }
 
   if (filter.q) {
     conditions.push(`(e.title ILIKE $${paramIdx} OR e.description ILIKE $${paramIdx})`);
-    params.push(`%${filter.q}%`);
+    params.push(`%${escapeIlikeWildcards(filter.q.trim())}%`);
     paramIdx++;
   }
 
@@ -309,7 +339,8 @@ export async function getPublicCrossCollegeEvents(filter: {
     INNER JOIN organizer_profiles op ON op.id = e.organizer_id
     INNER JOIN organizer_verifications ov ON ov.organizer_id = op.id
     WHERE ${conditions.join(' AND ')}
-    ORDER BY e.starts_at ASC;
+    ORDER BY e.starts_at ASC
+    LIMIT 50;
   `;
 
   const { rows } = await pool.query(query, params);
@@ -413,29 +444,44 @@ export async function getOrCreatePassportSettings(userId: string): Promise<Passp
     return rows[0];
   }
 
-  // Generate unique slug
+  // Generate unique slug with collision retries
   const userRes = await pool.query(`SELECT display_name FROM users WHERE id = $1;`, [userId]);
   const baseSlug = (userRes.rows[0]?.display_name || 'student')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-  const candidateSlug = `${baseSlug}-${Math.random().toString(36).substring(2, 6)}`;
+    .replace(/(^-|-$)/g, '') || 'student';
 
-  const insertQuery = `
-    INSERT INTO passport_settings (user_id, is_public, slug, show_attendance, show_volunteer, show_certificates)
-    VALUES ($1, FALSE, $2, TRUE, TRUE, TRUE)
-    ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
-    RETURNING 
-      user_id AS "userId",
-      is_public AS "isPublic",
-      slug,
-      show_attendance AS "showAttendance",
-      show_volunteer AS "showVolunteer",
-      show_certificates AS "showCertificates",
-      updated_at AS "updatedAt";
-  `;
-  const insertRes = await pool.query(insertQuery, [userId, candidateSlug]);
-  return insertRes.rows[0];
+  const maxAttempts = 5;
+  let attempts = 0;
+  while (attempts < maxAttempts) {
+    attempts++;
+    const randomSuffix = crypto.randomBytes(3).toString('hex');
+    const candidateSlug = `${baseSlug}-${randomSuffix}`;
+
+    try {
+      const insertQuery = `
+        INSERT INTO passport_settings (user_id, is_public, slug, show_attendance, show_volunteer, show_certificates)
+        VALUES ($1, FALSE, $2, TRUE, TRUE, TRUE)
+        ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
+        RETURNING 
+          user_id AS "userId",
+          is_public AS "isPublic",
+          slug,
+          show_attendance AS "showAttendance",
+          show_volunteer AS "showVolunteer",
+          show_certificates AS "showCertificates",
+          updated_at AS "updatedAt";
+      `;
+      const insertRes = await pool.query(insertQuery, [userId, candidateSlug]);
+      return insertRes.rows[0];
+    } catch (err: any) {
+      if (err.code === '23505' && attempts < maxAttempts) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Failed to generate unique passport slug after multiple attempts');
 }
 
 export async function updatePassportSettings(
@@ -563,7 +609,11 @@ export async function getStudentAchievements(userId: string): Promise<StudentAch
  * 404 when not public (indistinguishable from nonexistent).
  * Zero PII returned (no email, phone, or roll number).
  */
-export async function getPublicPassport(slug: string): Promise<PublicPassportData | null> {
+export async function getPublicPassport(slug: string, ip?: string): Promise<PublicPassportData | null> {
+  if (ip) {
+    checkPassportRateLimit(ip);
+  }
+
   // CRITICAL RULE: evaluated in SQL WHERE, never in memory after fetch
   const passportQuery = `
     SELECT 
@@ -613,7 +663,8 @@ export async function getPublicPassport(slug: string): Promise<PublicPassportDat
       AND sa.visibility = 'public' 
       AND sa.verification_status = 'VERIFIED'
       AND sa.type = ANY($2::achievement_type[])
-    ORDER BY e.starts_at DESC;
+    ORDER BY e.starts_at DESC
+    LIMIT 100;
   `;
   const { rows: achievements } = await pool.query(achievementsQuery, [p.userId, allowedTypes]);
 

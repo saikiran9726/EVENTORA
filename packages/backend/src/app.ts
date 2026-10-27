@@ -13,12 +13,12 @@ import { calendarRoutes } from './routes/api/v1/calendar.js';
 import { bookingRoutes } from './routes/api/v1/bookings.js';
 import { teamRoutes } from './routes/api/v1/teams.js';
 import { paymentRoutes, handleYouPiWebhookRoute, handleGetPaymentStatusRoute, checkPaymentStatusOwnership } from './routes/api/v1/payments.js';
-import { ticketRoutes, checkTicketAccess, handleGetTicketQrSvgRoute, handleGetTicketDownloadRoute } from './routes/api/v1/tickets.js';
+import { ticketRoutes, checkTicketAccess, handleGetTicketQrSvgRoute, handleGetTicketDownloadRoute, handleVerifyCertificateRoute } from './routes/api/v1/tickets.js';
 import { feedbackRoutes } from './routes/api/v1/feedback.js';
 import { volunteerRoutes } from './routes/api/v1/volunteers.js';
 import { notificationRoutes } from './routes/api/v1/notifications.js';
 import { offlineCheckinRoutes } from './routes/api/v1/offline-checkin.js';
-import { crossCollegePassportRoutes } from './routes/api/v1/crosscollege-passport.js';
+import { crossCollegePassportRoutes, handleGetPublicPassportRoute } from './routes/api/v1/crosscollege-passport.js';
 import { handleResendWebhook } from './routes/webhooks/resend.js';
 import { monitoringRoutes, recordMetricRequest } from './routes/monitoring.js';
 import { securityHeadersPlugin } from './plugins/security-headers.js';
@@ -167,7 +167,6 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.register(notificationRoutes, { prefix: '/api/v1' });
   app.register(offlineCheckinRoutes, { prefix: '/api/v1' });
   app.register(crossCollegePassportRoutes, { prefix: '/api/v1' });
-  app.register(crossCollegePassportRoutes, { prefix: '' });
 
   // Direct webhook endpoint for YouPI-PG at /webhooks/payments/youpi (also at /api/v1/webhooks/payments/youpi)
   app.post(
@@ -243,6 +242,32 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
       },
     },
     handleGetTicketDownloadRoute
+  );
+
+  // Direct public passport lookup at /p/:slug (also at /api/v1/p/:slug)
+  app.get(
+    '/p/:slug',
+    {
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    handleGetPublicPassportRoute
+  );
+
+  // Direct public certificate verification at /verify/:code (also at /api/v1/verify/:code)
+  app.get(
+    '/verify/:code',
+    {
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    handleVerifyCertificateRoute
   );
 
   // 404 Handler - Strict Error Envelope

@@ -1311,7 +1311,8 @@ export async function runMigrations() {
         (19, 'Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening'),
         (20, 'Phase 20: Waitlist Decline, Booking Link & Paid Claim Workflow'),
         (21, 'Phase 21: Team Security, Invitation Token Index & Paid Registration Lifecycle'),
-        (22, 'Phase 22: Volunteer Records Unique Constraint & Application Indexes')
+        (22, 'Phase 22: Volunteer Records Unique Constraint & Application Indexes'),
+        (23, 'Phase 23: User Department and Academic Year for Cross-College Eligibility')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1515,6 +1516,11 @@ export async function runMigrations() {
       CREATE UNIQUE INDEX IF NOT EXISTS uq_volunteer_records_user_shift ON volunteer_records (user_id, shift_id);
       CREATE INDEX IF NOT EXISTS idx_volunteer_shifts_role_time ON volunteer_shifts (role_id, starts_at, ends_at);
       CREATE INDEX IF NOT EXISTS idx_volunteer_applications_user_status ON volunteer_applications (user_id, status);
+
+      -- Phase 23: User Department and Academic Year for Cross-College Eligibility
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS year INTEGER;
+      CREATE INDEX IF NOT EXISTS idx_users_college_dept ON users(college_id, department) WHERE department IS NOT NULL;
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

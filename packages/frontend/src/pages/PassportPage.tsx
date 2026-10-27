@@ -101,7 +101,7 @@ export const PassportPage: React.FC<{
 }> = ({ onNavigateToVerify, onNavigateToPublicPassport }) => {
   const navigate = useNavigate();
   const navigateToPublicPassport = onNavigateToPublicPassport || ((slug: string) => navigate(`/p/${slug}`));
-  const navigateToVerify = onNavigateToVerify || ((code: string) => navigate(`/verify?code=${code}`));
+  const navigateToVerify = onNavigateToVerify || ((code: string) => navigate(`/verify/${encodeURIComponent(code)}`));
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'timeline' | 'passes' | 'certificates' | 'settings'>('timeline');
   const [achievements, setAchievements] = useState<StudentAchievement[]>(DEFAULT_PROTOTYPE_ACHIEVEMENTS);

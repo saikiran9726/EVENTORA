@@ -36,7 +36,7 @@ export const PublicVerifyPage: React.FC<{
 }> = ({ initialCode: propInitialCode, onBack: propOnBack }) => {
   const params = useParams<{ code?: string }>();
   const navigate = useNavigate();
-  const initialCode = propInitialCode || params.code || '';
+  const initialCode = propInitialCode || params.code || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('code') || '' : '');
   const onBack = propOnBack || (() => navigate('/passport'));
   const [code, setCode] = useState(initialCode);
   const [result, setResult] = useState<VerifyResult | null>(null);

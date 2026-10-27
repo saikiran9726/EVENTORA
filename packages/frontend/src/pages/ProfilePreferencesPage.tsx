@@ -20,8 +20,10 @@ export const ProfilePreferencesPage: React.FC<ProfilePreferencesPageProps> = ({
 }) => {
   const { user, updateProfile, updatePreferences } = useAuth();
   const [displayName, setDisplayName] = useState(user?.displayName || '');
-  const [isSavingName, setIsSavingName] = useState(false);
-  const [nameSavedSuccess, setNameSavedSuccess] = useState(false);
+  const [department, setDepartment] = useState(user?.department || '');
+  const [year, setYear] = useState(user?.year ? String(user.year) : '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileSavedSuccess, setProfileSavedSuccess] = useState(false);
 
   const [emailEnabled, setEmailEnabled] = useState(user?.preferences?.emailEnabled ?? true);
   const [inappEnabled, setInappEnabled] = useState(user?.preferences?.inappEnabled ?? true);
@@ -30,18 +32,23 @@ export const ProfilePreferencesPage: React.FC<ProfilePreferencesPageProps> = ({
     return null;
   }
 
-  const handleSaveName = async (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!displayName || displayName === user.displayName) return;
+    if (!displayName) return;
 
-    setIsSavingName(true);
-    setNameSavedSuccess(false);
+    setIsSavingProfile(true);
+    setProfileSavedSuccess(false);
 
-    const res = await updateProfile(displayName);
-    setIsSavingName(false);
+    const yearNum = year ? parseInt(year, 10) : null;
+    const res = await updateProfile({
+      displayName,
+      department: department.trim() || null,
+      year: isNaN(yearNum as any) ? null : yearNum,
+    });
+    setIsSavingProfile(false);
     if (res.success) {
-      setNameSavedSuccess(true);
-      setTimeout(() => setNameSavedSuccess(false), 3000);
+      setProfileSavedSuccess(true);
+      setTimeout(() => setProfileSavedSuccess(false), 3000);
     }
   };
 
@@ -102,37 +109,74 @@ export const ProfilePreferencesPage: React.FC<ProfilePreferencesPageProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSaveName} className="space-y-3 pt-2">
+          <form onSubmit={handleSaveProfile} className="space-y-4 pt-2">
             <div>
               <label htmlFor="display-name" className="block text-xs font-semibold text-text mb-1">
                 Display Name
               </label>
-              <div className="flex gap-2">
+              <Input
+                id="display-name"
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                disabled={isSavingProfile}
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="department" className="block text-xs font-semibold text-text mb-1">
+                  Department
+                </label>
                 <Input
-                  id="display-name"
+                  id="department"
                   type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  disabled={isSavingName}
-                  required
+                  placeholder="e.g. Computer Science"
+                  value={department}
+                  onChange={(e) => setDepartment(e.target.value)}
+                  disabled={isSavingProfile}
                 />
-                <Button
-                  type="submit"
-                  variant="primary"
-                  isLoading={isSavingName}
-                  disabled={isSavingName || displayName === user.displayName}
+              </div>
+
+              <div>
+                <label htmlFor="year-of-study" className="block text-xs font-semibold text-text mb-1">
+                  Academic Year
+                </label>
+                <select
+                  id="year-of-study"
+                  value={year}
+                  onChange={(e) => setYear(e.target.value)}
+                  disabled={isSavingProfile}
+                  className="w-full px-3 py-2 text-sm bg-surface rounded-md border border-border text-text focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
-                  Save
-                </Button>
+                  <option value="">Select Year</option>
+                  <option value="1">1st Year (Freshman)</option>
+                  <option value="2">2nd Year (Sophomore)</option>
+                  <option value="3">3rd Year (Junior)</option>
+                  <option value="4">4th Year (Senior)</option>
+                  <option value="5">5th Year (Graduate / Extended)</option>
+                </select>
               </div>
             </div>
 
-            {nameSavedSuccess && (
-              <p className="text-xs text-success flex items-center gap-1">
-                <Check className="w-3.5 h-3.5" />
-                <span>Display name updated successfully</span>
-              </p>
-            )}
+            <div className="flex items-center justify-between pt-1">
+              <Button
+                type="submit"
+                variant="primary"
+                isLoading={isSavingProfile}
+                disabled={isSavingProfile}
+              >
+                Save Profile
+              </Button>
+
+              {profileSavedSuccess && (
+                <p className="text-xs text-success flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Profile updated successfully</span>
+                </p>
+              )}
+            </div>
           </form>
         </CardContent>
       </Card>

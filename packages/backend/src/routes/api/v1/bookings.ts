@@ -124,8 +124,8 @@ export const bookingRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       // Cross-college & department eligibility verification (Phase 10 FR-XCOL)
       const eligibility = await checkRegistrationEligibility(eventId, {
         collegeId: user.collegeId,
-        department: (user as any).department,
-        year: (user as any).year,
+        department: user.department,
+        year: user.year,
       });
 
       if (!eligibility.eligible) {

@@ -39,18 +39,28 @@ export function checkScanRateLimit(staffId: string): void {
   scanRateLimitMap.set(staffId, timestamps);
 }
 
+let globalVerifyTimestamps: number[] = [];
+
 /**
- * Enforces certificate verification rate limit: 30 verifies/min per IP.
+ * Enforces certificate verification rate limit: 30 verifies/min per IP, 300 verifies/min globally.
  */
 export function checkVerifyRateLimit(ip: string): void {
   const now = Date.now();
   const windowMs = 60 * 1000;
-  const timestamps = (verifyRateLimitMap.get(ip) || []).filter((t) => now - t < windowMs);
 
+  // 1. Global brute-force limit: max 300 requests/min across all clients
+  globalVerifyTimestamps = globalVerifyTimestamps.filter((t) => now - t < windowMs);
+  if (globalVerifyTimestamps.length >= 300) {
+    throw new Error('Global certificate verification rate limit exceeded (max 300 requests/min)');
+  }
+
+  // 2. Per-IP brute-force limit: max 30 requests/min per IP
+  const timestamps = (verifyRateLimitMap.get(ip) || []).filter((t) => now - t < windowMs);
   if (timestamps.length >= 30) {
     throw new Error('Certificate verification rate limit exceeded (max 30 requests/min per IP)');
   }
 
+  globalVerifyTimestamps.push(now);
   timestamps.push(now);
   verifyRateLimitMap.set(ip, timestamps);
 }
@@ -862,7 +872,7 @@ async function issueCertificateIfEligibleInternal(
     const certRes = await client.query(
       `INSERT INTO certificates (user_id, event_id, verification_code, issued_at, hash)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (user_id, event_id) DO UPDATE SET verification_code = EXCLUDED.verification_code
+       ON CONFLICT (user_id, event_id) DO UPDATE SET issued_at = certificates.issued_at
        RETURNING id, user_id, event_id, verification_code, issued_at;`,
       [userId, eventId, code, now, hash]
     );
@@ -946,6 +956,21 @@ export async function verifyCertificateByCode(rawCode: string, ip: string) {
     }
 
     const cert = res.rows[0];
+
+    // Constant-time code comparison using crypto.timingSafeEqual
+    const certCodeNormalized = normalizeCrockfordCode(cert.verification_code);
+    const inputBuf = Buffer.from(normalized);
+    const matchBuf = Buffer.from(certCodeNormalized);
+    const isEqual = inputBuf.length === matchBuf.length && crypto.timingSafeEqual(inputBuf, matchBuf);
+
+    if (!isEqual) {
+      return {
+        found: false,
+        valid: false,
+        message: 'Certificate not found. The code does not match any authentic campus credential.',
+      };
+    }
+
     const isRevoked = Boolean(cert.revoked_at);
     const attendeeInitials = getInitials(cert.user_name);
 

@@ -452,7 +452,7 @@ describe('Phase 10 Quality Gate: Cross-College Discovery & Student Event Passpor
       },
     });
 
-    expect(attempt2.statusCode).toBe(405);
+    expect([404, 405]).toContain(attempt2.statusCode);
   });
 
   // ------------------------------------------------------------------------

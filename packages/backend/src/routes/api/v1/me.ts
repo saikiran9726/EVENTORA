@@ -15,6 +15,8 @@ import { SESSION_CONFIG, revokeAllUserSessions } from '../../../services/auth.js
 
 const updateProfileSchema = z.object({
   displayName: z.string().min(2).max(100).optional(),
+  department: z.string().max(100).nullable().optional(),
+  year: z.number().int().min(1).max(10).nullable().optional(),
 });
 
 const updatePreferencesSchema = z.object({
@@ -73,6 +75,8 @@ export const meRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => 
           displayName: user.displayName,
           globalRole: user.globalRole,
           status: user.status,
+          department: user.department,
+          year: user.year,
           college: college
             ? {
                 id: college.id,
@@ -118,12 +122,17 @@ export const meRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => 
         });
       }
 
-      const { displayName } = parseResult.data;
+      const { displayName, department, year } = parseResult.data;
 
-      if (displayName) {
+      const updates: Record<string, any> = {};
+      if (displayName !== undefined) updates.displayName = displayName;
+      if (department !== undefined) updates.department = department ? department.trim() : null;
+      if (year !== undefined) updates.year = year;
+
+      if (Object.keys(updates).length > 0) {
         await db
           .update(users)
-          .set({ displayName })
+          .set(updates)
           .where(eq(users.id, user.id));
 
         await logAuditEvent({
@@ -132,7 +141,7 @@ export const meRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => 
           resourceType: 'user',
           resourceId: user.id,
           collegeId: user.collegeId,
-          meta: { displayName },
+          meta: updates,
           ip: req.ip,
         });
       }
@@ -148,6 +157,8 @@ export const meRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => 
           displayName: updated!.displayName,
           globalRole: updated!.globalRole,
           status: updated!.status,
+          department: updated!.department,
+          year: updated!.year,
         },
         message: 'Profile updated successfully.',
       });
