@@ -287,6 +287,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
           tokenOrUrl: parsed.data.token,
           eventId,
           staffId: req.user!.id,
+          isAdmin: req.user?.globalRole === 'admin' || (req.user as any)?.role === 'admin',
           sessionId: parsed.data.sessionId,
           deviceId: parsed.data.deviceId,
         });

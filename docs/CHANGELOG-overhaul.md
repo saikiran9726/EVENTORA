@@ -1115,3 +1115,93 @@
   - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
   - `pnpm lint`: 0 errors.
 
+---
+
+## Phase P15 — Camera Scanner & Scan Hardening
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Camera Scanner Frontend Overhaul (`packages/frontend/src/pages/ScannerPage.tsx`)
+- **Lazy-Loaded Optical Scanner:**
+  - Integrated `html5-qrcode` loaded strictly on-demand via dynamic `import('html5-qrcode')` to prevent main bundle bloat.
+- **Secure Context & Device Permissions:**
+  - Added HTTPS and `mediaDevices.getUserMedia` capability checks.
+  - Granular permission state machine:
+    - `prompt`: Clean initial state prompting user to activate camera.
+    - `denied`: Informative guidance explaining how to unblock camera in Chrome/Android, iOS Safari, and Desktop browser settings.
+    - `no_camera`: Graceful alert when no hardware video inputs are available, falling back to manual entry.
+    - `unsupported`: Security advisory when loaded over insecure HTTP contexts.
+    - `active`: Live turnstile viewfinder with targeting reticle overlay.
+- **Device Memory & Multi-Camera Switching:**
+  - Camera enumeration defaulting to back/environment facing mode (`{ facingMode: { ideal: 'environment' } }`).
+  - "Flip Camera" toggle cycling through all available video devices.
+  - Selected camera device ID persisted to `localStorage.getItem('eventora_preferred_camera_id')`.
+- **Torch (Flashlight) Control:**
+  - Dynamic capability detection via `getRunningTrackCapabilities()?.torch`.
+  - Toggle button controlling torch constraints when hardware flashlight is available.
+- **3-Second Same-Code Debounce:**
+  - Maintained `lastScannedCodeRef` to ignore rapid repetitive scans of the identical ticket within 3000ms.
+- **Manual Code Entry:**
+  - Monospace input for pasting ticket codes (`TCK-...`), raw tokens, or signed URLs with Enter-key submit and auto-clearing.
+- **Lifecycle & Resource Cleanup:**
+  - Stops all camera tracks on component unmount.
+  - Listens to `document.visibilitychange`: immediately stops camera streaming when tab or mobile browser is backgrounded (`visibilityState === 'hidden'`) and resumes upon return (`visibilityState === 'visible'`).
+
+---
+
+### 2. Audio & Visual Feedback Engine (`packages/frontend/src/lib/audio.ts`)
+- **Web Audio API Synthesizer:**
+  - Zero external mp3 dependencies, zero network latency, 100% offline-compatible sound synthesizer using Web Audio oscillators:
+    - **Success:** Ascending 2-tone chime (587 Hz $\to$ 880 Hz / D5 $\to$ A5).
+    - **Duplicate / Warning:** 2 short warning beeps (440 Hz).
+    - **Error / Rejected:** Descending sawtooth error buzz (220 Hz $\to$ 140 Hz).
+  - Audio mute toggle in header persisted to `localStorage.getItem('eventora_scanner_muted')`.
+- **Haptic Vibration:**
+  - Integrated `navigator.vibrate` with distinct patterns: `[150]` for accepted, `[100, 80, 100]` for warning/duplicate, and `[250, 100, 250]` for invalid/error.
+- **Full-Screen Visual Feedback:**
+  - Banner/card feedback highlighting Green (`ACCEPTED` / `LOCALLY_VERIFIED`), Amber (`DUPLICATE`), and Red (`INVALID`, `WRONG_EVENT`, `REVOKED`, `OUTSIDE_WINDOW`, `EVENT_NOT_PUBLISHED`).
+
+---
+
+### 3. Backend Scan Hardening (`packages/backend/src/services/qr-ticket.ts`, `routes/api/v1/tickets.ts`)
+- **Aborted-Transaction Bug Fix (Savepoint Isolation):**
+  - Wrapped student attendance achievement inserts and certificate policy hooks in `SAVEPOINT ... ROLLBACK TO SAVEPOINT`.
+  - Wrapped certificate generation and achievement inserts inside `issueCertificateIfEligibleInternal` in savepoints (`cert_insert_sp`, `cert_ach_sp`).
+  - Previously, a swallowed exception in achievement or certificate auto-issuance left PostgreSQL in an aborted transaction state, silently rolling back valid `ACCEPTED` check-ins. Savepoints guarantee that non-fatal achievement errors are isolated and the ticket check-in transaction commits `ACCEPTED`.
+- **Event Lifecycle & Window Guard:**
+  - Check-in rejected with `EVENT_NOT_PUBLISHED` if event is draft, submitted, postponed, or cancelled.
+  - Check-in rejected with `OUTSIDE_WINDOW` ("Check-in window is closed: Event has ended.") if current time exceeds `events.ends_at`.
+- **Attendance Session Window & Validation:**
+  - Unknown or non-existent `sessionId` rejected with `outcome: 'INVALID'`, `message: 'Unknown or invalid session ID for this event'`.
+  - Scan outside session check-in window rejected with `outcome: 'OUTSIDE_WINDOW'`, `message: 'Check-in window is currently closed for this session'`.
+- **Cross-Event Ticket ID Masking (Security ASVS L2):**
+  - Tickets scanned at a gate for a different event return `WRONG_EVENT`.
+  - When scanned by regular staff (`globalRole !== 'admin'`), `ticketId` is strictly omitted from the response to prevent foreign ticket discovery.
+  - When scanned by an admin (`globalRole === 'admin'`), `ticketId` is included for auditing and forensics.
+
+---
+
+### 4. Verification & Quality Gate
+- **Dedicated Test Suite (`tests/unit/phase-p15-scanner-hardening.test.ts`):** 11/11 tests passing (100%):
+  1. Concurrency test: 20 parallel scans of one ticket $\to$ exactly 1 `ACCEPTED`, 19 `DUPLICATE`, exactly 1 checkin row in DB.
+  2. Regression test: Achievement/certificate error does NOT abort check-in transaction; check-in commits `ACCEPTED`.
+  3. Rejection of non-published events (`EVENT_NOT_PUBLISHED`).
+  4. Rejection of concluded events outside window (`OUTSIDE_WINDOW`).
+  5. Unknown `sessionId` rejected with `INVALID`.
+  6. Session outside window rejected with `OUTSIDE_WINDOW`.
+  7. Session within window accepted and session ID linked in `checkins`.
+  8. Cross-event ticket scan by regular staff omits `ticketId`.
+  9. Cross-event ticket scan by admin includes `ticketId`.
+  10. Audio synthesizer mute toggle & state persistence.
+  11. Audio synthesizer playback safety without errors.
+- **Playwright E2E Test (`tests/e2e/phase-p15-camera-scanner.spec.ts`):** Passing with synthetic fake media stream (`--use-fake-ui-for-media-stream`, `--use-fake-device-for-media-stream`), verifying camera mount, mute toggle, manual entry, and visual feedback banners.
+- **Monorepo Test Suite (`pnpm test`):** **42 test files, 424 tests passing (100%)**.
+- **Static Analysis & Builds:**
+  - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
+  - `pnpm lint`: 0 errors.
+
+

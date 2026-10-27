@@ -380,6 +380,7 @@ export interface ScanTicketParams {
   tokenOrUrl: string;
   eventId: string;
   staffId: string;
+  isAdmin?: boolean;
   sessionId?: string;
   deviceId?: string;
 }
@@ -421,9 +422,16 @@ export async function scanTicket(params: ScanTicketParams): Promise<ScanOutcomeR
   try {
     await client.query('BEGIN');
 
+    // Determine admin privilege for cross-event data masking
+    let isAdmin = params.isAdmin;
+    if (isAdmin === undefined) {
+      const uRes = await client.query(`SELECT global_role FROM users WHERE id = $1;`, [staffId]);
+      isAdmin = uRes.rows[0]?.global_role === 'admin';
+    }
+
     // 2.5 Event Status Guard (Check-in blocked for non-published events)
     const evRes = await client.query(
-      `SELECT id, status, title FROM events WHERE id = $1;`,
+      `SELECT id, status, title, starts_at, ends_at FROM events WHERE id = $1;`,
       [eventId]
     );
 
@@ -476,26 +484,49 @@ export async function scanTicket(params: ScanTicketParams): Promise<ScanOutcomeR
       };
     }
 
-    // 3. Optional Session Window Guard
+    // 2.7 Event Window Guard (Check-in blocked if event has ended)
+    const now = new Date();
+    if (currentEvent.ends_at && now > new Date(currentEvent.ends_at)) {
+      await client.query(
+        `INSERT INTO scan_log (event_id, staff_id, outcome, at) VALUES ($1, $2, 'OUTSIDE_WINDOW', NOW());`,
+        [eventId, staffId]
+      );
+      await client.query('COMMIT');
+      return {
+        outcome: 'OUTSIDE_WINDOW',
+        message: 'Check-in window is closed: Event has ended.',
+      };
+    }
+
+    // 3. Session Window Guard
     if (sessionId) {
       const sessRes = await client.query(
-        `SELECT checkin_opens_at, checkin_closes_at FROM attendance_sessions WHERE id = $1 AND event_id = $2;`,
+        `SELECT id, checkin_opens_at, checkin_closes_at FROM attendance_sessions WHERE id = $1 AND event_id = $2;`,
         [sessionId, eventId]
       );
-      if (sessRes.rows.length > 0) {
-        const sess = sessRes.rows[0];
-        const now = new Date();
-        if (now < new Date(sess.checkin_opens_at) || now > new Date(sess.checkin_closes_at)) {
-          await client.query(
-            `INSERT INTO scan_log (event_id, staff_id, outcome, at) VALUES ($1, $2, 'OUTSIDE_WINDOW', NOW());`,
-            [eventId, staffId]
-          );
-          await client.query('COMMIT');
-          return {
-            outcome: 'OUTSIDE_WINDOW',
-            message: 'Check-in window is currently closed for this session',
-          };
-        }
+      if (sessRes.rows.length === 0) {
+        await client.query(
+          `INSERT INTO scan_log (event_id, staff_id, outcome, at) VALUES ($1, $2, 'INVALID', NOW());`,
+          [eventId, staffId]
+        );
+        await client.query('COMMIT');
+        return {
+          outcome: 'INVALID',
+          message: 'Unknown or invalid session ID for this event',
+        };
+      }
+
+      const sess = sessRes.rows[0];
+      if (now < new Date(sess.checkin_opens_at) || now > new Date(sess.checkin_closes_at)) {
+        await client.query(
+          `INSERT INTO scan_log (event_id, staff_id, outcome, at) VALUES ($1, $2, 'OUTSIDE_WINDOW', NOW());`,
+          [eventId, staffId]
+        );
+        await client.query('COMMIT');
+        return {
+          outcome: 'OUTSIDE_WINDOW',
+          message: 'Check-in window is currently closed for this session',
+        };
       }
     }
 
@@ -620,7 +651,7 @@ export async function scanTicket(params: ScanTicketParams): Promise<ScanOutcomeR
       return {
         outcome: 'WRONG_EVENT',
         message: 'Wrong Event: This ticket is for a different campus event.',
-        ticketId: t.id,
+        ...(isAdmin ? { ticketId: t.id } : {}),
       };
     }
 
@@ -825,26 +856,41 @@ async function issueCertificateIfEligibleInternal(
     issuedAt: now,
   });
 
-  const certRes = await client.query(
-    `INSERT INTO certificates (user_id, event_id, verification_code, issued_at, hash)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (user_id, event_id) DO UPDATE SET verification_code = EXCLUDED.verification_code
-     RETURNING id, user_id, event_id, verification_code, issued_at;`,
-    [userId, eventId, code, now, hash]
-  );
-
-  const cert = certRes.rows[0];
-
-  // Record Certificate Achievement (FR-PASS)
+  let cert: any = null;
   try {
-    await client.query(
-      `INSERT INTO student_achievements (user_id, type, source_event_id, source_ref_id, verification_status, visibility)
-       VALUES ($1, 'CERTIFICATE', $2, $3, 'VERIFIED', 'public')
-       ON CONFLICT (type, source_ref_id) DO NOTHING;`,
-      [userId, eventId, cert.id]
+    await client.query('SAVEPOINT cert_insert_sp;');
+    const certRes = await client.query(
+      `INSERT INTO certificates (user_id, event_id, verification_code, issued_at, hash)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id, event_id) DO UPDATE SET verification_code = EXCLUDED.verification_code
+       RETURNING id, user_id, event_id, verification_code, issued_at;`,
+      [userId, eventId, code, now, hash]
     );
+    cert = certRes.rows[0];
+    await client.query('RELEASE SAVEPOINT cert_insert_sp;');
   } catch {
-    // Non-blocking
+    try {
+      await client.query('ROLLBACK TO SAVEPOINT cert_insert_sp;');
+    } catch {}
+    return null;
+  }
+
+  if (cert) {
+    // Record Certificate Achievement (FR-PASS) isolated with SAVEPOINT
+    try {
+      await client.query('SAVEPOINT cert_ach_sp;');
+      await client.query(
+        `INSERT INTO student_achievements (user_id, type, source_event_id, source_ref_id, verification_status, visibility)
+         VALUES ($1, 'CERTIFICATE', $2, $3, 'VERIFIED', 'public')
+         ON CONFLICT (type, source_ref_id) DO NOTHING;`,
+        [userId, eventId, cert.id]
+      );
+      await client.query('RELEASE SAVEPOINT cert_ach_sp;');
+    } catch {
+      try {
+        await client.query('ROLLBACK TO SAVEPOINT cert_ach_sp;');
+      } catch {}
+    }
   }
 
   return cert;

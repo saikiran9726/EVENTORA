@@ -19,6 +19,10 @@ import {
   RefreshCw,
   GitMerge,
   FileCheck2,
+  Volume2,
+  VolumeX,
+  HelpCircle,
+  Lock,
 } from 'lucide-react';
 import {
   LocalOfflineOp,
@@ -32,9 +36,10 @@ import {
 } from '@/lib/offline-sync';
 import { useToast } from '@/components/ui/Toast';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { soundEffects } from '@/lib/audio';
 
 export interface ScanOutcome {
-  outcome: 'ACCEPTED' | 'DUPLICATE' | 'INVALID' | 'WRONG_EVENT' | 'REVOKED' | 'OUTSIDE_WINDOW' | 'LOCALLY_VERIFIED';
+  outcome: 'ACCEPTED' | 'DUPLICATE' | 'INVALID' | 'WRONG_EVENT' | 'REVOKED' | 'OUTSIDE_WINDOW' | 'EVENT_NOT_PUBLISHED' | 'LOCALLY_VERIFIED';
   message: string;
   ticketId?: string;
   checkedInAt?: string;
@@ -71,6 +76,13 @@ export interface ScanLogItem {
   staffName: string | null;
 }
 
+type CameraPermissionState = 'prompt' | 'active' | 'denied' | 'no_camera' | 'unsupported';
+
+interface CameraDevice {
+  id: string;
+  label: string;
+}
+
 export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEventId }) => {
   const { eventId: paramEventId } = useParams<{ eventId?: string }>();
   const navigate = useNavigate();
@@ -98,11 +110,29 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
   }, [eventId]);
 
   const { toast } = useToast();
+
+  // Scanner States
   const [manualToken, setManualToken] = useState('');
   const [isScanning, setIsScanning] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraState, setCameraState] = useState<CameraPermissionState>('prompt');
   const [torchOn, setTorchOn] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => soundEffects.getMuted());
+  const [showHowToUnblock, setShowHowToUnblock] = useState(false);
+
+  // Available Cameras & Device Memory
+  const [cameras, setCameras] = useState<CameraDevice[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('eventora_preferred_camera_id')) || '';
+  });
+
+  // Result & Visual Feedback
   const [lastOutcome, setLastOutcome] = useState<ScanOutcome | null>(null);
+  const [showResultBanner, setShowResultBanner] = useState(false);
+  const outcomeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 3-second same-code debounce
+  const lastScannedCodeRef = useRef<{ code: string; timestamp: number } | null>(null);
 
   // Offline Mode States (FR-OFFLINE)
   const [isOfflineMode, setIsOfflineMode] = useState<boolean>(false);
@@ -133,8 +163,23 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
   });
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
+  // html5-qrcode instance ref
+  const html5QrCodeRef = useRef<any>(null);
+  const wasScanningBeforeHidden = useRef(false);
+
+  // Check HTTPS & mediaDevices support on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const isSecure =
+      window.isSecureContext ||
+      window.location.protocol === 'https:' ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1';
+
+    if (!isSecure || !navigator?.mediaDevices?.getUserMedia) {
+      setCameraState('unsupported');
+    }
+  }, []);
 
   // Load cached manifest and offline ops
   const refreshLocalOfflineData = useCallback(() => {
@@ -151,7 +196,6 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
   // Network listener
   useEffect(() => {
     const handleOnline = () => {
-      // Auto-reconcile when connection returns
       if (offlineOps.some((op) => op.status === 'LOCAL_VERIFIED' || op.status === 'SYNC_PENDING')) {
         handleSyncBatch();
       }
@@ -175,18 +219,28 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [offlineOps]);
 
-  // Trigger haptic feedback
-  const triggerHaptic = (outcome: ScanOutcome['outcome']) => {
+  // Trigger Audio & Haptic Feedback
+  const triggerFeedback = useCallback((outcome: ScanOutcome['outcome']) => {
+    // 1. Audio Beep
+    if (outcome === 'ACCEPTED' || outcome === 'LOCALLY_VERIFIED') {
+      soundEffects.playSuccess();
+    } else if (outcome === 'DUPLICATE') {
+      soundEffects.playWarning();
+    } else {
+      soundEffects.playError();
+    }
+
+    // 2. Haptic Vibration
     if (typeof window !== 'undefined' && 'vibrate' in navigator) {
       if (outcome === 'ACCEPTED' || outcome === 'LOCALLY_VERIFIED') {
-        navigator.vibrate([100]); // Short sharp buzz
+        navigator.vibrate([150]);
       } else if (outcome === 'DUPLICATE') {
-        navigator.vibrate([50, 50, 50]); // Warning double tap
+        navigator.vibrate([100, 80, 100]);
       } else {
-        navigator.vibrate([200, 100, 200]); // Error long buzz
+        navigator.vibrate([250, 100, 250]);
       }
     }
-  };
+  }, []);
 
   const fetchAttendanceData = async () => {
     try {
@@ -209,6 +263,264 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
     return () => clearInterval(interval);
   }, [eventId]);
 
+  // Stop camera tracks cleanly
+  const stopCamera = useCallback(async () => {
+    if (html5QrCodeRef.current) {
+      try {
+        if (html5QrCodeRef.current.isScanning) {
+          await html5QrCodeRef.current.stop();
+        }
+        await html5QrCodeRef.current.clear();
+      } catch {
+        // Ignore stop errors
+      }
+    }
+    setTorchOn(false);
+    setTorchSupported(false);
+    setCameraState((prev) => (prev === 'active' ? 'prompt' : prev));
+  }, []);
+
+  // Submit scan request (Online or Offline Mode)
+  const handleScan = useCallback(async (tokenToScan: string) => {
+    const raw = tokenToScan.trim();
+    if (!raw) return;
+
+    // 3-second same-code debounce
+    const now = Date.now();
+    if (
+      lastScannedCodeRef.current &&
+      lastScannedCodeRef.current.code === raw &&
+      now - lastScannedCodeRef.current.timestamp < 3000
+    ) {
+      return; // Debounced repeat scan
+    }
+    lastScannedCodeRef.current = { code: raw, timestamp: now };
+
+    setIsScanning(true);
+
+    if (isOfflineMode || !navigator.onLine) {
+      // Offline local path
+      const op = recordLocalScan(eventId, raw);
+      refreshLocalOfflineData();
+
+      const outcome: ScanOutcome = {
+        outcome: op.status === 'CONFLICT' ? 'DUPLICATE' : 'LOCALLY_VERIFIED',
+        message:
+          op.status === 'CONFLICT'
+            ? 'Conflict Detected: Duplicate scan recorded locally'
+            : `Locally Verified: Pass ${op.displayHint} admitted`,
+        statusLabel: op.statusLabel,
+        displayHint: op.displayHint,
+      };
+
+      setLastOutcome(outcome);
+      setShowResultBanner(true);
+      triggerFeedback(outcome.outcome);
+      setIsScanning(false);
+      setManualToken('');
+
+      if (outcomeTimeoutRef.current) clearTimeout(outcomeTimeoutRef.current);
+      outcomeTimeoutRef.current = setTimeout(() => setShowResultBanner(false), 4000);
+      return;
+    }
+
+    // Online path
+    try {
+      const data = await apiClient<ScanOutcome>(`/api/v1/events/${eventId}/check-in/scan`, {
+        method: 'POST',
+        body: JSON.stringify({
+          token: raw,
+          sessionId: selectedSessionId || undefined,
+          deviceId: 'pwa-scanner-gate1',
+        }),
+      });
+
+      const outcome = data;
+      outcome.statusLabel = 'Synced';
+      setLastOutcome(outcome);
+      setShowResultBanner(true);
+      triggerFeedback(outcome.outcome);
+      fetchAttendanceData();
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        const outcome: ScanOutcome = {
+          outcome: (err.code?.replace('SCAN_', '') as any) || 'INVALID',
+          message: err.message || 'Check-in scan rejected.',
+          statusLabel: 'Rejected',
+        };
+        setLastOutcome(outcome);
+        setShowResultBanner(true);
+        triggerFeedback(outcome.outcome);
+      } else {
+        // Network dropped -> gracefully switch to local scan
+        const op = recordLocalScan(eventId, raw);
+        refreshLocalOfflineData();
+        const outcome: ScanOutcome = {
+          outcome: 'LOCALLY_VERIFIED',
+          message: `Network offline. Locally Verified: ${op.displayHint} queued for sync.`,
+          statusLabel: 'Locally Verified',
+          displayHint: op.displayHint,
+        };
+        setLastOutcome(outcome);
+        setShowResultBanner(true);
+        triggerFeedback('LOCALLY_VERIFIED');
+      }
+    } finally {
+      setIsScanning(false);
+      setManualToken('');
+
+      if (outcomeTimeoutRef.current) clearTimeout(outcomeTimeoutRef.current);
+      outcomeTimeoutRef.current = setTimeout(() => setShowResultBanner(false), 4000);
+    }
+  }, [eventId, isOfflineMode, refreshLocalOfflineData, selectedSessionId, triggerFeedback]);
+
+  // Start Camera with lazy-loaded html5-qrcode
+  const startCamera = useCallback(async (overrideCameraId?: string) => {
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode');
+
+      // Stop any existing instance
+      if (html5QrCodeRef.current) {
+        try {
+          if (html5QrCodeRef.current.isScanning) {
+            await html5QrCodeRef.current.stop();
+          }
+        } catch {}
+      }
+
+      const scannerInstance = new Html5Qrcode('qr-reader');
+      html5QrCodeRef.current = scannerInstance;
+
+      // Query available cameras
+      let devList: CameraDevice[] = [];
+      try {
+        const rawDevs = await Html5Qrcode.getCameras();
+        devList = (rawDevs || []).map((d) => ({ id: d.id, label: d.label || `Camera ${d.id}` }));
+        setCameras(devList);
+      } catch (err: any) {
+        if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+          setCameraState('denied');
+          return;
+        }
+      }
+
+      if (devList.length === 0 && !overrideCameraId) {
+        // Try starting with facingMode
+      }
+
+      // Determine camera to use
+      let cameraToUse = overrideCameraId || selectedCameraId;
+      if (!cameraToUse && devList.length > 0) {
+        // Prefer back camera
+        const backCam = devList.find((c) =>
+          /back|rear|environment|outer/i.test(c.label)
+        );
+        cameraToUse = backCam ? backCam.id : devList[devList.length - 1].id;
+        setSelectedCameraId(cameraToUse);
+        localStorage.setItem('eventora_preferred_camera_id', cameraToUse);
+      }
+
+      const cameraConfig = cameraToUse
+        ? { deviceId: { exact: cameraToUse } }
+        : { facingMode: { ideal: 'environment' } };
+
+      await scannerInstance.start(
+        cameraConfig,
+        {
+          fps: 10,
+          qrbox: { width: 240, height: 240 },
+          aspectRatio: 1.0,
+        },
+        (decodedText: string) => {
+          handleScan(decodedText);
+        },
+        () => {
+          // Frame scanned with no code found - ignore
+        }
+      );
+
+      setCameraState('active');
+
+      // Check torch capability
+      try {
+        const capabilities: any = scannerInstance.getRunningTrackCapabilities?.() || {};
+        setTorchSupported(Boolean(capabilities?.torch));
+      } catch {
+        setTorchSupported(false);
+      }
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setCameraState('denied');
+      } else if (
+        err?.name === 'NotFoundError' ||
+        err?.name === 'DevicesNotFoundError' ||
+        err?.message?.includes('camera')
+      ) {
+        setCameraState('no_camera');
+      } else {
+        setCameraState('denied');
+      }
+    }
+  }, [handleScan, selectedCameraId]);
+
+  // Flip / Switch Camera
+  const flipCamera = useCallback(async () => {
+    if (cameras.length <= 1) return;
+    const currentIndex = cameras.findIndex((c) => c.id === selectedCameraId);
+    const nextIndex = (currentIndex + 1) % cameras.length;
+    const nextCamId = cameras[nextIndex].id;
+    setSelectedCameraId(nextCamId);
+    localStorage.setItem('eventora_preferred_camera_id', nextCamId);
+    await stopCamera();
+    await startCamera(nextCamId);
+  }, [cameras, selectedCameraId, startCamera, stopCamera]);
+
+  // Toggle Torch
+  const toggleTorch = async () => {
+    if (!html5QrCodeRef.current || !html5QrCodeRef.current.isScanning) return;
+    try {
+      const nextTorch = !torchOn;
+      await html5QrCodeRef.current.applyVideoConstraints({
+        advanced: [{ torch: nextTorch }],
+      });
+      setTorchOn(nextTorch);
+    } catch {
+      // Torch toggle failed
+    }
+  };
+
+  // Toggle Mute
+  const toggleMute = () => {
+    const next = !isMuted;
+    soundEffects.setMuted(next);
+    setIsMuted(next);
+  };
+
+  // Cleanup on unmount & Visibility listener
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        if (cameraState === 'active') {
+          wasScanningBeforeHidden.current = true;
+          stopCamera();
+        }
+      } else if (document.visibilityState === 'visible') {
+        if (wasScanningBeforeHidden.current) {
+          wasScanningBeforeHidden.current = false;
+          startCamera();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopCamera();
+      if (outcomeTimeoutRef.current) clearTimeout(outcomeTimeoutRef.current);
+    };
+  }, [cameraState, startCamera, stopCamera]);
+
   // Download Manifest Handler
   const handleDownloadManifest = async () => {
     setDownloadingManifest(true);
@@ -220,7 +532,7 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
         title: 'Manifest Downloaded',
         message: `Stored zero-PII cache for ${m.ticketCount} tickets. Valid for 4 hours.`,
       });
-    } catch (err) {
+    } catch {
       toast({
         type: 'error',
         title: 'Manifest Error',
@@ -287,128 +599,6 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
     setSelectedConflict(null);
     setResolutionNote('');
     setIsResolving(false);
-  };
-
-  // Start Camera
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
-      });
-      mediaStreamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-      setCameraActive(true);
-    } catch {
-      setCameraActive(false);
-    }
-  };
-
-  // Stop Camera
-  const stopCamera = () => {
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-    setCameraActive(false);
-    setTorchOn(false);
-  };
-
-  // Toggle Torch
-  const toggleTorch = async () => {
-    if (!mediaStreamRef.current) return;
-    const track = mediaStreamRef.current.getVideoTracks()[0];
-    if (track) {
-      try {
-        const capabilities: any = track.getCapabilities?.() || {};
-        if (capabilities.torch) {
-          const nextTorch = !torchOn;
-          await track.applyConstraints({ advanced: [{ torch: nextTorch } as any] });
-          setTorchOn(nextTorch);
-        }
-      } catch {
-        // Torch unsupported
-      }
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      stopCamera();
-    };
-  }, []);
-
-  // Submit scan request (Online or Offline Mode)
-  const handleScan = async (tokenToScan: string) => {
-    if (!tokenToScan.trim()) return;
-    setIsScanning(true);
-
-    if (isOfflineMode || !navigator.onLine) {
-      // Offline local path
-      const op = recordLocalScan(eventId, tokenToScan.trim());
-      refreshLocalOfflineData();
-
-      const outcome: ScanOutcome = {
-        outcome: op.status === 'CONFLICT' ? 'DUPLICATE' : 'LOCALLY_VERIFIED',
-        message:
-          op.status === 'CONFLICT'
-            ? 'Conflict Detected: Duplicate scan recorded locally'
-            : `Locally Verified: Pass ${op.displayHint} admitted`,
-        statusLabel: op.statusLabel,
-        displayHint: op.displayHint,
-      };
-
-      setLastOutcome(outcome);
-      triggerHaptic(outcome.outcome);
-      setIsScanning(false);
-      setManualToken('');
-      return;
-    }
-
-    // Online path
-    try {
-      const data = await apiClient<ScanOutcome>(`/api/v1/events/${eventId}/check-in/scan`, {
-        method: 'POST',
-        body: JSON.stringify({
-          token: tokenToScan.trim(),
-          sessionId: selectedSessionId || undefined,
-          deviceId: 'pwa-scanner-gate1',
-        }),
-      });
-
-      const outcome = data;
-      outcome.statusLabel = 'Synced';
-      setLastOutcome(outcome);
-      triggerHaptic(outcome.outcome);
-      fetchAttendanceData();
-    } catch (err: any) {
-      if (err instanceof ApiError) {
-        const outcome: ScanOutcome = {
-          outcome: (err.code?.replace('SCAN_', '') as any) || 'INVALID',
-          message: err.message || 'Check-in scan rejected.',
-          statusLabel: 'Rejected',
-        };
-        setLastOutcome(outcome);
-        triggerHaptic(outcome.outcome);
-      } else {
-        // Network dropped -> gracefully switch to local scan
-        const op = recordLocalScan(eventId, tokenToScan.trim());
-        refreshLocalOfflineData();
-        const outcome: ScanOutcome = {
-          outcome: 'LOCALLY_VERIFIED',
-          message: `Network offline. Locally Verified: ${op.displayHint} queued for sync.`,
-          statusLabel: 'Locally Verified',
-          displayHint: op.displayHint,
-        };
-        setLastOutcome(outcome);
-        triggerHaptic('LOCALLY_VERIFIED');
-      }
-    } finally {
-      setIsScanning(false);
-      setManualToken('');
-    }
   };
 
   const checkinRate =
@@ -495,6 +685,18 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Mute Toggle */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={toggleMute}
+            aria-label={isMuted ? 'Unmute Audio' : 'Mute Audio'}
+            className="text-xs"
+          >
+            {isMuted ? <VolumeX className="w-3.5 h-3.5 text-error mr-1" /> : <Volume2 className="w-3.5 h-3.5 text-success mr-1" />}
+            <span>{isMuted ? 'Muted' : 'Sound On'}</span>
+          </Button>
+
           {/* Online/Offline Toggle */}
           <button
             type="button"
@@ -522,6 +724,56 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
           </Button>
         </div>
       </div>
+
+      {/* Full-Screen Colored Feedback Toast / Banner */}
+      {showResultBanner && lastOutcome && (
+        <div
+          className={`p-4 rounded-xl border flex items-center justify-between shadow-lg transition-all animate-in fade-in slide-in-from-top-4 duration-200 ${
+            lastOutcome.outcome === 'ACCEPTED' || lastOutcome.outcome === 'LOCALLY_VERIFIED'
+              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+              : lastOutcome.outcome === 'DUPLICATE'
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-400'
+              : 'bg-rose-500/15 border-rose-500/40 text-rose-400'
+          }`}
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="flex items-center gap-3">
+            {lastOutcome.outcome === 'ACCEPTED' || lastOutcome.outcome === 'LOCALLY_VERIFIED' ? (
+              <CheckCircle2 className="w-7 h-7 text-emerald-400 shrink-0" />
+            ) : lastOutcome.outcome === 'DUPLICATE' ? (
+              <AlertTriangle className="w-7 h-7 text-amber-400 shrink-0" />
+            ) : (
+              <XCircle className="w-7 h-7 text-rose-400 shrink-0" />
+            )}
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold tracking-tight text-white">{lastOutcome.message}</span>
+                {lastOutcome.attendeeInitials && (
+                  <Badge variant="brand" size="sm">
+                    {lastOutcome.attendeeInitials}
+                  </Badge>
+                )}
+                {lastOutcome.ticketTierName && (
+                  <span className="text-xs text-white/70">({lastOutcome.ticketTierName})</span>
+                )}
+              </div>
+              {lastOutcome.firstScannedBy && (
+                <p className="text-xs text-white/70 mt-0.5">
+                  First check-in by {lastOutcome.firstScannedBy}
+                </p>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowResultBanner(false)}
+            className="p-1 hover:bg-white/10 rounded text-white/70 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* FR-OFFLINE Manifest Banner & Controls */}
       <Card className="p-4 border-l-4 border-l-brand space-y-3">
@@ -656,7 +908,7 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
 
       {/* Main Scanner Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Left: Viewfinder Camera View & Manual Entry */}
+        {/* Left: Viewfinder Camera View & Controls */}
         <Card className="p-5 flex flex-col justify-between space-y-4">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -664,51 +916,125 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
                 <Camera className="w-4 h-4 text-brand" />
                 <span>Optical QR Scanner</span>
               </h2>
-              {cameraActive && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={toggleTorch}
-                  className={torchOn ? 'bg-warning/20 border-warning text-warning' : ''}
-                >
-                  <Flashlight className="w-3.5 h-3.5 mr-1" />
-                  <span>{torchOn ? 'Torch On' : 'Torch Off'}</span>
-                </Button>
-              )}
+
+              <div className="flex items-center gap-1.5">
+                {/* Switch / Flip Camera button */}
+                {cameras.length > 1 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={flipCamera}
+                    title="Flip camera"
+                    className="text-xs px-2 py-1 h-7"
+                  >
+                    <RotateCw className="w-3 h-3 mr-1" />
+                    <span>Flip</span>
+                  </Button>
+                )}
+
+                {/* Torch Toggle */}
+                {cameraState === 'active' && torchSupported && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={toggleTorch}
+                    className={`text-xs px-2 py-1 h-7 ${torchOn ? 'bg-warning/20 border-warning text-warning' : ''}`}
+                  >
+                    <Flashlight className="w-3 h-3 mr-1" />
+                    <span>{torchOn ? 'Torch' : 'Torch'}</span>
+                  </Button>
+                )}
+              </div>
             </div>
 
             {/* Viewfinder Window */}
-            <div className="w-full aspect-square max-h-64 bg-slate-950 rounded-xl overflow-hidden relative flex items-center justify-center border-2 border-dashed border-border/80">
-              {cameraActive ? (
-                <video
-                  ref={videoRef}
-                  className="w-full h-full object-cover"
-                  playsInline
-                  muted
-                />
-              ) : (
-                <div className="text-center p-6 space-y-2">
+            <div className="w-full aspect-square max-h-72 bg-slate-950 rounded-xl overflow-hidden relative flex items-center justify-center border-2 border-border/80">
+              {/* html5-qrcode mount target */}
+              <div
+                id="qr-reader"
+                className={`w-full h-full ${cameraState === 'active' ? 'block' : 'hidden'}`}
+              />
+
+              {/* State overlays when not active */}
+              {cameraState === 'prompt' && (
+                <div className="text-center p-6 space-y-3">
                   <Camera className="w-10 h-10 text-white/40 mx-auto" />
-                  <p className="text-xs text-white/70">Camera is offline</p>
-                  <Button variant="primary" size="sm" onClick={startCamera}>
+                  <p className="text-xs text-white/70">Camera is ready</p>
+                  <Button variant="primary" size="sm" onClick={() => startCamera()}>
                     Activate Camera
                   </Button>
                 </div>
               )}
 
-              {/* Aiming Reticle Overlay */}
-              {cameraActive && (
+              {cameraState === 'denied' && (
+                <div className="text-center p-6 space-y-3">
+                  <Lock className="w-10 h-10 text-error mx-auto" />
+                  <p className="text-xs font-semibold text-error">Camera Access Blocked</p>
+                  <p className="text-[11px] text-white/70 max-w-xs mx-auto">
+                    Browser camera permission was denied. Use manual entry or unblock camera.
+                  </p>
+                  <div className="flex items-center justify-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowHowToUnblock(!showHowToUnblock)}
+                      className="text-xs"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5 mr-1" />
+                      <span>{showHowToUnblock ? 'Hide Guide' : 'How to Unblock'}</span>
+                    </Button>
+                    <Button variant="primary" size="sm" onClick={() => startCamera()} className="text-xs">
+                      Try Again
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {cameraState === 'no_camera' && (
+                <div className="text-center p-6 space-y-2">
+                  <XCircle className="w-10 h-10 text-warning mx-auto" />
+                  <p className="text-xs font-semibold text-warning">No Camera Detected</p>
+                  <p className="text-[11px] text-white/70 max-w-xs mx-auto">
+                    No accessible video input device found on this machine. Use manual code entry below.
+                  </p>
+                </div>
+              )}
+
+              {cameraState === 'unsupported' && (
+                <div className="text-center p-6 space-y-2">
+                  <Lock className="w-10 h-10 text-amber-400 mx-auto" />
+                  <p className="text-xs font-semibold text-amber-400">HTTPS Required</p>
+                  <p className="text-[11px] text-white/70 max-w-xs mx-auto">
+                    Camera access requires a secure HTTPS or localhost origin. Manual entry is enabled below.
+                  </p>
+                </div>
+              )}
+
+              {/* Aiming Reticle Overlay when active */}
+              {cameraState === 'active' && (
                 <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                  <div className="w-44 h-44 border-2 border-brand/90 rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] animate-pulse" />
+                  <div className="w-48 h-48 border-2 border-brand/90 rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] animate-pulse" />
                 </div>
               )}
             </div>
+
+            {/* How to unblock guide if expanded */}
+            {showHowToUnblock && (
+              <div className="p-3 bg-surface-2 border border-border rounded-lg text-xs space-y-2">
+                <p className="font-bold text-text">How to Unblock Camera in Browser Settings:</p>
+                <ul className="list-disc pl-4 space-y-1 text-text-muted text-[11px]">
+                  <li><strong>Chrome / Android:</strong> Tap the lock or sliders icon next to the URL $\to$ <em>Site settings</em> $\to$ set <em>Camera</em> to <strong>Allow</strong>, then reload page.</li>
+                  <li><strong>iOS Safari:</strong> Tap the <code className="bg-surface px-1 rounded">aA</code> icon in the search bar $\to$ <em>Website Settings</em> $\to$ <em>Camera</em> $\to$ <strong>Allow</strong>.</li>
+                  <li><strong>Desktop:</strong> Click the camera icon with red cross in the right side of your browser URL bar $\to$ select "Always allow" $\to$ Done.</li>
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Manual Token Input */}
           <div className="space-y-2 pt-2 border-t border-border">
             <label className="block text-xs font-medium text-text">
-              Manual Code Entry (Token or Masked Hint)
+              Manual Code Entry (Ticket Code, Token, or URL)
             </label>
             <div className="flex gap-2">
               <Input
@@ -733,7 +1059,7 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
           </div>
         </Card>
 
-        {/* Right: Colored Outcome Card */}
+        {/* Right: Colored Outcome Card & Recent Scans */}
         <div className="flex flex-col space-y-4">
           <Card className="p-5 flex-1 flex flex-col justify-center">
             <h2 className="text-sm font-bold text-text mb-3">Scan Result & Admittance</h2>
@@ -742,10 +1068,10 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
               <div
                 className={`p-6 rounded-xl border flex flex-col items-center text-center space-y-3 transition-all ${
                   lastOutcome.outcome === 'ACCEPTED' || lastOutcome.outcome === 'LOCALLY_VERIFIED'
-                    ? 'bg-success/10 border-success text-success'
+                    ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500'
                     : lastOutcome.outcome === 'DUPLICATE'
-                    ? 'bg-warning/10 border-warning text-warning'
-                    : 'bg-error/10 border-error text-error'
+                    ? 'bg-amber-500/10 border-amber-500 text-amber-500'
+                    : 'bg-rose-500/10 border-rose-500 text-rose-500'
                 }`}
                 role="alert"
                 aria-live="assertive"

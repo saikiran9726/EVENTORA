@@ -310,6 +310,11 @@ export const QRDisplay: React.FC<QRDisplayProps> = ({
           </div>
         )}
 
+        {/* Quick Help */}
+        <p className="text-[11px] text-text-muted mt-2 text-center">
+          Increase screen brightness for rapid gate scan
+        </p>
+
         {/* Action Controls */}
         <div className="w-full grid grid-cols-2 gap-2 mt-3 pt-2 border-t border-border/80">
           <Button
