@@ -572,6 +572,8 @@ export const outbox = pgTable('outbox', {
   retries: integer('retries').default(0).notNull(),
   attempts: smallint('attempts').default(0).notNull(),
   nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  error: text('error'),
   dedupeKey: varchar('dedupe_key', { length: 255 }).unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   processedAt: timestamp('processed_at', { withTimezone: true }),
@@ -1832,4 +1834,24 @@ export type Refund = typeof refunds.$inferSelect;
 export type RefundStatus = typeof refundStatusEnum.enumValues[number];
 export type ReconciliationRecord = typeof reconciliationRecords.$inferSelect;
 export type ReconciliationItem = typeof reconciliationItems.$inferSelect;
+
+// 59. Email Suppressions (Hard bounces & spam complaints)
+export const emailSuppressions = pgTable(
+  'email_suppressions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    email: varchar('email', { length: 255 }).notNull().unique(),
+    reason: varchar('reason', { length: 50 }).notNull(),
+    source: varchar('source', { length: 50 }).default('resend').notNull(),
+    details: jsonb('details').default({}).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxEmailSuppressionsEmail: index('idx_email_suppressions_email').on(table.email),
+  })
+);
+
+export type EmailSuppression = typeof emailSuppressions.$inferSelect;
+export type NewEmailSuppression = typeof emailSuppressions.$inferInsert;
+
 

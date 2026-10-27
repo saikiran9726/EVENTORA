@@ -128,3 +128,56 @@ Production Specification:
 - Postgres `max_connections`: 100
 - Reserved for admin/migrations: 10
 - Total allocation: $80 + 10 = 90 \le 90$ (Guaranteed headroom).
+
+---
+
+## 6. Email Infrastructure & Resend Integration Runbook
+
+### 6.1 Sending Domain Verification & DNS Records
+To ensure optimal email deliverability and avoid spam quarantine across collegiate mail exchangers, configure the following DNS records for the sending domain (e.g. `eventora.org` / `campus.eventora.org`):
+
+1. **DKIM (DomainKeys Identified Mail):**
+   - Type: `CNAME`
+   - Name: `resend._domainkey.eventora.org`
+   - Value: Provided in Resend Dashboard under Domains (e.g. `feedback-smtp.resend.com`)
+2. **SPF (Sender Policy Framework):**
+   - Type: `TXT`
+   - Name: `eventora.org`
+   - Value: `v=spf1 include:resend.com ~all`
+3. **DMARC (Domain-based Message Authentication, Reporting & Conformance):**
+   - Type: `TXT`
+   - Name: `_dmarc.eventora.org`
+   - Value: `v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-reports@eventora.org; aspf=r;`
+4. **MX Records (for bounce and reply handling):**
+   - Type: `MX`
+   - Priority: `10`
+   - Value: `feedback-smtp.resend.com`
+
+### 6.2 Environment Configuration
+- `EMAIL_ADAPTER`: `resend` (production), `console` (local development), `test` (automated test suites).
+- `EMAIL_FROM`: `Eventora <notifications@eventora.org>`.
+- `RESEND_API_KEY`: Secret provisioned in Resend Dashboard (`re_...`).
+- `RESEND_WEBHOOK_SECRET`: Webhook signing secret (`whsec_...`) configured in Resend Dashboard pointing to `POST https://api.eventora.org/webhooks/resend`.
+
+### 6.3 Rate Limits, Batching & Idempotency
+- **Batch Size Limit:** Resend batch API supports a maximum of 100 emails per request. `ResendEmailAdapter.sendBatch()` automatically slices input arrays into chunks of $\le 100$.
+- **Idempotency Keys:** Every email send attaches a stable header `X-Entity-Ref-ID: <idempotencyKey>` based on outbox ID or notification entity ID, preventing double-sends on worker restarts or network timeouts.
+- **Suppression Enforcement:** Hard bounces and spam complaints received via `POST /webhooks/resend` are stored permanently in the `email_suppressions` table. All email adapters verify recipients against `email_suppressions` prior to dispatch and skip delivery to suppressed addresses.
+
+### 6.4 Worker Database Connection Architecture & LISTEN/NOTIFY
+- **Direct Session Connection Requirement:** PostgreSQL `LISTEN/NOTIFY` channels (used by `setupOutboxListener()` on channel `outbox_channel`) require a dedicated, persistent session connection.
+- **Connection Pooler Warning:** Do **NOT** route `LISTEN` connections through transaction-mode poolers (such as Supabase port `6543` or PgBouncer in `pool_mode = transaction`). Instead, supply a direct Postgres connection string (e.g. Supabase session mode port `5432` or direct database URI).
+- **Fallback Polling:** If the direct listener connection is disconnected or unavailable, the worker's interval polling loop (default: every 3,000 ms) automatically sweeps `PENDING` outbox rows with zero message loss.
+
+### 6.5 Dead-Letter Queue Triage & Replay
+1. Inspect dead messages:
+   ```bash
+   GET /api/v1/admin/outbox/dead-letter
+   ```
+2. Diagnose error cause (e.g. malformed recipient, downstream provider outage).
+3. Once the root cause is resolved, trigger audited replay:
+   ```bash
+   POST /api/v1/admin/outbox/:id/retry
+   ```
+   This resets `status = 'PENDING'`, resets attempts to 0, sets `next_attempt_at = NOW()`, and records an entry in `audit_logs`.
+

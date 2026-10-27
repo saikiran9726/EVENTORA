@@ -1307,7 +1307,8 @@ export async function runMigrations() {
         (15, 'Phase 15: Event Pricing Type, Currency & Tier Backfill'),
         (16, 'Phase 16: Custom Registration Form Builder & Versioned Fields'),
         (17, 'Phase 17: YouPI-PG Payments Core, Webhook V2 & Audit Trail'),
-        (18, 'Phase 18: Ticket QR Secure Tokens, Rotation & Downloads')
+        (18, 'Phase 18: Ticket QR Secure Tokens, Rotation & Downloads'),
+        (19, 'Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1482,6 +1483,21 @@ export async function runMigrations() {
       ALTER TABLE tickets ADD COLUMN IF NOT EXISTS qr_token TEXT;
       ALTER TABLE tickets ADD COLUMN IF NOT EXISTS qr_token_rotated_at TIMESTAMPTZ;
       CREATE INDEX IF NOT EXISTS idx_tickets_qr_token ON tickets(qr_token) WHERE qr_token IS NOT NULL;
+
+      -- Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening
+      ALTER TABLE outbox ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
+      ALTER TABLE outbox ADD COLUMN IF NOT EXISTS error TEXT;
+      CREATE INDEX IF NOT EXISTS idx_outbox_locked_until ON outbox(locked_until) WHERE locked_until IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS email_suppressions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email VARCHAR(255) NOT NULL UNIQUE,
+        reason VARCHAR(50) NOT NULL,
+        source VARCHAR(50) NOT NULL DEFAULT 'resend',
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_email_suppressions_email ON email_suppressions(email);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

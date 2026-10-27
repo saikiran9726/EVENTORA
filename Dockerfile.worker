@@ -47,4 +47,4 @@ USER 10001:10001
 
 VOLUME ["/tmp"]
 
-CMD ["node", "packages/backend/dist/index.js"]
+CMD ["node", "packages/backend/dist/worker.js"]

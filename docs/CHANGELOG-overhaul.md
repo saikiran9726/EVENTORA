@@ -1,5 +1,142 @@
 # Eventora Overhaul Changelog
 
+## Phase P16 — Real Email with Resend & Outbox Redesign
+
+**Date:** 2026-10-27  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Migration 19)
+- **Migration 19 (`Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening`):**
+  - Added columns to `outbox` table:
+    - `locked_until TIMESTAMPTZ` (for short claim lease and stale worker recovery)
+    - `error TEXT` (capturing failure diagnostics and provider outage responses)
+  - Created index `idx_outbox_locked_until ON outbox(locked_until) WHERE locked_until IS NOT NULL`.
+  - Created table `email_suppressions` for permanent bounce and complaint tracking:
+    - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+    - `email VARCHAR(255) NOT NULL UNIQUE`
+    - `reason VARCHAR(50) NOT NULL` (`hard_bounce`, `complaint`, `manual`)
+    - `source VARCHAR(50) NOT NULL DEFAULT 'resend'`
+    - `details JSONB NOT NULL DEFAULT '{}'::jsonb`
+    - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+  - Created index `idx_email_suppressions_email ON email_suppressions(email)`.
+  - Registered version 19 in `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 19 -> 18: drops `email_suppressions` table, drops index `idx_outbox_locked_until`, drops columns `locked_until` and `error` from `outbox`, and removes version 19 record.
+  - Tested and verified live rollback 19 -> 18 and re-application 18 -> 19 against local PostgreSQL database.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Updated `outbox` table definition with `lockedUntil` and `error`.
+  - Defined `emailSuppressions` table with relational mapping and exported types (`EmailSuppression`, `NewEmailSuppression`).
+
+---
+
+### 2. Email Adapter Architecture & Suppression Service
+- **Interface & Implementations (`packages/backend/src/services/email/`):**
+  - Defined standard `EmailAdapter` interface (`send(options)`, `sendBatch(optionsList)`).
+  - Implemented `ResendEmailAdapter` using official `resend` SDK:
+    - Automatically slices batch payloads into chunks $\le 100$ per Resend batch API limit.
+    - Attaches stable idempotency headers (`X-Entity-Ref-ID`) based on outbox or notification ID.
+  - Implemented `ConsoleEmailAdapter` for local development.
+  - Implemented `TestEmailAdapter` for automated test suites with inspection methods (`getSentEmails()`, `getLastEmail()`, `findEmailTo()`, `setFailNext()`).
+  - Added `getEmailAdapter()` singleton factory honoring `config.EMAIL_ADAPTER` (`'resend'`, `'console'`, `'test'`).
+- **Suppression Management (`packages/backend/src/services/email/suppression.ts`):**
+  - `isEmailSuppressed(email: string)`: checks if an address has experienced a hard bounce or spam complaint.
+  - `filterSuppressedEmails(emails: string[])`: splits recipient list into allowed and suppressed batches.
+  - `recordSuppression(...)`: idempotent upsert into `email_suppressions`.
+  - All email adapters automatically enforce suppression before making external network calls.
+
+---
+
+### 3. Unified Email Templates & Localization
+- **Common Engine (`packages/backend/src/services/email/templates/common.ts`):**
+  - `formatIST(date)`: formats all timestamps to Indian Standard Time (`Asia/Kolkata` / `+05:30`).
+  - `formatRupees(paise)`: converts integer paise to standard localized ₹ rupee string (`₹450`, `₹1,250.50`).
+  - `emailLayout(...)`: responsive HTML wrapper + plain text fallback + unsubscribe link for non-transactional messages.
+- **Event Templates (`packages/backend/src/services/email/templates/index.ts`):**
+  - Full templates implemented for all 12 events:
+    1. `auth.verify_email`
+    2. `auth.resend_verification`
+    3. `auth.reset_password`
+    4. `booking.confirmed`
+    5. `payment.receipt`
+    6. `payment.verification_queue`
+    7. `booking.cancelled`
+    8. `waitlist.offer` / `waitlist.offer_dispatched`
+    9. `team.invite` / `team.invitation`
+    10. `event.changed` / `event.postponed` / `event.cancelled`
+    11. `organizer.alert`
+    12. `feedback.reminder`
+
+---
+
+### 4. Outbox Worker Redesign & Concurrency Hardening
+- **Short Claim Transaction & External Execution:**
+  - `dispatchPendingOutboxMessages` uses short transaction with `SELECT ... FOR UPDATE SKIP LOCKED` and immediately marks claimed batch `status = 'PROCESSING', locked_until = NOW() + INTERVAL '2 minutes'`, then commits.
+  - Message processing and email provider calls are performed strictly **OUTSIDE** any database transaction.
+  - Upon completion, rows are updated to `status = 'DONE', processed_at = NOW(), locked_until = NULL`.
+- **Bounded Exponential Backoff & Dead-Lettering:**
+  - Failures increment `attempts`. For attempts $< 8$, schedules retry at `NOW() + min(2^n s, 15 min) + jitter`.
+  - When `attempts >= 8` or on malformed JSON payload, marks `status = 'DEAD'` and records `error`.
+- **Re-entrancy Guard & Stale Lock Reaper:**
+  - In-memory `isDispatching` guard prevents overlapping execution loops within a worker process.
+  - Reaper query automatically reclaims stale `PROCESSING` rows where `locked_until < NOW()`.
+- **Explicit Handlers & Throwing Default:**
+  - Removed silent `DONE` fallthroughs. Every event type has an explicit processor; unknown types throw errors and are retried/dead-lettered.
+
+---
+
+### 5. Auth Token Security Invariant
+- **Single Delivery Path:**
+  - Raw tokens are strictly omitted from `outbox.payload` (never stored in outbox).
+  - Tokens are generated on delivery by the outbox handler; only SHA-256 hashes are stored in `password_resets`.
+  - Raw tokens exist exclusively in the link delivered to the user's verified inbox (`/verify-email?token=...`, `/reset-password?token=...`).
+  - Strict auth responses guarantee tokens never appear in API responses.
+
+---
+
+### 6. Resend Webhooks & Dead-Letter Management
+- **Resend Webhook (`POST /webhooks/resend` and `/api/v1/webhooks/resend`):**
+  - Cryptographically verifies Svix signatures (`svix-id`, `svix-timestamp`, `svix-signature`) using raw request body buffer and `RESEND_WEBHOOK_SECRET`.
+  - Processes `email.delivered` (updates `notification_deliveries` to `DELIVERED`).
+  - Processes `email.bounced` (records hard bounces in `email_suppressions`, updates delivery to `FAILED`).
+  - Processes `email.complained` (records spam complaints in `email_suppressions`, updates delivery to `FAILED`).
+- **Admin Dead-Letter API (`packages/backend/src/routes/api/v1/admin.ts`):**
+  - `GET /api/v1/admin/outbox/dead-letter`: lists dead-letter outbox records with diagnostic error messages.
+  - `POST /api/v1/admin/outbox/:id/retry`: resets dead message to `PENDING` with `attempts = 0` and writes an immutable entry into `audit_logs`.
+
+---
+
+### 7. Standalone Worker Process & Operations Runbook
+- **Standalone Process:**
+  - Created `packages/backend/src/worker.ts` running outbox dispatcher, hold reconciler, and event completer with SIGTERM/SIGINT graceful shutdown.
+  - Updated `Dockerfile.worker` to execute `node packages/backend/dist/worker.js`.
+  - Guarded `packages/backend/src/index.ts` so API server skips in-process workers in production unless `RUN_IN_PROCESS_WORKER=true`.
+- **Operations Runbook (`docs/runbook.md`):**
+  - Documented Resend sending domain verification, DKIM/SPF/DMARC DNS configuration, rate limits ($\le 100$ batch chunking), and idempotency keys.
+  - Documented PostgreSQL `LISTEN/NOTIFY` direct session connection requirement vs transaction poolers (Supabase 6543 vs 5432) with fallback polling.
+
+---
+
+### 8. Quality Gate & Acceptance Verification
+- **Test Suite (`tests/unit/phase-p16-resend-outbox.test.ts`):**
+  - 16 new automated unit and integration tests passing.
+  - Verified provider outage backoff and cap at `DEAD` after 8 attempts.
+  - Verified concurrent workers with `SKIP LOCKED` never double-send.
+  - Verified stale lock reaper reclaims expired `PROCESSING` messages.
+  - Verified hard bounce & spam complaint suppression prevents subsequent dispatches.
+  - Verified Svix webhook signature verification (accepts valid, rejects forged/missing with 401).
+  - Verified end-to-end registration -> email -> verify -> login flow and forgot password -> email -> reset -> session revocation flow.
+  - Verified admin dead-letter view and retry API.
+  - Verified schema migration 19 expand/contract rollback and re-application.
+- **Master Monorepo Verification:**
+  - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
+  - `pnpm lint`: 0 errors.
+  - `pnpm test`: 43 test files passed, 440/440 tests passed.
+
+---
+
 ## Phase P10 — Event Creation: Free/Paid + Schema
 
 **Date:** 2026-10-26  

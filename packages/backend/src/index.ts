@@ -5,6 +5,7 @@ import { startEventCompleterWorker, stopEventCompleterWorker } from './services/
 import { pool } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { seedDatabase } from './db/seed.js';
+import { config } from './config.js';
 
 const PORT = Number(process.env.PORT) || 4000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -95,10 +96,16 @@ async function start() {
     await server.listen({ port: PORT, host: HOST });
     console.log(`[Eventora Backend] Server listening at http://${HOST}:${PORT}`);
 
-    // In single-service deployments (e.g. Render free tier), run background workers in-process
-    startOutboxWorker();
-    startHoldReconcilerWorker();
-    startEventCompleterWorker();
+    // In production without RUN_IN_PROCESS_WORKER, background tasks are handled by Dockerfile.worker
+    const isProduction = process.env.NODE_ENV === 'production';
+    if (isProduction && !config.RUN_IN_PROCESS_WORKER) {
+      console.log('[Eventora Backend] Standalone worker mode enabled; skipping in-process workers.');
+    } else {
+      console.log('[Eventora Backend] Starting background workers in-process...');
+      startOutboxWorker();
+      startHoldReconcilerWorker();
+      startEventCompleterWorker();
+    }
   } catch (err) {
     server.log.error(err);
     process.exit(1);

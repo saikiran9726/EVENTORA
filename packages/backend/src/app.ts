@@ -19,6 +19,7 @@ import { volunteerRoutes } from './routes/api/v1/volunteers.js';
 import { notificationRoutes } from './routes/api/v1/notifications.js';
 import { offlineCheckinRoutes } from './routes/api/v1/offline-checkin.js';
 import { crossCollegePassportRoutes } from './routes/api/v1/crosscollege-passport.js';
+import { handleResendWebhook } from './routes/webhooks/resend.js';
 import { monitoringRoutes, recordMetricRequest } from './routes/monitoring.js';
 import { securityHeadersPlugin } from './plugins/security-headers.js';
 import { rateLimiterPlugin } from './plugins/rate-limiter.js';
@@ -126,6 +127,8 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.addHook('preValidation', async (req, reply) => {
     // Skip session hash parameters which are 64-char sha256 hex hashes rather than UUIDs
     if (req.url.startsWith('/api/v1/me/sessions/')) return;
+    // Skip outbox parameters which are integer IDs
+    if (req.url.startsWith('/api/v1/admin/outbox/')) return;
 
     if (req.params && typeof req.params === 'object') {
       for (const [key, value] of Object.entries(req.params as Record<string, unknown>)) {
@@ -177,6 +180,31 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
       },
     },
     handleYouPiWebhookRoute
+  );
+
+  // Resend webhook endpoints at /webhooks/resend and /api/v1/webhooks/resend
+  app.post(
+    '/webhooks/resend',
+    {
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    handleResendWebhook
+  );
+
+  app.post(
+    '/api/v1/webhooks/resend',
+    {
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    handleResendWebhook
   );
 
   // Direct status endpoint for YouPI checkout at /payments/:id/status (also at /api/v1/payments/:id/status)

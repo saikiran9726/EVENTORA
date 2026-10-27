@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { db } from '../../../db/index.js';
+import { db, pool } from '../../../db/index.js';
 import { users, colleges } from '../../../db/schema.js';
 import { eq, desc, count, and } from 'drizzle-orm';
 import { logAuditEvent } from '../../../services/audit.js';
@@ -215,6 +215,99 @@ export const adminRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
           status: updatedUser!.status,
         },
         message: 'User role/status successfully updated.',
+      });
+    }
+  );
+
+  // 4. GET /api/v1/admin/outbox/dead-letter
+  fastify.get(
+    '/outbox/dead-letter',
+    {
+      config: {
+        auth: true,
+        policy: 'user:manage',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const res = await pool.query(
+        `SELECT id, event_type, topic, aggregate_id, payload, status, attempts, error, created_at, next_attempt_at
+         FROM outbox
+         WHERE status = 'DEAD'
+         ORDER BY id DESC
+         LIMIT 100;`
+      );
+
+      return reply.code(200).send({
+        items: res.rows,
+        total: res.rows.length,
+      });
+    }
+  );
+
+  // 5. POST /api/v1/admin/outbox/:id/retry
+  fastify.post(
+    '/outbox/:id/retry',
+    {
+      config: {
+        auth: true,
+        policy: 'user:manage',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const parsedId = Number(id);
+
+      if (isNaN(parsedId)) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid outbox message id',
+            requestId: req.id,
+          },
+        });
+      }
+
+      const existingRes = await pool.query('SELECT * FROM outbox WHERE id = $1;', [parsedId]);
+      if (existingRes.rows.length === 0) {
+        return reply.code(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Outbox message not found',
+            requestId: req.id,
+          },
+        });
+      }
+
+      const existingRow = existingRes.rows[0];
+
+      const updateRes = await pool.query(
+        `UPDATE outbox
+         SET status = 'PENDING', attempts = 0, retries = 0, next_attempt_at = NOW(),
+             locked_until = NULL, error = NULL
+         WHERE id = $1
+         RETURNING id, event_type, status, attempts;`,
+        [parsedId]
+      );
+
+      await logAuditEvent({
+        actorId: req.user!.id,
+        action: 'outbox.dead_letter_retry',
+        resourceType: 'outbox',
+        resourceId: String(parsedId),
+        meta: {
+          previousStatus: existingRow.status,
+          previousAttempts: existingRow.attempts,
+          previousError: existingRow.error,
+        },
+        ip: req.ip,
+      });
+
+      return reply.code(200).send({
+        success: true,
+        message: 'Outbox message successfully reset to PENDING for retry',
+        item: updateRes.rows[0],
       });
     }
   );

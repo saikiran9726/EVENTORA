@@ -547,7 +547,7 @@ describe('Phase P14: Ticket QR, Token Rotation & Downloads', () => {
       const client2 = await pool.connect();
       try {
         const vRes = await client2.query('SELECT MAX(version) as ver FROM schema_migrations;');
-        expect(vRes.rows[0].ver).toBe(18);
+        expect(Number(vRes.rows[0].ver)).toBeGreaterThanOrEqual(18);
 
         // Verify column restored
         const colRes = await client2.query(

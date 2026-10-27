@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { config } from '../../../config.js';
 import { db } from '../../../db/index.js';
-import { users, colleges, passwordResets, userPreferences } from '../../../db/schema.js';
+import { users, colleges, passwordResets, userPreferences, outbox } from '../../../db/schema.js';
 import {
   hashPassword,
   verifyPassword,
@@ -192,6 +192,20 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         ip: clientIp,
       });
 
+      // Transactional outbox event (never stores raw token)
+      await db.insert(outbox).values({
+        eventType: 'auth.verify_email',
+        topic: 'auth.verify_email',
+        aggregateId: newUser.id,
+        payload: {
+          userId: newUser.id,
+          email: newUser.email,
+          displayName: newUser.displayName,
+          collegeId: college.id,
+        },
+        dedupeKey: `auth_verify_${newUser.id}_${Date.now()}`,
+      });
+
       return reply.code(201).send({
         user: {
           id: newUser.id,
@@ -200,7 +214,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           globalRole: newUser.globalRole,
           status: newUser.status,
         },
-        ...(process.env.NODE_ENV === 'test' ? { verificationToken } : {}),
+        ...(process.env.NODE_ENV === 'test' && !process.env.STRICT_AUTH_RESPONSE
+          ? { verificationToken }
+          : {}),
         message: 'Registration successful. Please verify your email.',
       });
     }
@@ -531,13 +547,28 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           collegeId: user.collegeId,
           ip: req.ip,
         });
+
+        // Transactional outbox event (never stores raw token)
+        await db.insert(outbox).values({
+          eventType: 'auth.reset_password',
+          topic: 'auth.reset_password',
+          aggregateId: user.id,
+          payload: {
+            userId: user.id,
+            email: user.email,
+            displayName: user.displayName,
+          },
+          dedupeKey: `auth_reset_${user.id}_${Date.now()}`,
+        });
       }
 
       // Always return identical success message to prevent user enumeration
       return reply.code(200).send({
         success: true,
         message: 'If that email address is associated with an account, a reset link has been dispatched.',
-        ...(process.env.NODE_ENV === 'test' ? { resetToken } : {}),
+        ...(process.env.NODE_ENV === 'test' && !process.env.STRICT_AUTH_RESPONSE
+          ? { resetToken }
+          : {}),
       });
     }
   );
@@ -708,13 +739,28 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
           collegeId: user.collegeId,
           ip: req.ip,
         });
+
+        // Transactional outbox event (never stores raw token)
+        await db.insert(outbox).values({
+          eventType: 'auth.resend_verification',
+          topic: 'auth.resend_verification',
+          aggregateId: user.id,
+          payload: {
+            userId: user.id,
+            email: user.email,
+            displayName: user.displayName,
+          },
+          dedupeKey: `auth_resend_${user.id}_${Date.now()}`,
+        });
       }
 
       // Always return identical success to prevent enumeration
       return reply.code(200).send({
         success: true,
         message: 'If an unverified account exists for that email, a verification link has been dispatched.',
-        ...(process.env.NODE_ENV === 'test' ? { verificationToken } : {}),
+        ...(process.env.NODE_ENV === 'test' && !process.env.STRICT_AUTH_RESPONSE
+          ? { verificationToken }
+          : {}),
       });
     }
   );

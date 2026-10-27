@@ -17,7 +17,13 @@ const ConfigSchema = z.object({
   INTERNAL_NETWORK_CIDR: z.string().default('127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'),
   AUTH_RATE_LIMIT_REGISTER_MAX: z.coerce.number().default(10),
   APP_HOST: z.string().default('campus.eventora.org'),
+  APP_URL: z.string().default('http://localhost:5173'),
   QR_HMAC_SECRET: z.string().default('qr_hmac_secret_key_32_bytes_min_prod'),
+  EMAIL_ADAPTER: z.enum(['resend', 'console', 'test']).default('test'),
+  EMAIL_FROM: z.string().default('Eventora <notifications@eventora.org>'),
+  RESEND_API_KEY: z.string().optional().default(''),
+  RESEND_WEBHOOK_SECRET: z.string().optional().default(''),
+  RUN_IN_PROCESS_WORKER: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;

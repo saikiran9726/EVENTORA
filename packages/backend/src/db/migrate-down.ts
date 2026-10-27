@@ -24,6 +24,18 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 19 -> 18: Resend Email Adapter, Suppression List & Outbox Hardening
+    if (currentVersion >= 19 && targetVersion < 19) {
+      console.log('[Rollback] Rolling back version 19 (Phase 19)...');
+      await client.query(`
+        DROP TABLE IF EXISTS email_suppressions CASCADE;
+        DROP INDEX IF EXISTS idx_outbox_locked_until;
+        ALTER TABLE outbox DROP COLUMN IF EXISTS locked_until;
+        ALTER TABLE outbox DROP COLUMN IF EXISTS error;
+        DELETE FROM schema_migrations WHERE version = 19;
+      `);
+    }
+
     // Rollback step 18 -> 17: Ticket QR Secure Tokens, Rotation & Downloads
     if (currentVersion >= 18 && targetVersion < 18) {
       console.log('[Rollback] Rolling back version 18 (Phase 18)...');
