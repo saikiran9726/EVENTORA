@@ -65,6 +65,51 @@ export async function runExplainAnalyzeIndexReview(): Promise<ExplainResult[]> {
               ORDER BY al.created_at DESC
               LIMIT 50;`,
       },
+      {
+        name: 'P22 Event Ledger Revenue Query (FR-INSIGHT, FR-PAY)',
+        sql: `EXPLAIN (ANALYZE, BUFFERS)
+              SELECT ole.entry_type, COALESCE(SUM(ole.amount_paise), 0)::bigint AS total_paise, COUNT(*)::int AS count
+              FROM organizer_ledger_entries ole
+              JOIN bookings b ON ole.booking_id = b.id
+              WHERE b.event_id = '00000000-0000-0000-0000-000000000002'::uuid
+              GROUP BY ole.entry_type;`,
+      },
+      {
+        name: 'P22 Sales Velocity Hourly in Asia/Kolkata (FR-INSIGHT)',
+        sql: `EXPLAIN (ANALYZE, BUFFERS)
+              SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM-DD"T"HH24:00:00') AS bucket,
+                     COUNT(*)::int AS bookings_count,
+                     COALESCE(SUM(total_paise), 0)::bigint AS gross_paise
+              FROM bookings
+              WHERE event_id = '00000000-0000-0000-0000-000000000002'::uuid AND status != 'CANCELLED'
+              GROUP BY date_trunc('hour', created_at AT TIME ZONE 'Asia/Kolkata');`,
+      },
+      {
+        name: 'P22 Real-time Check-In Turnout Query (FR-INSIGHT, FR-CHECKIN)',
+        sql: `EXPLAIN (ANALYZE, BUFFERS)
+              SELECT COUNT(*)::int AS total_tickets,
+                     COUNT(*) FILTER (WHERE status = 'CHECKED_IN')::int AS checked_in_tickets,
+                     MAX(checked_in_at) AS last_scanned_at
+              FROM tickets
+              WHERE event_id = '00000000-0000-0000-0000-000000000002'::uuid AND status IN ('VALID', 'CHECKED_IN');`,
+      },
+      {
+        name: 'P22 Demographics Answer Aggregation Query (FR-INSIGHT)',
+        sql: `EXPLAIN (ANALYZE, BUFFERS)
+              SELECT eff.id, eff.label, ra.value
+              FROM event_form_fields eff
+              JOIN registration_answers ra ON eff.id = ra.field_id
+              WHERE eff.event_id = '00000000-0000-0000-0000-000000000002'::uuid;`,
+      },
+      {
+        name: 'P22 Waitlist Status Breakdown Query (FR-INSIGHT, FR-WAIT)',
+        sql: `EXPLAIN (ANALYZE, BUFFERS)
+              SELECT COUNT(*)::int AS total,
+                     COUNT(*) FILTER (WHERE status = 'WAITING')::int AS waiting,
+                     COUNT(*) FILTER (WHERE status = 'CLAIMED')::int AS claimed
+              FROM waitlist_entries
+              WHERE event_id = '00000000-0000-0000-0000-000000000002'::uuid;`,
+      },
     ];
 
     for (const q of queries) {

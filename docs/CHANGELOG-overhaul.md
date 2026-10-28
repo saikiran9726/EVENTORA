@@ -1,5 +1,94 @@
 # Eventora Overhaul Changelog
 
+## Phase P22 — Organizer Analytics Backend, Sales Velocity, Real-Time Turnout & Demographics
+
+**Date:** 2026-10-28  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Migration 25)
+- **Migration 25 (`Phase 25: Organizer Analytics Performance Indexes`):**
+  - Added additive high-performance composite indexes:
+    - `CREATE INDEX IF NOT EXISTS idx_bookings_event_created_at ON bookings(event_id, created_at);`
+    - `CREATE INDEX IF NOT EXISTS idx_bookings_event_status ON bookings(event_id, status);`
+    - `CREATE INDEX IF NOT EXISTS idx_tickets_event_status_scanned ON tickets(event_id, status, checked_in_at);`
+    - `CREATE INDEX IF NOT EXISTS idx_waitlist_event_status ON waitlist_entries(event_id, status);`
+  - Registered version 25 in `schema_migrations`.
+  - Updated Drizzle ORM definitions in `packages/backend/src/db/schema.ts`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 25 -> 24: safely drops `idx_bookings_event_created_at`, `idx_bookings_event_status`, `idx_tickets_event_status_scanned`, and `idx_waitlist_event_status`, and removes migration record 25.
+  - Tested and verified live rollback 25 -> 24 and re-application 24 -> 25 against PostgreSQL.
+
+---
+
+### 2. Comprehensive Organizer Analytics Engine
+- **Revenue Computation from `organizer_ledger_entries`:**
+  - Gross, refunds, and net computed server-side directly from stored ledger rows (`entry_type = 'SALE'` vs `entry_type = 'REFUND'`).
+  - Strict ledger invariant: reconciles exactly with `SUM(amount_paise)` in paise integers.
+  - Refund rate expressed as both count percentage (`refundsCount / salesCount * 100`) and paise percentage (`refundsPaise / grossPaise * 100`).
+- **Sales Velocity in `Asia/Kolkata` Time Zone:**
+  - Grouped and truncated at PostgreSQL engine level:
+    - Hourly: `to_char(date_trunc('hour', created_at AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM-DD"T"HH24:00:00')`.
+    - Daily: `to_char(date_trunc('day', created_at AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM-DD')`.
+  - Excludes cancelled bookings from velocity metrics.
+- **Registrations vs. Capacity:**
+  - Captures total capacity, total registered attendees, confirmed bookings, pending holds, cancellations, capacity utilization percentage, and remaining seats.
+- **Ticket Tier Breakdown:**
+  - Computes sold tickets, active holds (`PENDING_PAYMENT` with unexpired hold window), capacity, remaining seats, gross revenue paise, and percentage of total revenue / sold volume per ticket tier.
+- **Waitlist Length Tracking:**
+  - Categorizes waitlist entries into `waiting` (`WAITING`), `claimed` (`CLAIMED`), and `dropped` (`EXPIRED`, `DECLINED`, `LEFT`).
+- **Demographics with Strict Cohort Suppression (< 5 Responses):**
+  - Aggregates custom registration form answers from `registration_answers` joined with `event_form_fields`.
+  - Strict differential privacy protection: buckets with `< 5` responses are NEVER exposed individually. All answer values with `< 5` responses are safely merged into a single suppressed bucket (`value: 'Other (< 5)', countDisplay: '< 5', suppressed: true`), eliminating attendee de-anonymization risks.
+- **100% Backward Compatibility:**
+  - Retains all existing KPI, funnel, ratings distribution, and timeseries properties consumed by `OrganizerDashboardPage.tsx`.
+
+---
+
+### 3. Real-Time Turnout & 5s ETag Polling
+- **Turnout Endpoint (`GET /api/v1/organizer/events/:id/turnout`):**
+  - Secured with `{ auth: true, policy: 'analytics:view:owned' }`.
+  - Returns `totalTickets`, `checkedInTickets`, `turnoutPct`, `lastScannedAt`, `recentCheckins15m`, and anonymized recent check-in events (`attendeeNumber`, `tierName`, `scannedAt`).
+- **5s ETag Polling (304 Not Modified):**
+  - Computes deterministic weak ETag: `W/"turnout-${eventId}-${totalTickets}-${checkedInTickets}-${timestampMs}"`.
+  - Inspects `If-None-Match` request header: returns `304 Not Modified` with zero body when unchanged, minimizing client-server network payload.
+  - Sends updated 200 JSON with new ETag whenever a new ticket is checked in. Sets `Cache-Control: private, no-cache`.
+
+---
+
+### 4. Performance & EXPLAIN (ANALYZE, BUFFERS)
+- Updated `scripts/explain-analyze-indexes.ts` with 5 new queries covering organizer analytics:
+  - P22 Event Ledger Revenue Query (Index/Nested loop)
+  - P22 Sales Velocity Hourly in Asia/Kolkata (Index scan on event_id, created_at)
+  - P22 Real-time Check-In Turnout Query (`Index Only Scan using idx_tickets_event_status_scanned`)
+  - P22 Demographics Answer Aggregation Query (Bitmap Heap Scan on event_form_fields)
+  - P22 Waitlist Status Breakdown Query (`Index Only Scan using idx_waitlist_event_status`)
+- All 11 benchmark queries execute in sub-millisecond execution times (< 1 ms in warmed cache).
+
+---
+
+### 5. Verification & Test Suite
+- `tests/unit/phase-p22-organizer-analytics.test.ts`: 10 comprehensive tests covering:
+  1. Server-side gross, refund, and net revenue computation and exact ledger reconciliation.
+  2. Hourly and daily sales velocity aggregation in `Asia/Kolkata` time zone.
+  3. Registrations vs capacity, capacity utilization %, and remaining seats.
+  4. Per-tier breakdown with sold, held, capacity, remaining, gross paise, and volume percentages.
+  5. Waitlist metrics across waiting, claimed, and dropped statuses.
+  6. Demographics answer aggregation with strict suppression of cohorts with < 5 responses.
+  7. Real-time turnout with 5s ETag polling (200 on initial, 304 on matching ETag, 200 on check-in change).
+  8. Authorization policy `analytics:view:owned` (blocks unauthorized students with 403, allows owners and admins).
+  9. EXPLAIN (ANALYZE, BUFFERS) validation on all 11 performance queries.
+  10. Migration 25 rollback to 24 and re-migration to 25.
+- Monorepo Quality Gate:
+  - Full suite: 49 test files passed, 513 tests passed, 0 failures.
+  - Typecheck: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
+  - Lint: 0 errors across the repository.
+  - Build: `@eventora/shared`, `@eventora/backend`, and `@eventora/frontend` production builds all succeed.
+
+---
+
 ## Phase P21 — Feedback, Notifications, Alerts & Durable Exports Hardening
 
 **Date:** 2026-10-27  

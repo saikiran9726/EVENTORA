@@ -462,6 +462,7 @@ describe('Phase 3 Event Lifecycle, Venues, Discovery & Authorization Integration
       startsAt: new Date(Date.now() + 86400000 * 2),
       endsAt: new Date(Date.now() + 86400000 * 2 + 3600000),
       capacity: 50,
+      visibility: 'public',
       status: 'published',
       contactEmail: 'ras@campus.edu',
       createdBy: organizerAUser.id,

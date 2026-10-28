@@ -448,11 +448,26 @@ export async function moderateFeedback(params: {
 }
 
 /**
- * Returns full organizer analytics: KPI cards, funnel, timeseries, ratings breakdown.
+ * Returns full organizer analytics: KPI cards, funnel, timeseries, ratings breakdown,
+ * revenue reconciliation from organizer_ledger_entries, sales velocity (Asia/Kolkata),
+ * capacity utilization, tier breakdown, refund rates, waitlist length,
+ * and demographics from custom form answers with strict suppression of cohorts < 5 responses.
  */
 export async function getOrganizerAnalytics(eventId: string) {
   const client = await pool.connect();
   try {
+    // 1. Verify Event Exists & Fetch Capacity
+    const eventRes = await client.query(
+      `SELECT id, organizer_id, title, capacity FROM events WHERE id = $1;`,
+      [eventId]
+    );
+    if (eventRes.rows.length === 0) {
+      throw new FeedbackError('NOT_FOUND', 'Event not found', 404);
+    }
+    const eventRow = eventRes.rows[0];
+    const totalCapacity = Number(eventRow.capacity) || 0;
+
+    // 2. Metrics & Bookings / Tickets Summary
     let metricsRes = await client.query(`SELECT * FROM event_metrics WHERE event_id = $1;`, [eventId]);
     if (metricsRes.rows.length === 0) {
       await refreshEventMetricsInternal(eventId, client);
@@ -460,38 +475,286 @@ export async function getOrganizerAnalytics(eventId: string) {
     }
 
     const m = metricsRes.rows[0] || {};
-    const confirmed = m.confirmed || 0;
-    const checkins = m.checkins || 0;
     const feedbackCount = m.feedback_count || 0;
-    const waitlistJoined = m.waitlist_joined || 0;
-    const waitlistConverted = m.waitlist_converted || 0;
+    const ratingAvg = Number(m.rating_avg) || 0;
 
-    const checkinRate = confirmed > 0 ? Math.round((checkins / confirmed) * 100) : 0;
-    const responseRate = checkins > 0 ? Math.round((feedbackCount / checkins) * 100) : 0;
-    const waitlistConversionRate = waitlistJoined > 0 ? Math.round((waitlistConverted / waitlistJoined) * 100) : 0;
-
-    // Daily cumulative registration points (time-series)
-    const tsRes = await client.query<{ date: Date | string; count: number }>(
-      `SELECT DATE(created_at) as date, COUNT(*)::int as count
+    // Booking counts
+    const bookingsRes = await client.query(
+      `SELECT 
+         COUNT(*)::int AS total_bookings,
+         COUNT(*) FILTER (WHERE status = 'CONFIRMED')::int AS confirmed_bookings,
+         COUNT(*) FILTER (WHERE status = 'CANCELLED')::int AS cancelled_bookings,
+         COUNT(*) FILTER (WHERE status = 'PENDING_PAYMENT')::int AS pending_bookings
        FROM bookings
-       WHERE event_id = $1 AND status != 'CANCELLED'
-       GROUP BY DATE(created_at)
-       ORDER BY DATE(created_at) ASC;`,
+       WHERE event_id = $1;`,
+      [eventId]
+    );
+    const bCounts = bookingsRes.rows[0] || {
+      total_bookings: 0,
+      confirmed_bookings: 0,
+      cancelled_bookings: 0,
+      pending_bookings: 0,
+    };
+
+    // Ticket counts
+    const ticketsRes = await client.query(
+      `SELECT 
+         COUNT(*)::int AS total_tickets,
+         COUNT(*) FILTER (WHERE status IN ('VALID', 'CHECKED_IN'))::int AS confirmed_attendees,
+         COUNT(*) FILTER (WHERE status = 'CHECKED_IN')::int AS checked_in_tickets
+       FROM tickets
+       WHERE event_id = $1;`,
+      [eventId]
+    );
+    const tCounts = ticketsRes.rows[0] || {
+      total_tickets: 0,
+      confirmed_attendees: 0,
+      checked_in_tickets: 0,
+    };
+
+    const confirmed = bCounts.confirmed_bookings;
+    const totalRegistered = tCounts.confirmed_attendees > 0 ? tCounts.confirmed_attendees : confirmed;
+    const checkins = tCounts.checked_in_tickets;
+    const cancellations = bCounts.cancelled_bookings;
+    const pending = bCounts.pending_bookings;
+    const noShows = Math.max(0, confirmed - checkins);
+
+    const capacityUtilizationPct = totalCapacity > 0
+      ? Number(((totalRegistered / totalCapacity) * 100).toFixed(2))
+      : 0;
+    const remainingSeats = Math.max(0, totalCapacity - totalRegistered);
+
+    // 3. Server-side Revenue from organizer_ledger_entries (exact reconciliation)
+    const ledgerRes = await client.query(
+      `SELECT 
+         ole.entry_type,
+         COALESCE(SUM(ole.amount_paise), 0)::bigint AS total_paise,
+         COUNT(*)::int AS count
+       FROM organizer_ledger_entries ole
+       JOIN bookings b ON ole.booking_id = b.id
+       WHERE b.event_id = $1
+       GROUP BY ole.entry_type;`,
       [eventId]
     );
 
+    let grossPaise = 0;
+    let refundsPaise = 0;
+    let salesCount = 0;
+    let refundsCount = 0;
+
+    for (const row of ledgerRes.rows) {
+      if (row.entry_type === 'SALE') {
+        grossPaise = Number(row.total_paise);
+        salesCount = Number(row.count);
+      } else if (row.entry_type === 'REFUND') {
+        refundsPaise = Number(row.total_paise);
+        refundsCount = Number(row.count);
+      }
+    }
+
+    const netPaise = grossPaise - refundsPaise;
+    const refundRateCountPct = salesCount > 0
+      ? Number(((refundsCount / salesCount) * 100).toFixed(2))
+      : 0;
+    const refundRatePaisePct = grossPaise > 0
+      ? Number(((refundsPaise / grossPaise) * 100).toFixed(2))
+      : 0;
+
+    // 4. Sales Velocity Aggregation (Asia/Kolkata Time Zone)
+    const hourlyVelocityRes = await client.query(
+      `SELECT 
+         to_char(date_trunc('hour', created_at AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM-DD"T"HH24:00:00') AS bucket,
+         COUNT(*)::int AS bookings_count,
+         COALESCE(SUM(total_paise), 0)::bigint AS gross_paise
+       FROM bookings
+       WHERE event_id = $1 AND status != 'CANCELLED'
+       GROUP BY date_trunc('hour', created_at AT TIME ZONE 'Asia/Kolkata')
+       ORDER BY bucket ASC;`,
+      [eventId]
+    );
+
+    const hourlyVelocity = hourlyVelocityRes.rows.map((r) => ({
+      bucket: r.bucket,
+      bookingsCount: Number(r.bookings_count),
+      grossPaise: Number(r.gross_paise),
+    }));
+
+    const dailyVelocityRes = await client.query(
+      `SELECT 
+         to_char(date_trunc('day', created_at AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM-DD') AS bucket,
+         COUNT(*)::int AS bookings_count,
+         COALESCE(SUM(total_paise), 0)::bigint AS gross_paise
+       FROM bookings
+       WHERE event_id = $1 AND status != 'CANCELLED'
+       GROUP BY date_trunc('day', created_at AT TIME ZONE 'Asia/Kolkata')
+       ORDER BY bucket ASC;`,
+      [eventId]
+    );
+
+    const dailyVelocity = dailyVelocityRes.rows.map((r) => ({
+      bucket: r.bucket,
+      bookingsCount: Number(r.bookings_count),
+      grossPaise: Number(r.gross_paise),
+    }));
+
+    // Daily cumulative registration points (time-series for legacy charts)
     let cumulative = 0;
-    const timeSeries = tsRes.rows.map((row) => {
-      cumulative += row.count;
-      const dateStr = row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date).split('T')[0];
+    const timeSeries = dailyVelocity.map((r) => {
+      cumulative += r.bookingsCount;
       return {
-        date: dateStr,
-        dailyCount: row.count,
+        date: r.bucket,
+        dailyCount: r.bookingsCount,
         cumulativeCount: cumulative,
       };
     });
 
-    // Rating distribution
+    // 5. Ticket Tier Breakdown
+    const tiersRes = await client.query(
+      `SELECT 
+         tt.id,
+         tt.name,
+         tt.price_paise,
+         tt.capacity,
+         (SELECT COUNT(*)::int FROM tickets t WHERE t.ticket_type_id = tt.id AND t.status IN ('VALID', 'CHECKED_IN')) AS sold,
+         (SELECT COALESCE(SUM(bi.quantity), 0)::int 
+          FROM booking_items bi 
+          JOIN bookings b ON bi.booking_id = b.id 
+          WHERE bi.ticket_type_id = tt.id AND b.status = 'PENDING_PAYMENT' AND (b.expires_at IS NULL OR b.expires_at > NOW())) AS held
+       FROM ticket_types tt
+       WHERE tt.event_id = $1
+       ORDER BY tt.price_paise ASC;`,
+      [eventId]
+    );
+
+    const totalSoldAllTiers = tiersRes.rows.reduce((sum, r) => sum + Number(r.sold), 0);
+    const tierBreakdown = tiersRes.rows.map((r) => {
+      const sold = Number(r.sold);
+      const held = Number(r.held);
+      const cap = Number(r.capacity);
+      const price = Number(r.price_paise);
+      const tierGross = sold * price;
+      return {
+        tierId: r.id,
+        name: r.name,
+        pricePaise: price,
+        capacity: cap,
+        sold,
+        held,
+        remaining: Math.max(0, cap - sold - held),
+        grossPaise: tierGross,
+        pctOfTotalRevenue: grossPaise > 0 ? Number(((tierGross / grossPaise) * 100).toFixed(2)) : 0,
+        pctOfTotalSold: totalSoldAllTiers > 0 ? Number(((sold / totalSoldAllTiers) * 100).toFixed(2)) : 0,
+      };
+    });
+
+    // 6. Waitlist Length
+    const waitlistRes = await client.query(
+      `SELECT 
+         COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE status = 'WAITING')::int AS waiting,
+         COUNT(*) FILTER (WHERE status = 'CLAIMED')::int AS claimed,
+         COUNT(*) FILTER (WHERE status IN ('EXPIRED', 'DECLINED', 'LEFT'))::int AS dropped
+       FROM waitlist_entries
+       WHERE event_id = $1;`,
+      [eventId]
+    );
+
+    const wl = waitlistRes.rows[0] || { total: 0, waiting: 0, claimed: 0, dropped: 0 };
+    const waitlist = {
+      total: Number(wl.total),
+      waiting: Number(wl.waiting),
+      claimed: Number(wl.claimed),
+      dropped: Number(wl.dropped),
+    };
+
+    // 7. Demographics from Custom Form Answers with Strict Suppression (< 5 responses)
+    const answersRes = await client.query(
+      `SELECT 
+         eff.id AS field_id,
+         eff.label,
+         eff.type,
+         eff.position,
+         ra.value,
+         ra.answer
+       FROM event_form_fields eff
+       JOIN registration_answers ra ON eff.id = ra.field_id
+       WHERE eff.event_id = $1
+       ORDER BY eff.position ASC;`,
+      [eventId]
+    );
+
+    // Group answers by field
+    const fieldMap = new Map<string, { label: string; type: string; answers: string[] }>();
+    for (const row of answersRes.rows) {
+      if (!fieldMap.has(row.field_id)) {
+        fieldMap.set(row.field_id, {
+          label: row.label,
+          type: row.type,
+          answers: [],
+        });
+      }
+      let rawVal: any = row.value;
+      if (rawVal === null || rawVal === undefined) {
+        rawVal = row.answer;
+      }
+      if (rawVal !== null && rawVal !== undefined) {
+        if (Array.isArray(rawVal)) {
+          for (const item of rawVal) {
+            fieldMap.get(row.field_id)!.answers.push(String(item));
+          }
+        } else if (typeof rawVal === 'object') {
+          fieldMap.get(row.field_id)!.answers.push(JSON.stringify(rawVal));
+        } else {
+          fieldMap.get(row.field_id)!.answers.push(String(rawVal).trim());
+        }
+      }
+    }
+
+    const demographics = Array.from(fieldMap.entries()).map(([fieldId, fData]) => {
+      const counts = new Map<string, number>();
+      for (const ans of fData.answers) {
+        counts.set(ans, (counts.get(ans) || 0) + 1);
+      }
+
+      const buckets: Array<{ value: string; count: number | null; countDisplay?: string; suppressed: boolean }> = [];
+      let suppressedSum = 0;
+      let suppressedValuesCount = 0;
+
+      for (const [val, count] of counts.entries()) {
+        if (count >= 5) {
+          buckets.push({
+            value: val,
+            count,
+            suppressed: false,
+          });
+        } else {
+          suppressedSum += count;
+          suppressedValuesCount++;
+        }
+      }
+
+      // Strict suppression of small buckets (< 5) to prevent de-anonymization
+      if (suppressedSum > 0) {
+        buckets.push({
+          value: 'Other (< 5)',
+          count: suppressedSum,
+          countDisplay: '< 5',
+          suppressed: true,
+        });
+      }
+
+      return {
+        fieldId,
+        label: fData.label,
+        type: fData.type,
+        totalResponses: fData.answers.length,
+        buckets,
+        suppressedCount: suppressedSum,
+        suppressedValuesCount,
+      };
+    });
+
+    // 8. Rating distribution
     const distRes = await client.query(
       `SELECT rating, COUNT(*)::int as count
        FROM event_feedback
@@ -506,32 +769,153 @@ export async function getOrganizerAnalytics(eventId: string) {
       ratingDistribution[r.rating] = r.count;
     }
 
+    const checkinRate = confirmed > 0 ? Math.round((checkins / confirmed) * 100) : 0;
+    const responseRate = checkins > 0 ? Math.round((feedbackCount / checkins) * 100) : 0;
+    const waitlistConversionRate = waitlist.total > 0 ? Math.round((waitlist.claimed / waitlist.total) * 100) : 0;
+
     return {
       eventId,
       kpis: {
-        registrations: m.registrations || 0,
+        registrations: totalRegistered,
         confirmed,
-        cancellations: m.cancellations || 0,
+        cancellations,
         checkins,
-        noShows: m.no_shows || 0,
+        noShows,
         feedbackCount,
-        ratingAvg: Number(m.rating_avg) || 0,
-        salesPaiseSimulated: m.sales_paise_simulated || 0,
+        ratingAvg,
+        salesPaiseSimulated: grossPaise,
+        grossPaise,
+        refundsPaise,
+        netPaise,
+        capacityUtilizationPct,
+        remainingSeats,
+        checkinRate,
+        responseRate,
+        waitlistConversionRate,
       },
+      revenue: {
+        grossPaise,
+        refundsPaise,
+        netPaise,
+        salesCount,
+        refundsCount,
+        refundRateCountPct,
+        refundRatePaisePct,
+      },
+      salesVelocity: {
+        hourly: hourlyVelocity,
+        daily: dailyVelocity,
+      },
+      capacity: {
+        totalCapacity,
+        totalRegistered,
+        confirmed,
+        cancelled: cancellations,
+        pending,
+        capacityUtilizationPct,
+        remainingSeats,
+      },
+      tierBreakdown,
+      refunds: {
+        refundsCount,
+        refundsPaise,
+        refundRateCountPct,
+        refundRatePaisePct,
+      },
+      waitlist,
+      demographics,
       rates: {
         checkinRate,
         responseRate,
         waitlistConversionRate,
       },
       funnel: [
-        { stage: 'Registered', count: m.registrations || 0, percentage: 100 },
-        { stage: 'Confirmed', count: confirmed, percentage: m.registrations > 0 ? Math.round((confirmed / m.registrations) * 100) : 0 },
+        { stage: 'Registered', count: totalRegistered, percentage: 100 },
+        { stage: 'Confirmed', count: confirmed, percentage: totalRegistered > 0 ? Math.round((confirmed / totalRegistered) * 100) : 0 },
         { stage: 'Checked In', count: checkins, percentage: confirmed > 0 ? Math.round((checkins / confirmed) * 100) : 0 },
         { stage: 'Feedback Submitted', count: feedbackCount, percentage: checkins > 0 ? Math.round((feedbackCount / checkins) * 100) : 0 },
       ],
       timeSeries,
       ratingDistribution,
-      updatedAt: m.updated_at,
+      updatedAt: new Date().toISOString(),
+    };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Returns real-time check-in turnout statistics and recent scans.
+ * Generates deterministic ETag for 5s ETag polling (304 Not Modified).
+ */
+export async function getEventTurnout(eventId: string) {
+  const client = await pool.connect();
+  try {
+    const eventRes = await client.query('SELECT id, title FROM events WHERE id = $1;', [eventId]);
+    if (eventRes.rows.length === 0) {
+      throw new FeedbackError('NOT_FOUND', 'Event not found', 404);
+    }
+
+    const countsRes = await client.query(
+      `SELECT 
+         COUNT(*)::int AS total_tickets,
+         COUNT(*) FILTER (WHERE status = 'CHECKED_IN')::int AS checked_in_tickets,
+         MAX(checked_in_at) AS last_scanned_at,
+         COUNT(*) FILTER (WHERE status = 'CHECKED_IN' AND checked_in_at >= NOW() - INTERVAL '15 minutes')::int AS recent_checkins_15m
+       FROM tickets
+       WHERE event_id = $1 AND status IN ('VALID', 'CHECKED_IN');`,
+      [eventId]
+    );
+
+    const c = countsRes.rows[0] || {
+      total_tickets: 0,
+      checked_in_tickets: 0,
+      last_scanned_at: null,
+      recent_checkins_15m: 0,
+    };
+
+    const totalTickets = Number(c.total_tickets);
+    const checkedInTickets = Number(c.checked_in_tickets);
+    const lastScannedAt = c.last_scanned_at ? new Date(c.last_scanned_at).toISOString() : null;
+    const recentCheckins15m = Number(c.recent_checkins_15m);
+    const turnoutPct = totalTickets > 0 ? Number(((checkedInTickets / totalTickets) * 100).toFixed(2)) : 0;
+
+    // Recent check-in attendees (anonymized)
+    const recentRes = await client.query(
+      `SELECT 
+         t.id AS ticket_id,
+         tt.name AS tier_name,
+         t.checked_in_at,
+         ROW_NUMBER() OVER (ORDER BY t.checked_in_at ASC)::int AS attendee_number
+       FROM tickets t
+       JOIN ticket_types tt ON t.ticket_type_id = tt.id
+       WHERE t.event_id = $1 AND t.status = 'CHECKED_IN' AND t.checked_in_at IS NOT NULL
+       ORDER BY t.checked_in_at DESC
+       LIMIT 20;`,
+      [eventId]
+    );
+
+    const recentCheckins = recentRes.rows.map((r) => ({
+      ticketId: r.ticket_id,
+      tierName: r.tier_name,
+      scannedAt: new Date(r.checked_in_at).toISOString(),
+      attendeeNumber: r.attendee_number,
+    }));
+
+    // Deterministic ETag
+    const timestampMs = lastScannedAt ? new Date(lastScannedAt).getTime() : 0;
+    const etag = `W/"turnout-${eventId}-${totalTickets}-${checkedInTickets}-${timestampMs}"`;
+
+    return {
+      eventId,
+      totalTickets,
+      checkedInTickets,
+      turnoutPct,
+      lastScannedAt,
+      recentCheckins15m,
+      recentCheckins,
+      pollIntervalMs: 5000,
+      etag,
     };
   } finally {
     client.release();

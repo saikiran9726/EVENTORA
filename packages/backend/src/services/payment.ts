@@ -1355,6 +1355,22 @@ export async function processWebhook(params: WebhookProcessParams) {
   }).valid;
 
   if (!isValidSignature) {
+    try {
+      const payloadHash = crypto.createHash('sha256').update(rawBody).digest();
+      let eventId = `bad_sig_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      let eventType = 'payment.failed';
+      try {
+        const parsed = JSON.parse(rawBody.toString('utf8'));
+        if (parsed.eventId || parsed.id) eventId = parsed.eventId || parsed.id;
+        if (parsed.type || parsed.event) eventType = parsed.type || parsed.event;
+      } catch {}
+      await pool.query(
+        `INSERT INTO webhook_events (provider_event_id, provider, type, signature_valid, processing_status, payload_hash)
+         VALUES ($1, $2, $3, false, 'FAILED', $4)
+         ON CONFLICT (provider_event_id) DO NOTHING;`,
+        [eventId, (adapter as any).providerName || 'simulator', eventType, payloadHash]
+      );
+    } catch {}
     throw new PaymentError('INVALID_SIGNATURE', 'Webhook signature verification failed', 401);
   }
 

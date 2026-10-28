@@ -731,6 +731,8 @@ export const bookings = pgTable(
     bookingsActiveUserEventSoloIdx: uniqueIndex('bookings_active_user_event_solo_idx')
       .on(table.userId, table.eventId)
       .where(sql`status IN ('PENDING_PAYMENT', 'CONFIRMED') AND team_registration_id IS NULL`),
+    eventCreatedAtIdx: index('idx_bookings_event_created_at').on(table.eventId, table.createdAt),
+    eventStatusIdx: index('idx_bookings_event_status').on(table.eventId, table.status),
   })
 );
 
@@ -780,7 +782,9 @@ export const tickets = pgTable('tickets', {
     .references(() => users.id, { onDelete: 'set null' }),
   version: integer('version').default(1).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  eventStatusScannedIdx: index('idx_tickets_event_status_scanned').on(table.eventId, table.status, table.checkedInAt),
+}));
 
 // 28. Registration Form Questions (Legacy)
 export const registrationFormQuestions = pgTable('registration_form_questions', {
@@ -860,7 +864,9 @@ export const waitlistEntries = pgTable('waitlist_entries', {
   offerExpiresAt: timestamp('offer_expires_at', { withTimezone: true }),
   claimTokenHash: varchar('claim_token_hash', { length: 255 }),
   bookingId: uuid('booking_id').references(() => bookings.id, { onDelete: 'set null' }),
-});
+}, (table) => ({
+  eventStatusIdx: index('idx_waitlist_event_status').on(table.eventId, table.status),
+}));
 
 // 31. Cancellations
 export const cancellations = pgTable('cancellations', {

@@ -1313,7 +1313,8 @@ export async function runMigrations() {
         (21, 'Phase 21: Team Security, Invitation Token Index & Paid Registration Lifecycle'),
         (22, 'Phase 22: Volunteer Records Unique Constraint & Application Indexes'),
         (23, 'Phase 23: User Department and Academic Year for Cross-College Eligibility'),
-        (24, 'Phase 24: Durable Export Storage and Download Tokens')
+        (24, 'Phase 24: Durable Export Storage and Download Tokens'),
+        (25, 'Phase 25: Organizer Analytics Performance Indexes')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1527,6 +1528,12 @@ export async function runMigrations() {
       ALTER TABLE export_jobs ADD COLUMN IF NOT EXISTS file_data BYTEA;
       ALTER TABLE export_jobs ADD COLUMN IF NOT EXISTS download_token TEXT;
       CREATE INDEX IF NOT EXISTS idx_export_jobs_download_token ON export_jobs(download_token);
+
+      -- Phase 25: Organizer Analytics Performance Indexes
+      CREATE INDEX IF NOT EXISTS idx_bookings_event_created_at ON bookings(event_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_bookings_event_status ON bookings(event_id, status);
+      CREATE INDEX IF NOT EXISTS idx_tickets_event_status_scanned ON tickets(event_id, status, checked_in_at);
+      CREATE INDEX IF NOT EXISTS idx_waitlist_event_status ON waitlist_entries(event_id, status);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

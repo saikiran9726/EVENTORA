@@ -7,6 +7,7 @@ import {
   reportFeedback,
   moderateFeedback,
   getOrganizerAnalytics,
+  getEventTurnout,
   createExportJob,
   getExportDownloadByToken,
   FeedbackError,
@@ -297,8 +298,62 @@ export const feedbackRoutes: FastifyPluginAsync = async (fastify: FastifyInstanc
     },
     async (req, reply) => {
       const { id: eventId } = req.params as { id: string };
-      const analytics = await getOrganizerAnalytics(eventId);
-      return reply.send(analytics);
+      try {
+        const analytics = await getOrganizerAnalytics(eventId);
+        return reply.send({
+          analytics,
+          ...analytics,
+        });
+      } catch (err: any) {
+        if (err instanceof FeedbackError) {
+          return reply.code(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              details: err.details,
+              requestId: req.id,
+            },
+          });
+        }
+        throw err;
+      }
+    }
+  );
+
+  // 7b. GET /api/v1/organizer/events/:id/turnout - Real-time Check-In Turnout & 5s ETag Polling
+  fastify.get(
+    '/organizer/events/:id/turnout',
+    {
+      config: {
+        auth: true,
+        policy: 'analytics:view:owned',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id: eventId } = req.params as { id: string };
+      try {
+        const turnout = await getEventTurnout(eventId);
+        const ifNoneMatch = req.headers['if-none-match'];
+        if (ifNoneMatch && ifNoneMatch === turnout.etag) {
+          return reply.code(304).send();
+        }
+        reply.header('ETag', turnout.etag);
+        reply.header('Cache-Control', 'private, no-cache');
+        return reply.send(turnout);
+      } catch (err: any) {
+        if (err instanceof FeedbackError) {
+          return reply.code(err.statusCode).send({
+            error: {
+              code: err.code,
+              message: err.message,
+              details: err.details,
+              requestId: req.id,
+            },
+          });
+        }
+        throw err;
+      }
     }
   );
 
