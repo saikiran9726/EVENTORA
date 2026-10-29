@@ -1315,7 +1315,8 @@ export async function runMigrations() {
         (23, 'Phase 23: User Department and Academic Year for Cross-College Eligibility'),
         (24, 'Phase 24: Durable Export Storage and Download Tokens'),
         (25, 'Phase 25: Organizer Analytics Performance Indexes'),
-        (26, 'Phase 26: Event Materials for Registered Attendees')
+        (26, 'Phase 26: Event Materials for Registered Attendees'),
+        (27, 'Phase 27: Manifest Items and Offline Check-in Hardening')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1551,6 +1552,25 @@ export async function runMigrations() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_event_materials_event_id ON event_materials(event_id);
+
+      -- Phase 27: Manifest Items and Offline Check-in Hardening
+      ALTER TABLE offline_manifests ADD COLUMN IF NOT EXISTS manifest_key TEXT;
+      ALTER TABLE offline_manifests ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+      ALTER TABLE offline_checkin_batches ADD COLUMN IF NOT EXISTS manifest_id UUID REFERENCES offline_manifests(id) ON DELETE SET NULL;
+      ALTER TABLE offline_checkin_batches ADD COLUMN IF NOT EXISTS client_sent_at TIMESTAMPTZ;
+      ALTER TABLE offline_checkin_batches ADD COLUMN IF NOT EXISTS clock_skew_ms INTEGER;
+
+      CREATE TABLE IF NOT EXISTS manifest_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        manifest_id UUID NOT NULL REFERENCES offline_manifests(id) ON DELETE CASCADE,
+        ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        token_ref VARCHAR(64) NOT NULL,
+        hmac_signature VARCHAR(64) NOT NULL,
+        display_hint VARCHAR(32),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_manifest_items_manifest_id ON manifest_items(manifest_id);
+      CREATE INDEX IF NOT EXISTS idx_manifest_items_ref ON manifest_items(manifest_id, token_ref);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

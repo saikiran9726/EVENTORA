@@ -6,11 +6,15 @@ import {
   syncOfflineBatch,
   getScanConflicts,
   resolveScanConflict,
+  getRevocationDelta,
+  revokeManifest,
 } from '../../../services/offline-checkin.js';
 
 const SyncBatchSchema = z.object({
   batchId: z.string().uuid(),
   deviceId: z.string().min(1).max(100),
+  manifestId: z.string().uuid().optional(),
+  clientSentAt: z.string().datetime().optional(),
   ops: z.array(
     z.object({
       opId: z.string().uuid(),
@@ -61,10 +65,19 @@ export async function offlineCheckinRoutes(fastify: FastifyInstance) {
             },
           });
         }
+        if (err.message?.includes('OFFLINE_MANIFEST_SECRET')) {
+          return reply.code(500).send({
+            error: {
+              code: 'CONFIG_ERROR',
+              message: 'OFFLINE_MANIFEST_SECRET is required on server',
+              requestId: req.id,
+            },
+          });
+        }
         return reply.code(500).send({
           error: {
             code: 'INTERNAL_ERROR',
-            message: err.message || 'Failed to generate offline manifest',
+            message: 'Failed to generate offline manifest',
             requestId: req.id,
           },
         });
@@ -72,7 +85,7 @@ export async function offlineCheckinRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // 2. POST /events/:id/check-in/sync-batch (Reconciles batch, idempotent per op_id)
+  // 2. POST /events/:id/check-in/sync-batch (Reconciles batch, authoritative receipt, clock skew, collision checks)
   fastify.post(
     '/events/:id/check-in/sync-batch',
     {
@@ -102,6 +115,8 @@ export async function offlineCheckinRoutes(fastify: FastifyInstance) {
           staffId: req.user!.id,
           deviceId: parsed.data.deviceId,
           batchId: parsed.data.batchId,
+          manifestId: parsed.data.manifestId,
+          clientSentAt: parsed.data.clientSentAt,
           ops: parsed.data.ops,
         });
 
@@ -116,10 +131,46 @@ export async function offlineCheckinRoutes(fastify: FastifyInstance) {
             },
           });
         }
+        if (err.message === 'BATCH_ID_COLLISION') {
+          return reply.code(409).send({
+            error: {
+              code: 'BATCH_ID_COLLISION',
+              message: 'A batch with this ID has already been processed or collided with another device submission',
+              requestId: req.id,
+            },
+          });
+        }
+        if (err.message === 'MANIFEST_EXPIRED') {
+          return reply.code(400).send({
+            error: {
+              code: 'MANIFEST_EXPIRED',
+              message: 'Offline manifest has expired; batch sync blocked',
+              requestId: req.id,
+            },
+          });
+        }
+        if (err.message === 'MANIFEST_REVOKED') {
+          return reply.code(400).send({
+            error: {
+              code: 'MANIFEST_REVOKED',
+              message: 'Offline manifest has been revoked; batch sync blocked',
+              requestId: req.id,
+            },
+          });
+        }
+        if (err.message === 'MANIFEST_UNAUTHORIZED' || err.message === 'MANIFEST_NOT_FOUND') {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Manifest does not match authenticated staff user or device',
+              requestId: req.id,
+            },
+          });
+        }
         return reply.code(500).send({
           error: {
             code: 'INTERNAL_ERROR',
-            message: err.message || 'Batch sync failed',
+            message: 'Batch sync failed',
             requestId: req.id,
           },
         });
@@ -127,7 +178,73 @@ export async function offlineCheckinRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // 3. GET /events/:id/check-in/conflicts (Review duplicate / conflicting scans)
+  // 3. GET /events/:id/check-in/delta (Revocation delta endpoint)
+  fastify.get(
+    '/events/:id/check-in/delta',
+    {
+      config: {
+        auth: true,
+        policy: 'attendance:checkin:assigned',
+        objectCheck: true,
+      },
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const { id: eventId } = req.params as { id: string };
+      const query = req.query as { since?: string };
+
+      try {
+        const delta = await getRevocationDelta(eventId, query.since);
+        return reply.send(delta);
+      } catch {
+        return reply.code(500).send({
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: 'Failed to fetch revocation delta',
+            requestId: req.id,
+          },
+        });
+      }
+    }
+  );
+
+  // 4. POST /events/:id/check-in/manifest/:manifestId/revoke (Revoke manifest)
+  fastify.post(
+    '/events/:id/check-in/manifest/:manifestId/revoke',
+    {
+      config: {
+        auth: true,
+        policy: 'attendance:checkin:assigned',
+        objectCheck: true,
+      },
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const { manifestId } = req.params as { manifestId: string };
+
+      try {
+        const revoked = await revokeManifest(manifestId, req.user!.id);
+        return reply.send({ success: true, manifest: revoked });
+      } catch (err: any) {
+        if (err.message === 'MANIFEST_NOT_FOUND') {
+          return reply.code(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: 'Manifest not found',
+              requestId: req.id,
+            },
+          });
+        }
+        return reply.code(500).send({
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: 'Failed to revoke manifest',
+            requestId: req.id,
+          },
+        });
+      }
+    }
+  );
+
+  // 5. GET /events/:id/check-in/conflicts (Review duplicate / conflicting scans)
   fastify.get(
     '/events/:id/check-in/conflicts',
     {
@@ -144,7 +261,7 @@ export async function offlineCheckinRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // 4. POST /conflicts/:id/resolve (Resolve scan conflict with audited note)
+  // 6. POST /conflicts/:id/resolve (Resolve scan conflict with audited note)
   fastify.post(
     '/conflicts/:id/resolve',
     {
@@ -200,7 +317,7 @@ export async function offlineCheckinRoutes(fastify: FastifyInstance) {
         return reply.code(500).send({
           error: {
             code: 'INTERNAL_ERROR',
-            message: err.message || 'Failed to resolve conflict',
+            message: 'Failed to resolve conflict',
             requestId: req.id,
           },
         });

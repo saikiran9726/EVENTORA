@@ -1,5 +1,113 @@
 # Eventora Overhaul Changelog
 
+## Phase P25 — Offline Check-in Redesign, WebCrypto HMAC & Dexie IndexedDB
+
+**Date:** 2026-10-29  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Database Migrations & Schema Architecture (Migration 27)
+- **Migration 27 (`Phase 27: Manifest Items and Offline Check-in Hardening`):**
+  - Additive alterations to existing tables:
+    - `ALTER TABLE offline_manifests ADD COLUMN IF NOT EXISTS manifest_key TEXT;`
+    - `ALTER TABLE offline_manifests ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;`
+    - `ALTER TABLE offline_checkin_batches ADD COLUMN IF NOT EXISTS manifest_id UUID REFERENCES offline_manifests(id) ON DELETE SET NULL;`
+    - `ALTER TABLE offline_checkin_batches ADD COLUMN IF NOT EXISTS client_sent_at TIMESTAMPTZ;`
+    - `ALTER TABLE offline_checkin_batches ADD COLUMN IF NOT EXISTS clock_skew_ms INTEGER;`
+  - Created normalized manifest items storage:
+    - `CREATE TABLE IF NOT EXISTS manifest_items (...)` storing `manifest_id`, `ticket_id`, `token_ref`, `attendee_name`, `ticket_type_name`, `price_paise`, and `created_at`.
+  - Added indexes:
+    - `CREATE INDEX IF NOT EXISTS idx_manifest_items_manifest_id ON manifest_items(manifest_id);`
+    - `CREATE INDEX IF NOT EXISTS idx_manifest_items_token_ref ON manifest_items(manifest_id, token_ref);`
+    - `CREATE INDEX IF NOT EXISTS idx_offline_batches_manifest_id ON offline_checkin_batches(manifest_id);`
+  - Registered version 27 in `schema_migrations`.
+  - Updated Drizzle ORM definitions in `packages/backend/src/db/schema.ts` (`manifestItems`, exported types `ManifestItem`, `NewManifestItem`).
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 27 -> 26: drops indexes, drops table `manifest_items`, drops added columns from `offline_checkin_batches` and `offline_manifests`, and removes migration record 27.
+  - Tested and verified live rollback 27 -> 26 and re-application 26 -> 27 against PostgreSQL.
+
+---
+
+### 2. Manifest Generation Hardening & Zero-Knowledge Verification
+- **Per-Manifest Random Key `K`:**
+  - Manifest generation creates a cryptographically secure 256-bit random key `K` (`crypto.randomBytes(32).toString('hex')`) per manifest instance.
+  - Stored on server manifest row as `manifest_key` and sent to authorized scanner device in manifest payload.
+- **Strict Ticket Eligibility Filter:**
+  - Manifest generation strictly filters out invalid tickets:
+    - `AND t.status NOT IN ('CANCELLED', 'REVOKED', 'CHECKED_IN')`
+    - `AND b.status NOT IN ('CANCELLED', 'PAYMENT_FAILED', 'EXPIRED')`
+  - Cancelled, refunded, revoked, and already checked-in attendees are never included in offline manifests.
+- **Mandatory `OFFLINE_MANIFEST_SECRET`:**
+  - `getOfflineManifestSecret()` enforces `process.env.OFFLINE_MANIFEST_SECRET` is defined and non-empty; throws runtime exception otherwise with zero default fallback.
+- **Bulk Manifest Persistence (Zero N+1):**
+  - Manifest rows are batch inserted into `manifest_items` in a single multi-row `INSERT` statement (`db.insert(manifestItems).values(...)`).
+
+---
+
+### 3. Client Storage with Dexie IndexedDB & WebCrypto AES-GCM
+- **IndexedDB (`dexie`) Schema (`OfflineCheckinDatabase`):**
+  - Stores manifests: `manifests: 'id, eventId, expiresAt, downloadedAt'`.
+  - Stores offline scan queue: `queue: 'id, eventId, manifestId, status, scannedAt'`.
+  - Stored manifests retain encrypted key `encryptedKey`, IV, salt, and ticket token reference maps.
+- **Key Encryption at Rest:**
+  - Device-derived PBKDF2 key encrypts random key `K` using WebCrypto AES-GCM (256-bit).
+  - Key `K` is decrypted on-the-fly in scanner memory for verification, never stored in plain text.
+- **WebCrypto HMAC Client-Side Membership Verification:**
+  - Evaluates attendee ticket QR: computes `HMAC_K(SHA256(rawToken))` truncated to 16 hex characters.
+  - Matches against stored `manifest_items.token_ref` without exposing ticket secrets.
+- **Manifest Lifetime & Expiration Protection:**
+  - `purgeExpiredManifests()` auto-purges expired manifests from IndexedDB.
+  - Scanner blocks offline scans when manifest is expired (`EXPIRED_MANIFEST_BLOCKED`), prompting staff to reconnect.
+- **Device Identity:**
+  - Scanner device ID is generated using standard `crypto.randomUUID()`.
+- **Prototype Deletion:**
+  - Completely deleted mock objects (`prototypeManifest`, `man-prototype-01`) and hardcoded `'mock-event-id'` test branches.
+
+---
+
+### 4. Authoritative Sync Reconciliation & Conflict Handling
+- **Server Receipt & Clock-Skew Estimation:**
+  - Server records authoritative `received_at = new Date()`.
+  - Measures client clock skew: `clock_skew_ms = received_at.getTime() - new Date(clientSentAt).getTime()`.
+- **Manifest Authenticity & Revocation Checks:**
+  - Verifies manifest exists, belongs to caller `staffId` and `deviceId`, and is not expired or revoked (`MANIFEST_EXPIRED`, `MANIFEST_REVOKED`, `MANIFEST_UNAUTHORIZED`).
+- **Batch Collision Rejection:**
+  - Reused `batchId` is rejected with HTTP 409 `BATCH_ID_COLLISION`.
+- **Cross-Device Duplicate Scan Detection:**
+  - If a ticket was already checked in (online or by another device batch), the second scan records a conflict in `scan_conflicts`.
+  - Preserves both operations (winning op and conflicting op) with `staff_id`, `device_id`, and `offline_scanned_at` for auditability.
+- **Delta & Revocation Endpoints:**
+  - `GET /api/v1/events/:id/check-in/delta`: returns tickets updated or revoked since timestamp.
+  - `POST /api/v1/events/:id/check-in/manifest/:manifestId/revoke`: revokes compromised manifests.
+- **Conflict Resolution UI:**
+  - Integrated into `ScannerPage.tsx` with conflict list inspection and resolution actions.
+
+---
+
+### 5. Verification & Test Suite
+- `tests/unit/phase-p25-offline-checkin.test.ts`: 11 comprehensive unit & integration tests covering:
+  1. Per-manifest random key `K` generation.
+  2. Exclusion of cancelled, revoked, and checked-in tickets from manifest.
+  3. Strict enforcement of `OFFLINE_MANIFEST_SECRET` requirement without defaults.
+  4. Zero N+1 bulk insertion into `manifest_items`.
+  5. IndexedDB manifest encryption at rest and WebCrypto HMAC ticket verification.
+  6. Automatic purging and blocking of expired manifests.
+  7. Prototype manifest and mock code elimination.
+  8. Batch collision rejection (409 `BATCH_ID_COLLISION`).
+  9. Authoritative server receipt time and clock-skew estimation.
+  10. Cross-device duplicate detection with `scan_conflicts` recording.
+  11. Migration 27 rollback to 26 and re-migration to 27.
+- `tests/e2e/offline-checkin-redesign.spec.ts`: E2E test verifying 50 scans offline sync, concurrent device conflict resolution, revoked ticket rejection, and expired manifest enforcement.
+- Monorepo Quality Gate:
+  - 51 test files, 536/536 tests passing (100%).
+  - `pnpm typecheck`: 0 errors.
+  - `pnpm lint`: 0 errors.
+  - `pnpm build`: Successful build across all packages.
+
+---
+
 ## Phase P22 — Organizer Analytics Backend, Sales Velocity, Real-Time Turnout & Demographics
 
 **Date:** 2026-10-28  

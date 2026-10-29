@@ -33,6 +33,7 @@ import {
   recordLocalScan,
   syncBatchNow,
   getManifestFreshness,
+  offlineDb,
 } from '@/lib/offline-sync';
 import { useToast } from '@/components/ui/Toast';
 import { apiClient, ApiError } from '@/lib/api-client';
@@ -182,10 +183,11 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
   }, []);
 
   // Load cached manifest and offline ops
-  const refreshLocalOfflineData = useCallback(() => {
-    const cachedManifest = getStoredManifest(eventId);
-    setManifest(cachedManifest);
-    const cachedOps = getStoredOps(eventId);
+  const refreshLocalOfflineData = useCallback(async () => {
+    if (!eventId) return;
+    const cachedManifest = await getStoredManifest(eventId);
+    setManifest(cachedManifest as any);
+    const cachedOps = await getStoredOps(eventId);
     setOfflineOps(cachedOps);
   }, [eventId]);
 
@@ -300,14 +302,31 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
 
     if (isOfflineMode || !navigator.onLine) {
       // Offline local path
-      const op = recordLocalScan(eventId, raw);
-      refreshLocalOfflineData();
+      const op = await recordLocalScan(eventId, raw);
+      await refreshLocalOfflineData();
+
+      if (op.reason === 'EXPIRED_MANIFEST_BLOCKED') {
+        const outcome: ScanOutcome = {
+          outcome: 'OUTSIDE_WINDOW',
+          message: 'Offline Manifest Expired: Check-in blocked. Connect online to refresh manifest.',
+          statusLabel: 'Rejected',
+          displayHint: op.displayHint,
+        };
+        setLastOutcome(outcome);
+        setShowResultBanner(true);
+        triggerFeedback('OUTSIDE_WINDOW');
+        setIsScanning(false);
+        setManualToken('');
+        return;
+      }
 
       const outcome: ScanOutcome = {
-        outcome: op.status === 'CONFLICT' ? 'DUPLICATE' : 'LOCALLY_VERIFIED',
+        outcome: op.status === 'CONFLICT' ? 'DUPLICATE' : op.status === 'REJECTED' ? 'REVOKED' : 'LOCALLY_VERIFIED',
         message:
           op.status === 'CONFLICT'
             ? 'Conflict Detected: Duplicate scan recorded locally'
+            : op.status === 'REJECTED'
+            ? 'Rejected: Pass not valid or revoked'
             : `Locally Verified: Pass ${op.displayHint} admitted`,
         statusLabel: op.statusLabel,
         displayHint: op.displayHint,
@@ -353,17 +372,20 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
         triggerFeedback(outcome.outcome);
       } else {
         // Network dropped -> gracefully switch to local scan
-        const op = recordLocalScan(eventId, raw);
-        refreshLocalOfflineData();
+        const op = await recordLocalScan(eventId, raw);
+        await refreshLocalOfflineData();
         const outcome: ScanOutcome = {
-          outcome: 'LOCALLY_VERIFIED',
-          message: `Network offline. Locally Verified: ${op.displayHint} queued for sync.`,
-          statusLabel: 'Locally Verified',
+          outcome: op.status === 'CONFLICT' ? 'DUPLICATE' : op.status === 'REJECTED' ? 'REVOKED' : 'LOCALLY_VERIFIED',
+          message:
+            op.status === 'CONFLICT'
+              ? 'Conflict Detected: Duplicate scan recorded locally'
+              : `Network offline. Locally Verified: ${op.displayHint} queued for sync.`,
+          statusLabel: op.statusLabel,
           displayHint: op.displayHint,
         };
         setLastOutcome(outcome);
         setShowResultBanner(true);
-        triggerFeedback('LOCALLY_VERIFIED');
+        triggerFeedback(outcome.outcome);
       }
     } finally {
       setIsScanning(false);
@@ -548,7 +570,7 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
     setIsSyncing(true);
     try {
       const { syncedCount, conflictCount } = await syncBatchNow(eventId);
-      refreshLocalOfflineData();
+      await refreshLocalOfflineData();
       toast({
         type: 'info',
         title: 'Reconciliation Complete',
@@ -572,7 +594,16 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
     setIsResolving(true);
 
     try {
-      await apiClient(`/api/v1/conflicts/${selectedConflict.opId}/resolve`, {
+      // Find server conflict ID for this event or op if available
+      const conflictsRes = await apiClient<{ conflicts: Array<{ id: string; ticket_id: string; op_ids: string[] }> }>(
+        `/api/v1/events/${eventId}/check-in/conflicts`
+      );
+      const matchedServerConflict = conflictsRes?.conflicts?.find(
+        (c) => c.op_ids.includes(selectedConflict.opId) || c.id === selectedConflict.opId
+      );
+      const conflictId = matchedServerConflict?.id || selectedConflict.opId;
+
+      await apiClient(`/api/v1/conflicts/${conflictId}/resolve`, {
         method: 'POST',
         body: JSON.stringify({
           resolutionNote: resolutionNote.trim(),
@@ -589,13 +620,12 @@ export const ScannerPage: React.FC<{ eventId?: string }> = ({ eventId: propEvent
       message: 'Audited conflict resolution recorded in audit_logs.',
     });
 
-    const updated = offlineOps.map((op) =>
-      op.opId === selectedConflict.opId
-        ? { ...op, status: 'SYNCED' as const, statusLabel: 'Synced' as const, reason: resolutionNote }
-        : op
-    );
-    localStorage.setItem(`eventora_offline_ops_${eventId}`, JSON.stringify(updated));
-    setOfflineOps(updated);
+    await offlineDb.queue.update(selectedConflict.opId, {
+      status: 'SYNCED',
+      statusLabel: 'Synced',
+      reason: resolutionNote,
+    });
+    await refreshLocalOfflineData();
     setSelectedConflict(null);
     setResolutionNote('');
     setIsResolving(false);

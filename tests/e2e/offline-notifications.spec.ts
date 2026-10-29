@@ -108,6 +108,44 @@ test.describe('Phase 9 E2E: Alerts, Notification Pipeline & Offline Check-in (FR
     await expect(page.getByText('Conflict Detected', { exact: true }).first()).toBeVisible();
 
     // Download Manifest
+    await page.route('**/api/v1/events/**/check-in/manifest*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          manifestId: 'man-test-01',
+          eventId: 'evt-test-01',
+          keyId: 'key_test_01',
+          key: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          issuedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 4 * 3600000).toISOString(),
+          ticketCount: 3,
+          items: [
+            { ref: 'e2e_ref_tk01_16ch', hmac: 'hmac_proto_01', hint: 'TK-4829' },
+            { ref: 'e2e_ref_tk02_16ch', hmac: 'hmac_proto_02', hint: 'TK-7104' },
+            { ref: 'e2e_ref_tk03_16ch', hmac: 'hmac_proto_03', hint: 'TK-9952' },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/events/**/check-in/sync-batch*', async (route) => {
+      const payload = JSON.parse(route.request().postData() || '{}');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          batchId: payload.batchId,
+          totalOps: payload.ops?.length || 0,
+          results: (payload.ops || []).map((op: any) => ({
+            opId: op.opId,
+            outcome: op.ticketRef === 'e2e_ref_tk01_16ch' ? 'DUPLICATE' : 'SYNCED',
+            reason: op.ticketRef === 'e2e_ref_tk01_16ch' ? 'ALREADY_CHECKED_IN' : null,
+          })),
+        }),
+      });
+    });
+
     const downloadManifestBtn = page.locator('button:has-text("Download Manifest"):visible').first();
     await expect(downloadManifestBtn).toBeVisible();
     await downloadManifestBtn.click();

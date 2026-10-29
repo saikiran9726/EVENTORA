@@ -9,6 +9,9 @@ export default defineConfig({
     exclude: ['**/node_modules/**', 'tests/e2e/**'],
     hookTimeout: 30000,
     fileParallelism: false,
+    env: {
+      OFFLINE_MANIFEST_SECRET: 'test_manifest_secret_key_32_bytes_super_secure',
+    },
   },
   resolve: {
     alias: {

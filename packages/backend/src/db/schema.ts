@@ -1680,6 +1680,8 @@ export const offlineManifests = pgTable('offline_manifests', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   ticketCount: integer('ticket_count').default(0).notNull(),
   keyId: varchar('key_id', { length: 64 }).notNull(),
+  manifestKey: text('manifest_key'),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
 });
 
 // 51. Offline Checkin Batches
@@ -1693,6 +1695,9 @@ export const offlineCheckinBatches = pgTable('offline_checkin_batches', {
   status: varchar('status', { length: 50 }).default('RECEIVED').notNull(),
   receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
   opCount: integer('op_count').default(0).notNull(),
+  manifestId: uuid('manifest_id').references(() => offlineManifests.id, { onDelete: 'set null' }),
+  clientSentAt: timestamp('client_sent_at', { withTimezone: true }),
+  clockSkewMs: integer('clock_skew_ms'),
 });
 
 // 52. Offline Ops
@@ -1893,6 +1898,31 @@ export const eventMaterials = pgTable(
 
 export type EventMaterial = typeof eventMaterials.$inferSelect;
 export type NewEventMaterial = typeof eventMaterials.$inferInsert;
+
+// 60. Manifest Items (Phase 27)
+export const manifestItems = pgTable(
+  'manifest_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    manifestId: uuid('manifest_id')
+      .references(() => offlineManifests.id, { onDelete: 'cascade' })
+      .notNull(),
+    ticketId: uuid('ticket_id')
+      .references(() => tickets.id, { onDelete: 'cascade' })
+      .notNull(),
+    tokenRef: varchar('token_ref', { length: 64 }).notNull(),
+    hmacSignature: varchar('hmac_signature', { length: 64 }).notNull(),
+    displayHint: varchar('display_hint', { length: 32 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxManifestItemsManifestId: index('idx_manifest_items_manifest_id').on(table.manifestId),
+    idxManifestItemsRef: index('idx_manifest_items_ref').on(table.manifestId, table.tokenRef),
+  })
+);
+
+export type ManifestItem = typeof manifestItems.$inferSelect;
+export type NewManifestItem = typeof manifestItems.$inferInsert;
 
 
 

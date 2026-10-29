@@ -24,6 +24,22 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 27 -> 26: Manifest Items and Offline Check-in Hardening
+    if (currentVersion >= 27 && targetVersion < 27) {
+      console.log('[Rollback] Rolling back version 27 (Phase 27)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_manifest_items_ref;
+        DROP INDEX IF EXISTS idx_manifest_items_manifest_id;
+        DROP TABLE IF EXISTS manifest_items CASCADE;
+        ALTER TABLE offline_checkin_batches DROP COLUMN IF EXISTS clock_skew_ms;
+        ALTER TABLE offline_checkin_batches DROP COLUMN IF EXISTS client_sent_at;
+        ALTER TABLE offline_checkin_batches DROP COLUMN IF EXISTS manifest_id;
+        ALTER TABLE offline_manifests DROP COLUMN IF EXISTS revoked_at;
+        ALTER TABLE offline_manifests DROP COLUMN IF EXISTS manifest_key;
+        DELETE FROM schema_migrations WHERE version = 27;
+      `);
+    }
+
     // Rollback step 26 -> 25: Event Materials for Registered Attendees
     if (currentVersion >= 26 && targetVersion < 26) {
       console.log('[Rollback] Rolling back version 26 (Phase 26)...');
