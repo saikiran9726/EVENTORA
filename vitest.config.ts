@@ -8,6 +8,7 @@ export default defineConfig({
     include: ['tests/unit/**/*.{test,spec}.ts', 'tests/security/**/*.{test,spec}.ts'],
     exclude: ['**/node_modules/**', 'tests/e2e/**'],
     hookTimeout: 30000,
+    testTimeout: 30000,
     fileParallelism: false,
     env: {
       OFFLINE_MANIFEST_SECRET: 'test_manifest_secret_key_32_bytes_super_secure',

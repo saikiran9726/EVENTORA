@@ -557,22 +557,24 @@ describe('Phase P19: Volunteers, Venues, Calendar & RFC 5545 Hardening', () => {
       client.release();
     }
 
-    // Test rollback to version 21
-    await runRollbackToVersion(21);
-
-    // Verify index is removed in version 21
-    const client2 = await pool.connect();
     try {
-      const idxRes2 = await client2.query(`
-        SELECT indexname FROM pg_indexes WHERE indexname = 'uq_volunteer_records_user_shift';
-      `);
-      expect(idxRes2.rowCount).toBe(0);
-    } finally {
-      client2.release();
-    }
+      // Test rollback to version 21
+      await runRollbackToVersion(21);
 
-    // Re-apply migration back to latest version (22)
-    await runMigrations();
+      // Verify index is removed in version 21
+      const client2 = await pool.connect();
+      try {
+        const idxRes2 = await client2.query(`
+          SELECT indexname FROM pg_indexes WHERE indexname = 'uq_volunteer_records_user_shift';
+        `);
+        expect(idxRes2.rowCount).toBe(0);
+      } finally {
+        client2.release();
+      }
+    } finally {
+      // Re-apply migration back to latest version
+      await runMigrations();
+    }
 
     // Verify index is restored
     const client3 = await pool.connect();

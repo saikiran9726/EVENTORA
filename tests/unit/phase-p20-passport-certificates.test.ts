@@ -592,23 +592,25 @@ describe('Phase P20: Passport, Cross-College, Certificates & Eligibility Quality
       client.release();
     }
 
-    // Rollback to version 22
-    await runRollbackToVersion(22);
-
-    // Verify columns dropped in version 22
-    const client2 = await pool.connect();
     try {
-      const colCheck2 = await client2.query(`
-        SELECT column_name FROM information_schema.columns 
-        WHERE table_name = 'users' AND column_name IN ('department', 'year');
-      `);
-      expect(colCheck2.rowCount).toBe(0);
-    } finally {
-      client2.release();
-    }
+      // Rollback to version 22
+      await runRollbackToVersion(22);
 
-    // Re-apply migrations back to latest (23)
-    await runMigrations();
+      // Verify columns dropped in version 22
+      const client2 = await pool.connect();
+      try {
+        const colCheck2 = await client2.query(`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'users' AND column_name IN ('department', 'year');
+        `);
+        expect(colCheck2.rowCount).toBe(0);
+      } finally {
+        client2.release();
+      }
+    } finally {
+      // Re-apply migrations back to latest
+      await runMigrations();
+    }
 
     // Verify columns restored
     const client3 = await pool.connect();

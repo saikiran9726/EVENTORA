@@ -352,14 +352,16 @@ describe('Phase P27: Database Hardening, Search GIN, Privacy & Reconciliation Qu
 
   describe('7. Schema Rollback to 27 & Re-application to 28 Tested Downs', () => {
     it('tests rollback to version 27 and re-migration to 28 idempotently', async () => {
-      await runRollbackToVersion(27);
+      try {
+        await runRollbackToVersion(27);
 
-      const check27 = await pool.query(
-        `SELECT MAX(version) as max_v FROM schema_migrations;`
-      );
-      expect(Number(check27.rows[0].max_v)).toBe(27);
-
-      await runMigrations();
+        const check27 = await pool.query(
+          `SELECT MAX(version) as max_v FROM schema_migrations;`
+        );
+        expect(Number(check27.rows[0].max_v)).toBe(27);
+      } finally {
+        await runMigrations();
+      }
 
       const check28 = await pool.query(
         `SELECT MAX(version) as max_v FROM schema_migrations;`

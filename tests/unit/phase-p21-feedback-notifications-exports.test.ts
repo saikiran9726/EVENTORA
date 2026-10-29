@@ -652,29 +652,31 @@ describe('Phase P21: Feedback, Notifications & Exports Quality Gate', () => {
 
   // 13. Database Migration 24 Rollback & Re-application
   it('(13) verifies migration 24 durable export columns and down-migration idempotently', async () => {
-    // Rollback to version 23
-    await runRollbackToVersion(23);
-
-    const client = await pool.connect();
     try {
-      // Verify download_token and file_data columns are removed
-      const colCheck = await client.query(`
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'export_jobs' AND column_name IN ('file_data', 'download_token');
-      `);
-      expect(colCheck.rows.length).toBe(0);
+      // Rollback to version 23
+      await runRollbackToVersion(23);
 
-      // Verify schema_migrations record 24 is deleted
-      const verCheck = await client.query(`
-        SELECT version FROM schema_migrations WHERE version = 24;
-      `);
-      expect(verCheck.rows.length).toBe(0);
+      const client = await pool.connect();
+      try {
+        // Verify download_token and file_data columns are removed
+        const colCheck = await client.query(`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'export_jobs' AND column_name IN ('file_data', 'download_token');
+        `);
+        expect(colCheck.rows.length).toBe(0);
+
+        // Verify schema_migrations record 24 is deleted
+        const verCheck = await client.query(`
+          SELECT version FROM schema_migrations WHERE version = 24;
+        `);
+        expect(verCheck.rows.length).toBe(0);
+      } finally {
+        client.release();
+      }
     } finally {
-      client.release();
+      // Re-apply migration back to latest
+      await runMigrations();
     }
-
-    // Re-apply migration 24
-    await runMigrations();
 
     const clientAfter = await pool.connect();
     try {

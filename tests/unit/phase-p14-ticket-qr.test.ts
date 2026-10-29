@@ -524,25 +524,27 @@ describe('Phase P14: Ticket QR, Token Rotation & Downloads', () => {
   // 7. Migration 18 Rollback & Re-application
   describe('7. Schema Migration 18 Expand / Contract Rollback', () => {
     it('verifies rollback from 18 to 17 drops qr_token and re-running 18 restores it cleanly', async () => {
-      // Rollback to 17
-      await runRollbackToVersion(17);
-
-      const client1 = await pool.connect();
       try {
-        const vRes = await client1.query('SELECT MAX(version) as ver FROM schema_migrations;');
-        expect(vRes.rows[0].ver).toBe(17);
+        // Rollback to 17
+        await runRollbackToVersion(17);
 
-        // Verify column dropped
-        const colRes = await client1.query(
-          `SELECT column_name FROM information_schema.columns WHERE table_name = 'tickets' AND column_name = 'qr_token';`
-        );
-        expect(colRes.rows.length).toBe(0);
+        const client1 = await pool.connect();
+        try {
+          const vRes = await client1.query('SELECT MAX(version) as ver FROM schema_migrations;');
+          expect(vRes.rows[0].ver).toBe(17);
+
+          // Verify column dropped
+          const colRes = await client1.query(
+            `SELECT column_name FROM information_schema.columns WHERE table_name = 'tickets' AND column_name = 'qr_token';`
+          );
+          expect(colRes.rows.length).toBe(0);
+        } finally {
+          client1.release();
+        }
       } finally {
-        client1.release();
+        // Re-apply migrations back to latest
+        await runMigrations();
       }
-
-      // Re-apply migration 18
-      await runMigrations();
 
       const client2 = await pool.connect();
       try {

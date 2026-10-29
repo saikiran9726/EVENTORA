@@ -973,25 +973,27 @@ describe('Phase P18: Teams Hardening, Paid Checkout, PII Removal, Invitations & 
   // =========================================================================
   describe('6. Database Migration 21 Rollback & Re-application', () => {
     it('migration 21 down-migration to 20 and re-application to 21 preserves database integrity', async () => {
-      // 1. Rollback to version 20
-      await runRollbackToVersion(20);
-
-      const client1 = await pool.connect();
       try {
-        const v20 = await client1.query('SELECT MAX(version) as version FROM schema_migrations;');
-        expect(Number(v20.rows[0].version)).toBe(20);
+        // 1. Rollback to version 20
+        await runRollbackToVersion(20);
 
-        // Verify index dropped
-        const idxCheck = await client1.query(
-          `SELECT indexname FROM pg_indexes WHERE indexname = 'idx_team_invitations_token_hash';`
-        );
-        expect(idxCheck.rows.length).toBe(0);
+        const client1 = await pool.connect();
+        try {
+          const v20 = await client1.query('SELECT MAX(version) as version FROM schema_migrations;');
+          expect(Number(v20.rows[0].version)).toBe(20);
+
+          // Verify index dropped
+          const idxCheck = await client1.query(
+            `SELECT indexname FROM pg_indexes WHERE indexname = 'idx_team_invitations_token_hash';`
+          );
+          expect(idxCheck.rows.length).toBe(0);
+        } finally {
+          client1.release();
+        }
       } finally {
-        client1.release();
+        // 2. Re-apply to latest
+        await runMigrations();
       }
-
-      // 2. Re-apply to 21
-      await runMigrations();
 
       const client2 = await pool.connect();
       try {

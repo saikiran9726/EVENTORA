@@ -579,25 +579,27 @@ describe('Phase P17: Waitlist & Offer Claim Lifecycle', () => {
 
   // 12. Migration rollback and re-apply test
   it('migration 20 down-migration to 19 and re-application to 20 preserves database integrity', async () => {
-    // Down to 19
-    await runRollbackToVersion(19);
-
-    const client1 = await pool.connect();
     try {
-      const v19 = await client1.query('SELECT MAX(version) as version FROM schema_migrations;');
-      expect(Number(v19.rows[0].version)).toBe(19);
+      // Down to 19
+      await runRollbackToVersion(19);
 
-      const colCheck = await client1.query(
-        `SELECT column_name FROM information_schema.columns
-         WHERE table_name = 'waitlist_entries' AND column_name = 'booking_id';`
-      );
-      expect(colCheck.rows.length).toBe(0);
+      const client1 = await pool.connect();
+      try {
+        const v19 = await client1.query('SELECT MAX(version) as version FROM schema_migrations;');
+        expect(Number(v19.rows[0].version)).toBe(19);
+
+        const colCheck = await client1.query(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_name = 'waitlist_entries' AND column_name = 'booking_id';`
+        );
+        expect(colCheck.rows.length).toBe(0);
+      } finally {
+        client1.release();
+      }
     } finally {
-      client1.release();
+      // Re-apply to latest
+      await runMigrations();
     }
-
-    // Re-apply to 20
-    await runMigrations();
 
     const client2 = await pool.connect();
     try {

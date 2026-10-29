@@ -643,20 +643,22 @@ describe.sequential('Phase P16: Resend Email Adapter, Suppression List & Outbox 
       const vRes1 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
       expect(Number(vRes1.rows[0].ver)).toBeGreaterThanOrEqual(19);
 
-      // 2. Rollback to version 18
-      await runRollbackToVersion(18);
+      try {
+        // 2. Rollback to version 18
+        await runRollbackToVersion(18);
 
-      const vRes2 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
-      expect(Number(vRes2.rows[0].ver)).toBe(18);
+        const vRes2 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
+        expect(Number(vRes2.rows[0].ver)).toBe(18);
 
-      // email_suppressions table should not exist at version 18
-      const tableCheck = await pool.query(
-        "SELECT 1 FROM information_schema.tables WHERE table_name = 'email_suppressions';"
-      );
-      expect(tableCheck.rows.length).toBe(0);
-
-      // 3. Re-apply migrations back to 19 or above
-      await runMigrations();
+        // email_suppressions table should not exist at version 18
+        const tableCheck = await pool.query(
+          "SELECT 1 FROM information_schema.tables WHERE table_name = 'email_suppressions';"
+        );
+        expect(tableCheck.rows.length).toBe(0);
+      } finally {
+        // 3. Re-apply migrations back to latest
+        await runMigrations();
+      }
 
       const vRes3 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
       expect(Number(vRes3.rows[0].ver)).toBeGreaterThanOrEqual(19);

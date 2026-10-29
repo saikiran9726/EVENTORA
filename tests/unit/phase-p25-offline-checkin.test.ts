@@ -170,18 +170,21 @@ describe('Phase P25: Offline Check-in Redesign Quality Gate', () => {
   });
 
   it('(2) verifies migration 27 down-migration to 26 and re-migration to 27 idempotently', async () => {
-    await runRollbackToVersion(26);
-    const vRes1 = await pool.query(`SELECT MAX(version) as version FROM schema_migrations;`);
-    expect(Number(vRes1.rows[0].version)).toBe(26);
+    try {
+      await runRollbackToVersion(26);
+      const vRes1 = await pool.query(`SELECT MAX(version) as version FROM schema_migrations;`);
+      expect(Number(vRes1.rows[0].version)).toBe(26);
 
-    // Verify manifest_items table dropped in rollback 26
-    const tableRes = await pool.query(
-      `SELECT to_regclass('public.manifest_items') as tbl;`
-    );
-    expect(tableRes.rows[0].tbl).toBeNull();
+      // Verify manifest_items table dropped in rollback 26
+      const tableRes = await pool.query(
+        `SELECT to_regclass('public.manifest_items') as tbl;`
+      );
+      expect(tableRes.rows[0].tbl).toBeNull();
+    } finally {
+      // Re-apply migration back to latest
+      await runMigrations();
+    }
 
-    // Re-apply migration 27
-    await runMigrations();
     const vRes2 = await pool.query(`SELECT MAX(version) as version FROM schema_migrations;`);
     expect(Number(vRes2.rows[0].version)).toBeGreaterThanOrEqual(27);
 

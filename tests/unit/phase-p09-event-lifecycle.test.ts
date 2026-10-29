@@ -603,13 +603,16 @@ describe('Phase P09: Event Lifecycle & Cancel Cascade Quality Gate', () => {
       const v1 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
       expect(Number(v1.rows[0].ver)).toBeGreaterThanOrEqual(14);
 
-      // 2. Rollback to version 13
-      await runRollbackToVersion(13);
-      const v2 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
-      expect(Number(v2.rows[0].ver)).toBe(13);
+      try {
+        // 2. Rollback to version 13
+        await runRollbackToVersion(13);
+        const v2 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
+        expect(Number(v2.rows[0].ver)).toBe(13);
+      } finally {
+        // 3. Re-apply to latest
+        await runMigrations();
+      }
 
-      // 3. Re-apply to >= 14
-      await runMigrations();
       const v3 = await pool.query('SELECT MAX(version) as ver FROM schema_migrations;');
       expect(Number(v3.rows[0].ver)).toBeGreaterThanOrEqual(14);
     });

@@ -595,25 +595,27 @@ describe('Phase P22: Organizer Analytics Backend Quality Gate', () => {
   });
 
   it('(10) verifies migration 25 down-migration to 24 and re-migration to 25 idempotently', async () => {
-    // Rollback 25 -> 24
-    await runRollbackToVersion(24);
-
-    const client = await pool.connect();
     try {
-      const vRes = await client.query('SELECT MAX(version) as version FROM schema_migrations;');
-      expect(Number(vRes.rows[0].version)).toBe(24);
+      // Rollback 25 -> 24
+      await runRollbackToVersion(24);
 
-      // Verify dropped index
-      const idxRes = await client.query(
-        `SELECT to_regclass('idx_bookings_event_created_at') as idx;`
-      );
-      expect(idxRes.rows[0].idx).toBeNull();
+      const client = await pool.connect();
+      try {
+        const vRes = await client.query('SELECT MAX(version) as version FROM schema_migrations;');
+        expect(Number(vRes.rows[0].version)).toBe(24);
+
+        // Verify dropped index
+        const idxRes = await client.query(
+          `SELECT to_regclass('idx_bookings_event_created_at') as idx;`
+        );
+        expect(idxRes.rows[0].idx).toBeNull();
+      } finally {
+        client.release();
+      }
     } finally {
-      client.release();
+      // Re-apply migration back to latest
+      await runMigrations();
     }
-
-    // Re-apply migration 25
-    await runMigrations();
 
     const client2 = await pool.connect();
     try {

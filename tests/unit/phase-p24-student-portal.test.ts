@@ -209,13 +209,16 @@ describe('Phase P24: Student Portal Restoration Quality Gate', () => {
       const vBefore = await client.query(`SELECT MAX(version) as current_version FROM schema_migrations;`);
       expect(vBefore.rows[0].current_version).toBeGreaterThanOrEqual(26);
 
-      // Down-migrate to 25
-      await runRollbackToVersion(25);
-      const vAfter = await client.query(`SELECT MAX(version) as current_version FROM schema_migrations;`);
-      expect(vAfter.rows[0].current_version).toBe(25);
+      try {
+        // Down-migrate to 25
+        await runRollbackToVersion(25);
+        const vAfter = await client.query(`SELECT MAX(version) as current_version FROM schema_migrations;`);
+        expect(vAfter.rows[0].current_version).toBe(25);
+      } finally {
+        // Re-migrate to latest
+        await runMigrations();
+      }
 
-      // Re-migrate to 26
-      await runMigrations();
       const vReapplied = await client.query(`SELECT MAX(version) as current_version FROM schema_migrations;`);
       expect(vReapplied.rows[0].current_version).toBeGreaterThanOrEqual(26);
 
