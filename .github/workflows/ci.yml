@@ -41,6 +41,9 @@ jobs:
       - name: Frozen Dependency Install
         run: pnpm install --frozen-lockfile
 
+      - name: Build Shared Package
+        run: pnpm --filter @eventora/shared build
+
       - name: Static Typecheck
         run: pnpm typecheck
 

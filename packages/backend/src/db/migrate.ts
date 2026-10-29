@@ -1,8 +1,13 @@
 import { pool } from './index.js';
 
 export async function runMigrations() {
-  const client = await pool.connect();
+  if (!process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === '') {
+    console.error('[Migration Runner Fatal Error] DATABASE_URL is not set');
+    throw new Error('DATABASE_URL is not set');
+  }
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
 
     // Advisory lock for transactional deployment safety (ensures single migration runner)
@@ -1661,16 +1666,35 @@ export async function runMigrations() {
     await client.query('COMMIT');
     console.log('[Migration] Phase 1-11 schemas, partition bounds, and constraints applied successfully.');
   } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('[Migration] Failed to apply migrations:', err);
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore rollback errors on broken connection
+      }
+    }
+    const sanitizedMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    const errCode = (err && typeof err === 'object' && 'code' in err) ? ` [code: ${(err as any).code}]` : '';
+    console.error(`[Migration] Failed to apply migrations: ${sanitizedMsg}${errCode}`);
     throw err;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
 
 if (process.argv[1]?.endsWith('migrate.ts') || process.argv[1]?.endsWith('migrate.js')) {
+  if (!process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === '') {
+    console.error('[Migration Runner Fatal Error] DATABASE_URL is not set');
+    process.exit(1);
+  }
   runMigrations()
     .then(() => process.exit(0))
-    .catch(() => process.exit(1));
+    .catch((err) => {
+      const sanitizedMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      const errCode = (err && typeof err === 'object' && 'code' in err) ? ` [code: ${(err as any).code}]` : '';
+      console.error(`[Migration Runner Fatal Error] ${sanitizedMsg}${errCode}`);
+      process.exit(1);
+    });
 }

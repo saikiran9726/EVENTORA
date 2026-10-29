@@ -5,9 +5,13 @@ import { pool } from './index.js';
  * Safely rolls back schema revisions while preserving existing business data.
  */
 export async function runRollbackToVersion(targetVersion: number) {
-  const client = await pool.connect();
-
+  if (!process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === '') {
+    console.error('[Rollback Runner Fatal Error] DATABASE_URL is not set');
+    throw new Error('DATABASE_URL is not set');
+  }
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
 
     // Get current version
@@ -295,17 +299,36 @@ export async function runRollbackToVersion(targetVersion: number) {
     await client.query('COMMIT');
     console.log(`[Rollback] Successfully rolled back to version ${targetVersion}.`);
   } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('[Rollback] Rollback failed:', err);
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore rollback errors on broken connection
+      }
+    }
+    const sanitizedMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    const errCode = (err && typeof err === 'object' && 'code' in err) ? ` [code: ${(err as any).code}]` : '';
+    console.error(`[Rollback] Rollback failed: ${sanitizedMsg}${errCode}`);
     throw err;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
 
 if (process.argv[1]?.endsWith('migrate-down.ts') || process.argv[1]?.endsWith('migrate-down.js')) {
+  if (!process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === '') {
+    console.error('[Rollback Runner Fatal Error] DATABASE_URL is not set');
+    process.exit(1);
+  }
   const target = parseInt(process.argv[2] || '10', 10);
   runRollbackToVersion(target)
     .then(() => pool.end())
-    .catch(() => process.exit(1));
+    .catch((err) => {
+      const sanitizedMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      const errCode = (err && typeof err === 'object' && 'code' in err) ? ` [code: ${(err as any).code}]` : '';
+      console.error(`[Rollback Runner Fatal Error] ${sanitizedMsg}${errCode}`);
+      process.exit(1);
+    });
 }

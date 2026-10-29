@@ -11,6 +11,7 @@ export default defineConfig({
     testTimeout: 30000,
     fileParallelism: false,
     env: {
+      DATABASE_URL: 'postgresql://postgres@127.0.0.1:5433/eventora_db',
       OFFLINE_MANIFEST_SECRET: 'test_manifest_secret_key_32_bytes_super_secure',
     },
     coverage: {

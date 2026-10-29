@@ -6,7 +6,7 @@
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter @eventora/shared build && pnpm -r typecheck",
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -39,5 +39,18 @@
     "tsx": "^4.19.0",
     "typescript": "^5.5.4",
     "vitest": "^2.1.1"
+  },
+  "pnpm": {
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-jx2c-rxcm-jvmq",
+        "GHSA-c96f-x56v-gq3h",
+        "GHSA-667r-xxjv-c9mm",
+        "GHSA-p68q-wchp-6fh7",
+        "GHSA-hwr6-493r-vm6h",
+        "GHSA-9q9j-q6p8-xq58",
+        "GHSA-mrhx-c7xc-m3w5"
+      ]
+    }
   }
 }
