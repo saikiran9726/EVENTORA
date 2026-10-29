@@ -1164,7 +1164,17 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
             </div>
           </CardHeader>
 
-          <CardContent>
+          <CardContent className="space-y-4">
+            <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs flex items-start gap-3 text-amber-200" data-testid="youpi-compliance-note">
+              <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-amber-300">Payment Gateway Compliance &amp; Architecture Notice</p>
+                <p className="text-amber-200/90 leading-relaxed">
+                  YouPI-PG describes itself as an experimental research project, not bank/NPCI-approved or production-certified; it detects payments by parsing bank SMS/email alerts, suggests ≤ 20 payment attempts per day per receiving account, and serves one payer at a time per UPI ID. Collecting ticket money this way may raise bank, UPI, payment-aggregator, tax and consumer-protection questions — get qualified advice and your bank's written approval before real-money use. Treat it as suitable for small, controlled, organizer-approved events behind the <code className="bg-amber-950/60 px-1 py-0.5 rounded text-amber-200">PAYMENT_PROVIDER</code> flag with buyer disclosure and manual reconciliation; for large or public paid events add a licensed gateway (Razorpay/Cashfree/PhonePe PG) as a second adapter.
+                </p>
+              </div>
+            </div>
+
             <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Organizer financial ledger table">
               <Table>
                 <TableHeader>
