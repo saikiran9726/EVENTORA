@@ -1,0 +1,17 @@
+User-agent: *
+Disallow: /admin
+Disallow: /admin/
+Disallow: /organizer
+Disallow: /organizer/
+Disallow: /reviewer
+Disallow: /reviewer/
+Disallow: /scan
+Disallow: /scan/
+Disallow: /api/
+Allow: /
+Allow: /events/
+Allow: /discover
+Allow: /calendar
+Allow: /p/
+
+Sitemap: https://eventora.org/sitemap.xml

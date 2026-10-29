@@ -21,6 +21,7 @@ import { Select } from '@/components/ui/Select';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { useToast } from '@/components/ui/Toast';
 import { formatINR } from '@/lib/utils';
+import { generateEventJsonLd } from '@eventora/shared';
 import { TicketSelector } from '@/components/booking/TicketSelector';
 import { VenueCard } from '@/components/venue/VenueCard';
 import { apiClient } from '@/lib/api-client';
@@ -182,6 +183,45 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
     }
     loadRatings();
   }, [eventId]);
+
+  // Dynamic Open Graph & schema.org/Event JSON-LD injection for shareable event page
+  useEffect(() => {
+    if (!loadedEvent) return;
+    const originalTitle = document.title;
+    document.title = `${loadedEvent.title} | Eventora`;
+
+    const jsonLd = generateEventJsonLd({
+      title: loadedEvent.title,
+      description: loadedEvent.description || '',
+      slug: loadedEvent.slug || eventId,
+      startsAt: loadedEvent.startsAt || new Date().toISOString(),
+      endsAt: loadedEvent.endsAt || new Date().toISOString(),
+      format: loadedEvent.format,
+      venueName: loadedEvent.venue?.name || loadedEvent.venueName,
+      organizerName: loadedEvent.organizer?.displayName || loadedEvent.organizerName,
+      pricingType: loadedEvent.pricingType,
+      ticketTiers: ticketTiers.map((t) => ({
+        name: t.name,
+        pricePaise: t.price_paise || t.pricePaise || 0,
+        capacity: t.capacity,
+      })),
+    });
+
+    let scriptEl = document.getElementById('schema-org-event') as HTMLScriptElement | null;
+    if (!scriptEl) {
+      scriptEl = document.createElement('script');
+      scriptEl.id = 'schema-org-event';
+      scriptEl.type = 'application/ld+json';
+      document.head.appendChild(scriptEl);
+    }
+    scriptEl.textContent = JSON.stringify(jsonLd);
+
+    return () => {
+      document.title = originalTitle;
+      const el = document.getElementById('schema-org-event');
+      if (el) el.remove();
+    };
+  }, [loadedEvent, ticketTiers, eventId]);
 
   const isSoldOut = event ? event.registeredCount >= event.capacity : false;
 

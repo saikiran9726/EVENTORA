@@ -4,9 +4,12 @@ import App from './App';
 import './index.css';
 import { reportError } from './lib/error-reporter';
 import { initFrontendSentry } from './lib/sentry';
+import { registerServiceWorker } from './lib/pwa';
+import { I18nProvider } from './i18n/I18nContext';
 
-// Initialize frontend Sentry observability
+// Initialize frontend Sentry observability & PWA service worker
 initFrontendSentry();
+registerServiceWorker();
 
 // Global unhandled promise rejection and uncaught error handlers
 if (typeof window !== 'undefined') {
@@ -21,6 +24,8 @@ if (typeof window !== 'undefined') {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <I18nProvider>
+      <App />
+    </I18nProvider>
   </React.StrictMode>
 );

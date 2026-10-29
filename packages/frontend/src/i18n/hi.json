@@ -1,0 +1,77 @@
+{
+  "common": {
+    "appName": "इवेंटोरा",
+    "loading": "लोड हो रहा है...",
+    "error": "एक त्रुटि हुई",
+    "retry": "पुनः प्रयास करें",
+    "cancel": "रद्द करें",
+    "confirm": "पुष्टि करें",
+    "save": "परिवर्तन सहेजें",
+    "delete": "हटाएं",
+    "search": "कार्यक्रम, टैग, आयोजक खोजें...",
+    "filter": "फ़िल्टर",
+    "back": "वापस",
+    "skipToMain": "मुख्य सामग्री पर जाएं",
+    "language": "भाषा",
+    "theme": "थीम",
+    "lightMode": "लाइट मोड चालू करें",
+    "darkMode": "डार्क मोड चालू करें",
+    "offlineBadge": "ऑफ़लाइन मोड",
+    "updateAvailable": "इवेंटोरा का नया संस्करण उपलब्ध है।",
+    "updateNow": "अभी अपडेट करें",
+    "copyRef": "कॉपी करें"
+  },
+  "navigation": {
+    "discover": "खोजें",
+    "calendar": "कैलेंडर",
+    "tickets": "टिकटें",
+    "passport": "पासपोर्ट",
+    "profile": "मेरी प्रोफ़ाइल",
+    "teams": "टीमें",
+    "volunteers": "स्वयंसेवक",
+    "dashboard": "डैशबोर्ड",
+    "scanner": "स्कैनर"
+  },
+  "events": {
+    "details": "कार्यक्रम विवरण",
+    "register": "पंजीकरण करें",
+    "registered": "पंजीकृत",
+    "soldOut": "सीटें समाप्त",
+    "free": "निःशुल्क",
+    "startsAt": "प्रारंभ समय",
+    "endsAt": "समाप्ति समय",
+    "venue": "स्थान",
+    "organizer": "आयोजक",
+    "share": "साझा करें",
+    "addToCalendar": "कैलेंडर में जोड़ें",
+    "categories": "श्रेणियां"
+  },
+  "checkout": {
+    "summary": "ऑर्डर सारांश",
+    "selectTier": "टिकट श्रेणी चुनें",
+    "attendeeDetails": "प्रतिभागी विवरण",
+    "completePayment": "UPI द्वारा भुगतान करें",
+    "verifyingPayment": "बैंक गेटवे के साथ भुगतान की पुष्टि हो रही है...",
+    "paymentConfirmed": "भुगतान की पुष्टि एवं सत्यापन सफल",
+    "receiptNumber": "रसीद संख्या",
+    "downloadReceipt": "रसीद डाउनलोड करें"
+  },
+  "scanner": {
+    "title": "गेट चेक-इन स्कैनर",
+    "pointCamera": "कैमरा प्रतिभागी के क्यूआर कोड पर रखें",
+    "switchCamera": "कैमरा बदलें",
+    "toggleTorch": "टॉर्च चालू/बंद करें",
+    "scanAccepted": "चेक-इन स्वीकृत",
+    "scanDuplicate": "डुप्लिकेट टिकट (पहले से चेक-इन)",
+    "scanInvalid": "अमान्य टिकट",
+    "offlineMode": "ऑफ़लाइन कार्य कर रहा है",
+    "syncPending": "स्कैन सिंक बाकी"
+  },
+  "passport": {
+    "title": "छात्र पासपोर्ट और सत्यापित उपलब्धियां",
+    "verifiedStudent": "सत्यापित छात्र",
+    "achievements": "सत्यापित उपलब्धियां",
+    "attendanceTimeline": "उपस्थिति समय-रेखा",
+    "shareLink": "सार्वजनिक पासपोर्ट साझा करें"
+  }
+}

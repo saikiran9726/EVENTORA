@@ -15,6 +15,7 @@ import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
 import { RouteSkeleton } from '@/components/ui/RouteSkeleton';
 import { RequireAuth, RequireRole } from '@/components/auth/RouteGuards';
 import { ExpiredSessionModal } from '@/components/auth/ExpiredSessionModal';
+import { PWAUpdatePrompt } from '@/components/ui/PWAUpdatePrompt';
 
 // Shell Layouts
 import { StudentShell } from '@/components/shells/StudentShell';
@@ -245,6 +246,15 @@ const AppContent: React.FC = () => {
 
   return (
     <>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-brand focus:text-white focus:font-semibold focus:rounded-md focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+      >
+        Skip to main content
+      </a>
+
+      <PWAUpdatePrompt />
+
       {isServerWaking && (
         <div
           role="status"

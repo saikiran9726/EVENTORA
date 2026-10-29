@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Compass, Calendar, Ticket, Award, User, Bell, Sun, Moon, Users, HeartHandshake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NotificationCenter } from '@/components/notifications/NotificationCenter';
+import { LanguageSelector } from '@/components/ui/LanguageSelector';
 import { apiClient } from '@/lib/api-client';
 
 export interface ShellCommonProps {
@@ -81,10 +82,12 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
 
         {/* Global Controls */}
         <div className="flex items-center gap-2 md:gap-3">
+          <LanguageSelector />
+
           <button
             type="button"
             onClick={() => onRouteChange('teams')}
-            className="px-2 py-1 rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
+            className="px-2.5 py-1.5 min-h-[44px] rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
           >
             <Users className="w-3.5 h-3.5" />
             <span>Teams</span>
@@ -93,7 +96,7 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
           <button
             type="button"
             onClick={() => onRouteChange('volunteers')}
-            className="px-2 py-1 rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
+            className="px-2.5 py-1.5 min-h-[44px] rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
           >
             <HeartHandshake className="w-3.5 h-3.5" />
             <span>Volunteers</span>
@@ -103,7 +106,7 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
             <button
               type="button"
               onClick={() => onRouteChange('components')}
-              className="px-2 py-1 rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
+              className="px-2.5 py-1.5 min-h-[44px] rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
             >
               <span>UI Gallery</span>
             </button>
@@ -112,7 +115,7 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
           <button
             type="button"
             onClick={onToggleDarkMode}
-            className="p-2 rounded-md text-text-muted hover:text-text hover:bg-surface-2 transition-colors"
+            className="p-2 min-h-[44px] min-w-[44px] rounded-md text-text-muted hover:text-text hover:bg-surface-2 transition-colors flex items-center justify-center"
             aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
           >
             {isDarkMode ? <Sun className="w-4 h-4 text-warning" /> : <Moon className="w-4 h-4 text-brand" />}
@@ -121,12 +124,12 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
           <button
             type="button"
             onClick={() => setIsNotificationOpen(true)}
-            className="p-2 rounded-md text-text-muted hover:text-text hover:bg-surface-2 transition-colors relative"
+            className="p-2 min-h-[44px] min-w-[44px] rounded-md text-text-muted hover:text-text hover:bg-surface-2 transition-colors relative flex items-center justify-center"
             aria-label="View notifications"
           >
             <Bell className="w-4 h-4" />
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+              <span className="absolute top-1 right-1 min-w-4 h-4 px-1 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}
@@ -196,7 +199,11 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
         </aside>
 
         {/* Content Area */}
-        <main className="flex-1 w-full min-w-0 max-w-content mx-auto p-4 sm:p-6 lg:p-8 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 w-full min-w-0 max-w-content mx-auto p-4 sm:p-6 lg:p-8 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-8 focus:outline-none"
+        >
           {children}
         </main>
       </div>
@@ -214,7 +221,7 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
               key={item.id}
               onClick={() => onRouteChange(item.id)}
               className={cn(
-                'flex flex-col items-center justify-center flex-1 py-1 gap-1 text-[11px] font-medium transition-colors',
+                'flex flex-col items-center justify-center flex-1 min-h-[48px] min-w-[44px] py-1 gap-1 text-[11px] font-medium transition-colors',
                 isActive ? 'text-brand font-semibold' : 'text-text-muted hover:text-text'
               )}
             >

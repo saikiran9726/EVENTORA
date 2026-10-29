@@ -45,6 +45,14 @@
       "destination": "https://eventora-api-p35a.onrender.com/readiness"
     },
     {
+      "source": "/sitemap.xml",
+      "destination": "https://eventora-api-p35a.onrender.com/sitemap.xml"
+    },
+    {
+      "source": "/robots.txt",
+      "destination": "https://eventora-api-p35a.onrender.com/robots.txt"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

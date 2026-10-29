@@ -49,6 +49,11 @@ export const ReceiptView: React.FC<ReceiptViewProps> = ({
 
   return (
     <div className={`space-y-6 ${className}`}>
+      {/* Screen reader live announcement */}
+      <div role="status" aria-live="polite" className="sr-only">
+        Payment confirmed and verified for {receipt.eventTitle}. Official receipt number {receipt.receiptNumber}.
+      </div>
+
       {/* Printable Receipt Card */}
       <Card className="p-6 sm:p-8 space-y-6 border-success/30 bg-surface print:border-none print:shadow-none print:p-0">
         {/* Header */}

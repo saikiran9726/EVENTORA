@@ -1,0 +1,77 @@
+{
+  "common": {
+    "appName": "Eventora",
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "retry": "Try Again",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save Changes",
+    "delete": "Delete",
+    "search": "Search events, tags, organizers...",
+    "filter": "Filter",
+    "back": "Back",
+    "skipToMain": "Skip to main content",
+    "language": "Language",
+    "theme": "Theme",
+    "lightMode": "Switch to light mode",
+    "darkMode": "Switch to dark mode",
+    "offlineBadge": "Offline Mode",
+    "updateAvailable": "A new version of Eventora is available.",
+    "updateNow": "Update Now",
+    "copyRef": "Copy"
+  },
+  "navigation": {
+    "discover": "Discover",
+    "calendar": "Calendar",
+    "tickets": "Tickets",
+    "passport": "Passport",
+    "profile": "Me",
+    "teams": "Teams",
+    "volunteers": "Volunteers",
+    "dashboard": "Dashboard",
+    "scanner": "Scanner"
+  },
+  "events": {
+    "details": "Event Details",
+    "register": "Register Now",
+    "registered": "Registered",
+    "soldOut": "Sold Out",
+    "free": "Free",
+    "startsAt": "Starts at",
+    "endsAt": "Ends at",
+    "venue": "Venue",
+    "organizer": "Organized by",
+    "share": "Share Event",
+    "addToCalendar": "Add to Calendar",
+    "categories": "Categories"
+  },
+  "checkout": {
+    "summary": "Order Summary",
+    "selectTier": "Select Ticket Tier",
+    "attendeeDetails": "Attendee Information",
+    "completePayment": "Pay via UPI",
+    "verifyingPayment": "Verifying transaction with banking gateway...",
+    "paymentConfirmed": "Payment Confirmed & Verified",
+    "receiptNumber": "Receipt Number",
+    "downloadReceipt": "Download Receipt"
+  },
+  "scanner": {
+    "title": "Gate Check-in Scanner",
+    "pointCamera": "Point camera at attendee QR code",
+    "switchCamera": "Switch Camera",
+    "toggleTorch": "Toggle Flashlight",
+    "scanAccepted": "Check-in Approved",
+    "scanDuplicate": "Duplicate Ticket (Already Checked In)",
+    "scanInvalid": "Invalid Ticket",
+    "offlineMode": "Operating Offline",
+    "syncPending": "scans pending sync"
+  },
+  "passport": {
+    "title": "Student Passport & Verified Achievements",
+    "verifiedStudent": "Verified Campus Student",
+    "achievements": "Verified Achievements",
+    "attendanceTimeline": "Attendance Timeline",
+    "shareLink": "Share Public Passport"
+  }
+}

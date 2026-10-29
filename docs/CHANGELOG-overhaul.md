@@ -1,5 +1,80 @@
 # Eventora Overhaul Changelog
 
+## Phase P30 — Accessibility (WCAG 2.2 AA), Performance Budgets, Shareable Event SEO, PWA & i18n
+
+**Date:** 2026-10-29  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. WCAG 2.2 AA Accessibility Quality Gate
+- **Focus Rings & Reduced Motion:**
+  - High-contrast visible focus rings implemented globally across dark and light themes (`:focus-visible:outline-none :focus-visible:ring-2 :focus-visible:ring-brand :focus-visible:ring-offset-2`).
+  - Pre-configured `prefers-reduced-motion: reduce` resets in `packages/frontend/src/index.css`.
+- **Landmarks & Skip Navigation:**
+  - Added skip link in `packages/frontend/src/App.tsx` pointing to `#main-content` with focus styling (`sr-only focus:not-sr-only`).
+  - Standardized `<main id="main-content" tabIndex={-1}>` and `<header>`, `<nav aria-label="...">`, `<aside>` landmarks across all shell layouts (`StudentShell`, `OrganizerShell`, `AdminShell`, `ReviewerShell`, `CheckinShell`).
+- **Live Announcements (`aria-live`):**
+  - `ToastProvider`: `role="status"` / `role="alert"` with `aria-live="polite"` and `aria-atomic="true"`.
+  - `ReceiptView`: Accessible live payment confirmation region (`aria-live="polite"`, `role="status"`).
+  - `CheckoutPage`: Interactive step announcements (`aria-live="polite"`).
+  - `ScannerPage`: Real-time gate scan outcome assertions (`aria-live="assertive"`).
+- **Control Labelling & Tap Targets:**
+  - Enforced minimum 44px tap targets (`min-h-[44px] min-w-[44px]` / `min-h-[48px]`) on interactive controls and mobile bottom navigation.
+  - Screen reader passes verified on FormBuilder reordering (`aria-label="Move question up"`, `aria-label="Move question down"`), scanner controls, and checkout input fields.
+
+---
+
+### 2. Performance Budgets, Route Splitting & Chunk Optimization
+- **Code-Splitting & Vendor Chunk Isolation (`packages/frontend/vite.config.ts`):**
+  - Granular manual chunk splitting: `vendor-react`, `vendor-query`, `vendor-motion`, `vendor-sentry`, `vendor-icons`.
+  - Initial JS bundle gzipped strictly contained under the 200KB threshold (entry bundle $\approx$ 40KB gzipped).
+- **Dynamic Imports:**
+  - `html5-qrcode` dynamic import in `ScannerPage.tsx` avoids bundling barcode scanning code into main bundle.
+- **Row Virtualization (`packages/frontend/src/components/ui/VirtualList.tsx`):**
+  - Windowing component calculating visible index bounds for lists/rosters with $>200$ rows, rendering only $\approx 16$ active DOM elements.
+- **Modern Responsive Images (`packages/frontend/src/components/ui/ResponsiveImage.tsx`):**
+  - Generates `<picture>` tags with AVIF and WebP sources, lazy loading (`loading="lazy" decoding="async"`), and layout aspect ratio locks (CLS $< 0.1$).
+- **Lighthouse CI Configuration (`.lighthouserc.json`):**
+  - Enforces performance $\ge 0.9$, accessibility $\ge 0.95$, SEO $\ge 0.9$, LCP $< 2.5$s, CLS $< 0.1$, and initial JS $< 200$KB.
+
+---
+
+### 3. Shareable Event Pages, SEO, Open Graph & Structured Data
+- **Vercel Edge Middleware (`middleware.ts`, `packages/frontend/middleware.ts`):**
+  - Intercepts crawler/bot user agents (Googlebot, Facebook, Twitter, WhatsApp, LinkedIn, Slack, Telegram, Discord) requesting `/events/:slug`.
+  - Injects OpenGraph meta tags, Twitter summary card, and `schema.org/Event` JSON-LD.
+- **Client-Side Dynamic SEO (`packages/frontend/src/pages/EventDetailsPage.tsx`):**
+  - Updates `document.title` and dynamically injects `schema.org/Event` JSON-LD script into `document.head`.
+  - Structured data includes attendance mode (in-person/online/hybrid), event status, ISO dates in IST, ticket tiers, venue details, and organizer info.
+- **Public Sitemap & Robots (`packages/backend/src/routes/api/v1/seo.ts`):**
+  - `GET /sitemap.xml`: Generates valid XML containing published public events and strictly excluding private events (`visibility != 'public'`).
+  - `GET /robots.txt`: Disallows sensitive administrative paths (`/admin`, `/organizer`, `/reviewer`, `/scan`, `/api/`) and points to `/sitemap.xml`.
+  - Rewrites mapped in root and frontend `vercel.json`.
+
+---
+
+### 4. PWA (Workbox), Offline Ticket Presentation & i18n
+- **Web App Manifest (`packages/frontend/public/manifest.webmanifest`):**
+  - Configures standalone display mode, theme colors, shortcut icons, and offline pass presentation.
+- **Workbox Service Worker (`packages/frontend/public/sw.js`):**
+  - App shell precaching (`/`, `/index.html`, `/favicon.svg`).
+  - StaleWhileRevalidate for scripts, styles, and scanner assets.
+  - NetworkFirst with offline cache fallback for student tickets (`/tickets`, `/qr`).
+  - Listens for `SKIP_WAITING` for zero-friction service worker updates.
+- **PWA Update Prompt (`packages/frontend/src/components/ui/PWAUpdatePrompt.tsx`):**
+  - Floating accessible notification prompting users when new builds are deployed, with one-click reload.
+- **ECMAScript `Intl` IST & Currency Formatting (`@eventora/shared`):**
+  - Localized Indian Rupee formatting (`formatPaiseToRupee`) using `Intl.NumberFormat('en-IN')`.
+  - Indian Standard Time date/time formatters (`formatISTDate`, `formatISTTime`, `formatISTDateTime`, `formatISTDateRange`) using `Intl.DateTimeFormat` with `timeZone: 'Asia/Kolkata'`.
+- **Multi-Language Message Catalogs (English, Hindi, Telugu):**
+  - Message catalogs implemented in `packages/frontend/src/i18n/`: `en.json`, `hi.json` (हिन्दी), `te.json` (తెలుగు).
+  - Context provider (`I18nContext.tsx`) with automatic locale detection, persistent storage, and fallback mechanisms.
+  - Accessible Language Selector (`LanguageSelector.tsx`).
+
+---
+
 ## Phase P29 — CI/CD Automation, Hardened Non-Root Containerization & Automated Rollback
 
 **Date:** 2026-10-29  

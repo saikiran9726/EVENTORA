@@ -145,7 +145,11 @@ export const OrganizerShell: React.FC<ShellCommonProps> = ({
         </aside>
 
         {/* Content Area */}
-        <main className="flex-1 w-full min-w-0 max-w-content mx-auto p-4 sm:p-6 lg:p-8 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex-1 w-full min-w-0 max-w-content mx-auto p-4 sm:p-6 lg:p-8 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-8 focus:outline-none"
+        >
           {children}
         </main>
       </div>

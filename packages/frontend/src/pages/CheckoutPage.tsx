@@ -453,7 +453,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="inline-flex items-center gap-2 text-xs font-semibold text-text-muted hover:text-text transition-colors py-1.5 px-2 rounded-md hover:bg-surface-2"
+          className="inline-flex items-center gap-2 text-xs font-semibold text-text-muted hover:text-text transition-colors py-2 px-3 min-h-[44px] rounded-md hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Cancel & Return</span>

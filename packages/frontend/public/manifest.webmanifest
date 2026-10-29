@@ -1,0 +1,48 @@
+{
+  "name": "Eventora — Campus Event Management",
+  "short_name": "Eventora",
+  "description": "Unified Smart Campus Event Management System with offline ticket presentation & gate check-in.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#FAFAFB",
+  "theme_color": "#4F46E5",
+  "lang": "en-IN",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "categories": ["education", "events", "productivity"],
+  "shortcuts": [
+    {
+      "name": "My Tickets",
+      "url": "/tickets",
+      "description": "View offline event tickets and QR passes"
+    },
+    {
+      "name": "Event Calendar",
+      "url": "/calendar",
+      "description": "Browse upcoming campus schedule"
+    },
+    {
+      "name": "Gate Check-in",
+      "url": "/scan",
+      "description": "Offline Gate QR Scanner for staff"
+    }
+  ]
+}

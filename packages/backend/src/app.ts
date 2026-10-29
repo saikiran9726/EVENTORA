@@ -21,6 +21,7 @@ import { offlineCheckinRoutes } from './routes/api/v1/offline-checkin.js';
 import { crossCollegePassportRoutes, handleGetPublicPassportRoute } from './routes/api/v1/crosscollege-passport.js';
 import { handleResendWebhook } from './routes/webhooks/resend.js';
 import { monitoringRoutes, recordMetricRequest } from './routes/monitoring.js';
+import { seoRoutes } from './routes/api/v1/seo.js';
 import { securityHeadersPlugin } from './plugins/security-headers.js';
 import { rateLimiterPlugin } from './plugins/rate-limiter.js';
 import { logger } from './logger.js';
@@ -176,6 +177,8 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
   app.register(notificationRoutes, { prefix: '/api/v1' });
   app.register(offlineCheckinRoutes, { prefix: '/api/v1' });
   app.register(crossCollegePassportRoutes, { prefix: '/api/v1' });
+  app.register(seoRoutes);
+  app.register(seoRoutes, { prefix: '/api/v1' });
 
   // Direct webhook endpoint for YouPI-PG at /webhooks/payments/youpi (also at /api/v1/webhooks/payments/youpi)
   app.post(

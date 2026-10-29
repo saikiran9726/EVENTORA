@@ -66,7 +66,11 @@ export const CheckinShell: React.FC<ShellCommonProps> = ({
       </header>
 
       {/* Full-screen Scanner Viewport */}
-      <main className="flex-1 w-full max-w-content mx-auto p-4 pb-safe flex flex-col justify-center">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 w-full max-w-content mx-auto p-4 pb-safe flex flex-col justify-center focus:outline-none"
+      >
         {children}
       </main>
     </div>
