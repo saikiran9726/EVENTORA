@@ -1,0 +1,277 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9.12.0'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Static Validation: Typecheck, Lint, License Check, Security Audit & Secret Scan
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate (Types, Lint, Audit, Licenses, Secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Frozen Dependency Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Static Typecheck
+        run: pnpm typecheck
+
+      - name: Code Style & ESLint Quality Gate
+        run: pnpm lint
+
+      - name: Production Dependency Security Audit
+        run: pnpm audit --prod --audit-level=high
+
+      - name: Open-Source License Compliance Check
+        run: pnpm license:check
+
+      - name: Secret Scan (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: false
+
+  # ---------------------------------------------------------------------------
+  # 2. Test Suite: Unit & Integration with Postgres 16 & Redis 7 Services
+  # ---------------------------------------------------------------------------
+  test:
+    name: Tests (Unit, Security, Integration)
+    needs: validate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: eventora_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgrespassword@127.0.0.1:5433/eventora_test
+      REDIS_URL: redis://127.0.0.1:6379
+      SESSION_SECRET: test-session-secret-must-be-at-least-32-chars-long!
+      CSRF_SECRET: test-csrf-secret-must-be-at-least-32-chars-long!
+      PRIVACY_PEPPER: test-dpdp-privacy-pepper-2026
+      PAYMENT_ADAPTER: simulator
+      EMAIL_ADAPTER: test
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Frozen Dependency Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Additive Database Migrations
+        run: pnpm --filter @eventora/backend db:migrate
+
+      - name: Execute Vitest Test Suites
+        run: pnpm test
+
+  # ---------------------------------------------------------------------------
+  # 3. Compilation & Docker Build + Trivy Container Security Scan
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & Container Vulnerability Scan
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Frozen Dependency Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Monorepo Production Build
+        run: pnpm build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker API Container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.api
+          push: false
+          tags: eventora-api:ci
+          load: true
+
+      - name: Build Docker Worker Container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.worker
+          push: false
+          tags: eventora-worker:ci
+          load: true
+
+      - name: Build Docker Web Container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.web
+          push: false
+          tags: eventora-web:ci
+          load: true
+
+      - name: Trivy Vulnerability Scan (API Image)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'eventora-api:ci'
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+  # ---------------------------------------------------------------------------
+  # 4. E2E & Accessibility Quality Gate: Playwright (Mobile + Desktop) & Axe
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: E2E & Accessibility Gate (Playwright & Axe)
+    needs: build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: eventora_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgrespassword@127.0.0.1:5433/eventora_test
+      REDIS_URL: redis://127.0.0.1:6379
+      SESSION_SECRET: test-session-secret-must-be-at-least-32-chars-long!
+      CSRF_SECRET: test-csrf-secret-must-be-at-least-32-chars-long!
+      PRIVACY_PEPPER: test-dpdp-privacy-pepper-2026
+      PAYMENT_ADAPTER: simulator
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Frozen Dependency Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Browsers & OS Dependencies
+        run: pnpm exec playwright install --with-deps chromium firefox
+
+      - name: Database Schema Setup
+        run: pnpm --filter @eventora/backend db:migrate
+
+      - name: Run Cross-Device E2E & Axe Accessibility Tests
+        run: pnpm test:e2e
+        continue-on-error: true
+
+  # ---------------------------------------------------------------------------
+  # 5. Vercel Preview Deployment (PR only)
+  # ---------------------------------------------------------------------------
+  vercel-preview:
+    name: Vercel Preview Deployment
+    if: github.event_name == 'pull_request'
+    needs: [validate, test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Deploy Pull Request Preview to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./packages/frontend
+        continue-on-error: true

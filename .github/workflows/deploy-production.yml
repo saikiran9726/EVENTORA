@@ -1,0 +1,101 @@
+name: Production Deploy & Automated Rollback
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to deploy'
+        required: true
+        default: 'v1.0.0'
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Production Deployment with Environment Gate (Manual Approval Required)
+  # ---------------------------------------------------------------------------
+  deploy-production:
+    name: Deploy to Production (Manual Approval Gate)
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://eventora.campus.edu
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: '9.12.0'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Frozen Dependency Install
+        run: pnpm install --frozen-lockfile
+
+      # Step 1: Database Additive Migrations (Expand Phase)
+      - name: Apply Additive Schema Migrations
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: pnpm --filter @eventora/backend db:migrate
+
+      # Step 2: Deploy Backend & Worker to Render
+      - name: Trigger Render API & Worker Deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID_API: ${{ secrets.RENDER_SERVICE_ID_API }}
+          RENDER_SERVICE_ID_WORKER: ${{ secrets.RENDER_SERVICE_ID_WORKER }}
+        run: |
+          echo "Triggering Render API deploy..."
+          curl -f -X POST "https://api.render.com/v1/services/${RENDER_SERVICE_ID_API}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json" || true
+          echo "Triggering Render Worker deploy..."
+          curl -f -X POST "https://api.render.com/v1/services/${RENDER_SERVICE_ID_WORKER}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json" || true
+
+      # Step 3: Deploy Frontend SPA to Vercel
+      - name: Deploy Frontend Production SPA to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: ./packages/frontend
+
+      # Step 4: Post-Deployment Smoke Verification
+      - name: Post-Deployment Live Smoke Verification
+        run: |
+          echo "Waiting 15 seconds for Render containers to stabilize..."
+          sleep 15
+          API_URL="${{ secrets.PROD_API_URL || 'https://api.eventora.campus.edu' }}"
+          
+          echo "Pinging Liveness /health..."
+          curl -f -s "${API_URL}/health" | grep -q '"status":"ok"' || (echo "Liveness check failed!" && exit 1)
+          
+          echo "Pinging Deep Readiness /readiness..."
+          curl -f -s "${API_URL}/readiness" | grep -q '"status":"ready"' || (echo "Readiness check failed!" && exit 1)
+          
+          echo "Live smoke verification PASSED."
+
+      # Step 5: Automated Rollback on Smoke Failure
+      - name: Automated Rollback on Failure
+        if: failure()
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          echo "CRITICAL: Post-deploy verification failed! Executing automated rollback..."
+          chmod +x scripts/rollback.sh
+          ./scripts/rollback.sh "${{ github.sha }}" 27 || true

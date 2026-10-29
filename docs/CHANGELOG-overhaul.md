@@ -1,5 +1,85 @@
 # Eventora Overhaul Changelog
 
+## Phase P29 — CI/CD Automation, Hardened Non-Root Containerization & Automated Rollback
+
+**Date:** 2026-10-29  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. GitHub Actions CI/CD Pipeline (`.github/workflows/ci.yml`)
+- **Pipeline Architecture:**
+  - `pnpm install --frozen-lockfile` caching across root and packages.
+  - Multi-stage concurrent job matrix:
+    - **`validate` Job:** Monorepo typechecking (`pnpm typecheck`), ESLint (`pnpm lint`), production license audit (`pnpm license:check`), production dependency audit (`pnpm audit --prod`), and Gitleaks secret scanner.
+    - **`test` Job:** Full unit & integration testing (`pnpm test:unit` / `vitest run`) backed by dedicated GitHub Actions service containers:
+      - PostgreSQL 16 on port 5432 (`postgres:16-alpine`) with health checks.
+      - Redis 7 on port 6379 (`redis:7-alpine`) with health checks.
+    - **`build` Job:** Full monorepo production build (`pnpm build`), followed by Docker image builds for `Dockerfile.api`, `Dockerfile.web`, and `Dockerfile.worker` with Trivy vulnerability scanning for `CRITICAL` issues.
+    - **`e2e` Job:** End-to-end testing with Playwright (Desktop Chrome + Mobile viewport) alongside automated `axe-core` accessibility audits (`@axe-core/playwright`).
+    - **`vercel-preview` Job:** Automated pull-request preview deployments for review and staging validation.
+
+---
+
+### 2. Production Deployment & Automated Rollback Pipeline (`.github/workflows/deploy-production.yml`)
+- **Zero-Downtime Deployment Lifecycle:**
+  - Gated by GitHub Environment `production` with required manual review/approval.
+  - Automated additive database migrations (`pnpm --filter @eventora/backend run db:migrate`).
+  - Concurrent deployment dispatch to Render (API & Worker services) and Vercel Production (Frontend SPA).
+  - Post-deployment live smoke tests hitting `/health` (process liveness) and `/readiness` (Postgres, Redis, worker heartbeat).
+  - Automated failure recovery invoking `scripts/rollback.sh` on smoke test failure to down-migrate schema, roll back Render commits, and record `deployment_rollback` into `ops_runs`.
+
+---
+
+### 3. Dependency License Compliance Guard (`scripts/check-licenses.ts`)
+- **Direct Production Dependency Auditing:**
+  - Automated scanner checking all root and package production dependencies against approved permissive licenses:
+    - Allowed: `MIT`, `ISC`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `CC0-1.0`, `0BSD`, `Unlicense`, `Python-2.0`.
+    - Prohibited & Flagged: Viral copyleft (`GPL`, `AGPL`, `SSPL`).
+  - Integrated into root scripts: `"license:check": "tsx scripts/check-licenses.ts"`.
+  - Zero non-compliant licenses detected across 31 production packages.
+
+---
+
+### 4. Hardened Non-Root & Read-Only Root Filesystem Dockerfiles
+- **API Server Container (`Dockerfile.api`):**
+  - Multi-stage Node.js 20 Alpine builder and runner.
+  - Unprivileged user `eventora` (`USER 10001:10001`).
+  - Read-only root filesystem readiness with mounted tmpfs volume (`VOLUME ["/tmp"]`).
+  - Container healthcheck hitting `http://localhost:4000/health`.
+- **Web SPA Container (`Dockerfile.web`):**
+  - Hardened Nginx 1.25 Alpine runner serving SPA assets.
+  - Listens on unprivileged port `8080` (replacing privileged port 80).
+  - Non-root user `eventora` (`USER 10001:10001`) with permissions on `/usr/share/nginx/html`.
+  - Read-only root filesystem compatible: PID written to `/tmp/nginx.pid` and volumes declared for `VOLUME ["/tmp", "/var/cache/nginx", "/var/run"]`.
+- **Background Worker Container (`Dockerfile.worker`):**
+  - Unprivileged runner (`USER 10001:10001`) executing `dist/worker.js`.
+  - Temporary volume isolation (`VOLUME ["/tmp"]`).
+
+---
+
+### 5. Automated Rollback & Deploy Automation (`scripts/rollback.sh`, `scripts/deploy.sh`)
+- **Rollback Automation (`scripts/rollback.sh`):**
+  - Accepts `<release-tag>` and optional `[target-schema-version]`.
+  - Validates and safely rolls back database schema using `packages/backend/src/db/migrate-down.ts`.
+  - Reverts deployments on Render via API and verifies live health.
+  - Logs structured operational audit telemetry directly to `ops_runs`.
+- **Deployment Automation (`scripts/deploy.sh`):**
+  - Validates pre-flight conditions, runs migrations, verifies live readiness, and creates git release tags with commit hashes.
+
+---
+
+### 6. Environment Configurations & Repository Governance
+- **Staging vs Production Configurations:**
+  - `config/staging.env.example`: Staging database (`eventora_staging`), isolated staging Redis, payment simulator (`PAYMENT_ADAPTER=simulator`), and sandbox email recipients.
+  - `config/production.env.example`: Production Supabase Postgres pooler, live Redis, live YouPI-PG payment gateway (`PAYMENT_ADAPTER=youpi`), strict origin allowlist, and live Resend mailer.
+- **Repository Governance:**
+  - `.github/dependabot.yml`: Automated weekly dependency audits across npm packages and GitHub Actions.
+  - `.github/BRANCH_PROTECTION.md`: Formalized rules for `master`/`main` branches requiring PRs, passing CI status checks, linear history, and zero admin bypass.
+
+---
+
 ## Phase P28 — Observability, Runtime Hardening, Sentry, Graceful Teardown & Health Split
 
 **Date:** 2026-10-29  

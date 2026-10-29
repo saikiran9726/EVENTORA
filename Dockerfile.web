@@ -20,18 +20,31 @@ COPY packages/frontend/ ./packages/frontend/
 RUN pnpm --filter @eventora/shared build && \
     pnpm --filter @eventora/frontend build
 
-# Stage 2: Hardened Unprivileged Nginx
+# Stage 2: Hardened Unprivileged Nginx Runtime (Non-Root & Read-Only Root FS)
 FROM nginx:alpine-slim AS runner
+
+# Create unprivileged eventora user (UID 10001) matching API/worker
+RUN addgroup -g 10001 -S eventora && \
+    adduser -u 10001 -S eventora -G eventora
 
 # Remove default static index
 RUN rm -rf /usr/share/nginx/html/*
 
 COPY --from=builder /app/packages/frontend/dist /usr/share/nginx/html
 
-# Nginx configuration with Security Headers & SPA Fallback
+# Configure Nginx for unprivileged non-root execution (pid in /tmp)
+RUN sed -i 's,/var/run/nginx.pid,/tmp/nginx.pid,g' /etc/nginx/nginx.conf && \
+    sed -i '/user  nginx;/d' /etc/nginx/nginx.conf
+
+# Setup writable directories for unprivileged user
+RUN mkdir -p /var/cache/nginx /var/run /var/log/nginx && \
+    chown -R 10001:10001 /var/cache/nginx /var/run /var/log/nginx /usr/share/nginx/html && \
+    chmod -R 770 /var/cache/nginx /var/run /var/log/nginx
+
+# Nginx configuration with Security Headers & SPA Fallback on port 8080
 RUN cat <<'EOF' > /etc/nginx/conf.d/default.conf
 server {
-    listen 80;
+    listen 8080;
     server_name localhost;
     root /usr/share/nginx/html;
     index index.html;
@@ -62,11 +75,15 @@ server {
 }
 EOF
 
-USER nginx
+# Switch to unprivileged non-root user
+USER 10001:10001
 
-EXPOSE 80
+EXPOSE 8080
+
+# Read-only root filesystem support: /tmp, cache and run must be mounted tmpfs
+VOLUME ["/tmp", "/var/cache/nginx", "/var/run"]
 
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:80/ || exit 1
+  CMD wget -qO- http://127.0.0.1:8080/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
