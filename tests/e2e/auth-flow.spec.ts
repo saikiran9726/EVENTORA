@@ -39,7 +39,8 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
     await expect(page.getByText('Strong')).toBeVisible();
     await safeScreenshot(page, './docs/screenshots/phase2-04-password-strength.png', testInfo);
 
-    // Submit registration
+    // Check consent checkbox & Submit registration
+    await page.check('#reg-consent');
     await page.click('button:has-text("Create Account")');
 
     // Verification screen should appear with pre-filled token
@@ -73,8 +74,8 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
 
     // 7. Update display name
     await page.fill('#display-name', 'Dev E2E Student (Updated)');
-    await page.click('button:has-text("Save")');
-    await expect(page.getByText('Display name updated successfully')).toBeVisible();
+    await page.click('button:has-text("Save Profile")');
+    await expect(page.getByText('Profile updated successfully')).toBeVisible();
 
     // 8. Sign Out
     await page.click('button:has-text("Sign Out")');
@@ -111,6 +112,7 @@ test.describe('Phase 2 E2E: Auth Lifecycle & Role Navigation', () => {
     await page.fill('#reg-name', 'Expiry Test Student');
     await page.fill('#reg-email', testEmail);
     await page.fill('#reg-password', 'Eventora#Test2026!');
+    await page.check('#reg-consent');
     await page.click('button:has-text("Create Account")');
 
     await expect(page.getByText('Verify Your College Email')).toBeVisible();

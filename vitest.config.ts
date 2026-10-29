@@ -12,6 +12,12 @@ export default defineConfig({
     env: {
       OFFLINE_MANIFEST_SECRET: 'test_manifest_secret_key_32_bytes_super_secure',
     },
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      include: ['packages/backend/src/services/**/*.ts'],
+      exclude: ['**/node_modules/**', '**/*.d.ts', '**/*.test.ts', '**/*.spec.ts'],
+    },
   },
   resolve: {
     alias: {

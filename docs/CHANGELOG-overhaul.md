@@ -1,5 +1,72 @@
 # Eventora Overhaul Changelog
 
+## Phase P32 — Test Suites, Concurrency Races, Security Zero-PII Snapshots, Mutation Invariants & Load Gate
+
+**Date:** 2026-10-29  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Concurrency & Race Condition Suite (`tests/unit/phase-p32-concurrency.test.ts`)
+- **Oversell Race Condition (`FOR UPDATE` on `ticket_types` & `events`):**
+  - 10 concurrent booking holds fired simultaneously against a ticket tier with strictly 2 remaining capacity.
+  - Exactly 2 bookings succeeded; 8 were rejected atomically with `CAPACITY_EXCEEDED` / `SOLD_OUT`. Zero oversell verified in database rows (`sold + held == 2`).
+- **Double-Scan Turnstile Check-In Race:**
+  - 6 concurrent gate scans executed against a single QR token.
+  - Exactly 1 scan returned `ACCEPTED`; remaining 5 returned `DUPLICATE`. Database verified with strictly 1 entry in `checkins`.
+- **Double-Claim Waitlist Promotion Race:**
+  - 5 concurrent claim requests using the same offer token.
+  - Exactly 1 claim succeeded with ticket creation; 4 requests failed with `409 OFFER_INVALID_OR_EXPIRED`.
+- **Double-Confirm Payment Webhook Race:**
+  - Concurrent payment confirmations / webhooks for the same order.
+  - Exactly 1 executed transaction transition and ticket creation; the second returned `{ confirmed: true, alreadyProcessed: true }` without duplicate ticket generation.
+- **Refund Concurrency Race:**
+  - Concurrent organizer decisions on a refund request.
+  - Exactly 1 succeeded; second decision rejected with `409 ALREADY_DECIDED`.
+
+---
+
+### 2. Security Suite & Zero-PII Snapshots on Public Endpoints (`tests/security/phase-p32-security-pii.test.ts`)
+- **Recursive PII Leaks Assertion:**
+  - Public discovery catalog (`GET /api/v1/events`), event details (`GET /api/v1/events/:slug`), calendar (`GET /api/v1/calendar`), venues (`GET /api/v1/venues`), ratings (`GET /api/v1/events/:id/ratings`), public student passport (`GET /api/v1/p/:slug`), public certificate lookup (`GET /api/v1/verify/:code`), and OpenAPI specification (`GET /openapi.json`).
+  - Proved zero exposure of sensitive fields (`password`, `password_hash`, `roll_number`, `session_token`, `payment_secret`, `secret`, `webhook_secret`).
+- **Security Headers & CSRF Verification:**
+  - Enforced `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and CSP.
+  - Verified 403 rejection on state-changing requests when double-submit CSRF token is missing or mismatched.
+
+---
+
+### 3. Mutation Testing on Booking and Payments (`tests/unit/phase-p32-mutation.test.ts`)
+- **Mutant Invariants Killed:**
+  - Mutant 1: Fractional / float money acceptance mutant killed by strict `z.number().int().nonnegative()` paise validation.
+  - Mutant 2: Non-atomic capacity oversell mutant killed by PostgreSQL `FOR UPDATE` lock assertions.
+  - Mutant 3: Double-scan status check-then-set race window mutant killed by atomic single-statement update.
+  - Mutant 4: Anti-self-dealing refund decider mutant killed by 403 `FORBIDDEN` self-dealing check.
+  - Mutant 5: Webhook signature bypass mutant killed by constant-time `crypto.timingSafeEqual` HMAC-SHA256 verification.
+
+---
+
+### 4. Playwright End-to-End Journeys with ZERO Network Mocks (`tests/e2e/phase-p32-no-mock-journeys.spec.ts`)
+- Executed real browser journeys hitting live Fastify API (port 4000) and live Vite frontend (port 5173) on real Postgres:
+  - Journey 1: Student register $\to$ email verify $\to$ sign in $\to$ discovery $\to$ passport view.
+  - Journey 2: Club Organizer Command Center & Analytics view.
+  - Journey 3: Turnstile Check-in Scanner interface with camera/offline UI elements.
+  - Journey 4: Campus Teams & Collaboration portal.
+- All 7 e2e tests passed (including consent checkbox compliance fix in `auth-flow.spec.ts`).
+
+---
+
+### 5. k6 Load Test Suite & Threshold Verification (`tests/unit/phase-p32-k6-thresholds.test.ts`)
+- Verified pass/fail SLAs for all 4 load test profiles in `tests/load/`:
+  - `last_seats.js`: `http_req_duration p(95)<1000ms`, `http_req_failed rate<0.02` under 200 VUs.
+  - `paid_checkout.js`: `http_req_duration p(95)<1500ms`, `http_req_failed rate<0.01` under 100 VUs.
+  - `checkin_burst.js`: `http_req_duration p(95)<400ms`, `http_req_failed rate<0.02` under 150 VUs.
+  - `login_burst.js`: `http_req_duration p(95)<800ms`, `http_req_failed rate<0.05` under 150 VUs.
+- Added `@vitest/coverage-v8` with `"test:coverage": "vitest run --coverage"`.
+
+---
+
 ## Phase P31 — API Contracts: OpenAPI Derivation, Typed Client, Shared Error Codes & Guard Verification
 
 **Date:** 2026-10-29  
