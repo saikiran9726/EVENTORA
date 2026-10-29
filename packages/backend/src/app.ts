@@ -24,6 +24,12 @@ import { monitoringRoutes, recordMetricRequest } from './routes/monitoring.js';
 import { seoRoutes } from './routes/api/v1/seo.js';
 import { securityHeadersPlugin } from './plugins/security-headers.js';
 import { rateLimiterPlugin } from './plugins/rate-limiter.js';
+import fastifySwagger from '@fastify/swagger';
+import {
+  validatorCompiler,
+  serializerCompiler,
+  jsonSchemaTransform,
+} from 'fastify-type-provider-zod';
 import { logger } from './logger.js';
 import { verifyPaymentStartupGuard } from './services/startup-guard.js';
 import { initBackendSentry, captureException } from './lib/sentry.js';
@@ -46,6 +52,77 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
     logger: process.env.NODE_ENV === 'test' ? false : logger,
     ...opts,
   });
+
+  // Configure Zod validator and serializer compilers
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  // Register OpenAPI / Swagger documentation generator
+  app.register(fastifySwagger, {
+    openapi: {
+      info: {
+        title: 'Eventora API',
+        description: 'Smart Campus Event Management System OpenAPI 3.0 specification',
+        version: '1.0.0',
+      },
+      servers: [
+        { url: 'https://eventora-api-p35a.onrender.com', description: 'Production API' },
+        { url: 'http://127.0.0.1:4000', description: 'Local Development API' },
+      ],
+      components: {
+        securitySchemes: {
+          sessionCookie: {
+            type: 'apiKey',
+            name: 'eventora_session',
+            in: 'cookie',
+          },
+          bearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'JWT',
+          },
+        },
+      },
+    },
+    transform: jsonSchemaTransform,
+  });
+
+  // Public OpenAPI JSON specification endpoints
+  app.get(
+    '/openapi.json',
+    {
+      schema: {
+        description: 'OpenAPI 3.0 JSON specification',
+        tags: ['OpenAPI'],
+      },
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    async () => {
+      return (app as any).swagger();
+    }
+  );
+
+  app.get(
+    '/api/v1/openapi.json',
+    {
+      schema: {
+        description: 'OpenAPI 3.0 JSON specification (v1 alias)',
+        tags: ['OpenAPI'],
+      },
+      config: {
+        auth: false,
+        policy: 'public',
+        objectCheck: false,
+      },
+    },
+    async () => {
+      return (app as any).swagger();
+    }
+  );
 
   // Ensure outgoing responses echo the trace requestId
   app.addHook('onSend', async (req, reply) => {

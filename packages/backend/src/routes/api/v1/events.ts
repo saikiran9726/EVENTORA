@@ -180,6 +180,18 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
   fastify.get(
     '/',
     {
+      schema: {
+        tags: ['Events'],
+        summary: 'List events with filters and cursor pagination',
+        querystring: listEventsQuerySchema,
+        response: {
+          200: z.object({
+            items: z.array(z.any()),
+            nextCursor: z.string().nullable().optional(),
+            limit: z.number().int(),
+          }),
+        },
+      },
       config: {
         auth: false,
         policy: 'public',
@@ -422,6 +434,18 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
   fastify.get(
     '/:slug',
     {
+      schema: {
+        tags: ['Events'],
+        summary: 'Get public event details by slug or uuid',
+        params: z.object({
+          slug: z.string().min(1),
+        }),
+        response: {
+          200: z.object({
+            event: z.any(),
+          }),
+        },
+      },
       config: {
         auth: false,
         policy: 'public',

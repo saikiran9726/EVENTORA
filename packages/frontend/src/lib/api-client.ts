@@ -1,4 +1,10 @@
-import { ErrorEnvelopeSchema, createErrorEnvelope } from '@eventora/shared';
+import {
+  ErrorEnvelopeSchema,
+  createErrorEnvelope,
+  createTypedClient,
+  validateEndpointContract,
+  ErrorCode,
+} from '@eventora/shared';
 
 export interface ApiClientOptions extends RequestInit {
   timeoutMs?: number;
@@ -8,7 +14,7 @@ export interface ApiClientOptions extends RequestInit {
 }
 
 export class ApiError extends Error {
-  public readonly code: string;
+  public readonly code: ErrorCode | string;
   public readonly details: Record<string, any>;
   public readonly requestId: string;
   public readonly status: number;
@@ -405,3 +411,7 @@ apiClient.setSessionToken = setSessionToken;
 apiClient.getSessionToken = getSessionToken;
 apiClient.setOnUnauthorized = setOnUnauthorized;
 apiClient.setOnColdStart = setOnColdStart;
+
+// Typed Client generated from @eventora/shared OpenAPI contracts
+apiClient.typed = createTypedClient(apiClient);
+apiClient.validateContract = validateEndpointContract;

@@ -1,5 +1,58 @@
 # Eventora Overhaul Changelog
 
+## Phase P31 — API Contracts: OpenAPI Derivation, Typed Client, Shared Error Codes & Guard Verification
+
+**Date:** 2026-10-29  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. OpenAPI 3.0 Derivation via Zod & Swagger
+- **Fastify Type-Provider & Swagger Integration (`packages/backend/src/app.ts`):**
+  - Integrated `fastify-type-provider-zod` and `@fastify/swagger` with `jsonSchemaTransform`.
+  - Configured OpenAPI 3.0 specification metadata (`Eventora API v1.0.0`) with Bearer auth and session security schemes.
+  - Exposed live OpenAPI 3.0 JSON specification endpoints at `GET /openapi.json` and `GET /api/v1/openapi.json`.
+  - Added JSON schema annotations across key endpoints (`/api/v1/events/`, `/api/v1/events/{id}`, `/api/v1/bookings/{id}/checkout`, `/api/v1/bookings/{id}/refunds`, etc.).
+
+---
+
+### 2. Typed API Client & Contract Enforcement
+- **Central Endpoint Contract Registry (`packages/shared/src/api-contracts.ts`):**
+  - Created `API_ROUTES` mapping paths, HTTP methods, parameter schemas, request schemas, and response schemas.
+  - Implemented `matchContractRoute` helper to test endpoint and method compatibility.
+- **Strongly-Typed Client Factory (`packages/shared/src/typed-client.ts`):**
+  - Implemented `createTypedClient(fetcher)` exposing type-safe domain namespaces (`auth`, `events`, `bookings`, `payments`, `tickets`, `checkin`, `spec`).
+  - Added `validateEndpointContract(endpoint, method)` which verifies route existence and guards against drift between frontend and backend.
+- **Frontend Integration (`packages/frontend/src/lib/api-client.ts`):**
+  - Attached `apiClient.typed = createTypedClient(apiClient)` and `apiClient.validateContract = validateEndpointContract`.
+  - Typed `ApiError.code: ErrorCode | string` with strict enum checking.
+
+---
+
+### 3. Shared Error-Code Enum Parity
+- **Centralized Error Codes (`packages/shared/src/error-codes.ts` & `packages/shared/src/error.ts`):**
+  - Defined 100+ standard error code strings in `ERROR_CODES` constant tuple and exported `ErrorCode` type.
+  - Normalized domain errors across authentication, CSRF, event lifecycle, booking/holds, payments, tickets/check-in, and feedback.
+  - Updated `StrictErrorEnvelopeSchema` to reject uncontracted error codes (e.g. catches typo/legacy `BOOKING_EXPIRED` in favor of `HOLD_EXPIRED`).
+
+---
+
+### 4. Contract CI Verification & Quality Gates
+- **Contract Verification Script (`scripts/verify-api-contracts.ts`):**
+  - Inspects live Fastify route tree against `API_ROUTES`.
+  - Scans frontend source files for all `apiClient` calls and `error.code` assertions to detect uncontracted paths and unrecognized error codes.
+  - Added npm script `"contracts:check": "tsx scripts/verify-api-contracts.ts"`.
+- **Test Suite (`tests/unit/phase-p31-api-contracts.test.ts`):**
+  - 15 unit tests covering OpenAPI derivation, shared error code enum parity, typed client invocation, integer paise refund verification, and negative breaking-change guard tests (catching route renaming, `/refund` vs `/refunds`, and bogus error codes).
+- **Verification Gates:**
+  - `pnpm contracts:check` passed (14 contracted routes verified, 0 violations).
+  - `pnpm typecheck` passed cleanly across all packages.
+  - `pnpm lint` passed with 0 errors.
+  - `pnpm license:check` passed (33 production dependencies verified).
+
+---
+
 ## Phase P30 — Accessibility (WCAG 2.2 AA), Performance Budgets, Shareable Event SEO, PWA & i18n
 
 **Date:** 2026-10-29  
