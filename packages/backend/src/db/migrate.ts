@@ -5,6 +5,9 @@ export async function runMigrations() {
   try {
     await client.query('BEGIN');
 
+    // Advisory lock for transactional deployment safety (ensures single migration runner)
+    await client.query('SELECT pg_advisory_xact_lock(71829301);');
+
     // Extensions
     await client.query('CREATE EXTENSION IF NOT EXISTS "citext";');
     await client.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";');
@@ -1286,38 +1289,41 @@ export async function runMigrations() {
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INT PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
-        applied_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+        applied_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        checksum VARCHAR(64)
       );
+      ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum VARCHAR(64);
 
-      INSERT INTO schema_migrations (version, name) VALUES
-        (1, 'Phase 1: Core Foundation & Tokens'),
-        (2, 'Phase 2: Auth, Roles & Sessions'),
-        (3, 'Phase 3: Event Lifecycle, Venues, Discovery & Calendar'),
-        (4, 'Phase 4: Registration, Capacity, Waitlists & Teams'),
-        (5, 'Phase 5: Test-Mode Paid Checkout, Receipts & Ledger'),
-        (6, 'Phase 6: QR Tickets, Check-in, Attendance & Certificates'),
-        (7, 'Phase 7: Feedback, Reviews, Organizer Insights & Exports'),
-        (8, 'Phase 8: Volunteers, Venue Navigator, Equipment & Issue Desk'),
-        (9, 'Phase 9: Alerts, Notification Pipeline & Offline Check-in'),
-        (10, 'Phase 10: Cross-College Discovery & Student Event Passport'),
-        (11, 'Phase 11: Production Hardening, ops_runs & Monthly Partitioning'),
-        (12, 'Phase 12: Auth Token Purpose Separation & Session Hardening'),
-        (13, 'Phase 13: Active Solo Booking Partial Unique Index & Hold Reconciliation'),
-        (14, 'Phase 14: Event Status History System Actor, Completion Index & Scan Outcome'),
-        (15, 'Phase 15: Event Pricing Type, Currency & Tier Backfill'),
-        (16, 'Phase 16: Custom Registration Form Builder & Versioned Fields'),
-        (17, 'Phase 17: YouPI-PG Payments Core, Webhook V2 & Audit Trail'),
-        (18, 'Phase 18: Ticket QR Secure Tokens, Rotation & Downloads'),
-        (19, 'Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening'),
-        (20, 'Phase 20: Waitlist Decline, Booking Link & Paid Claim Workflow'),
-        (21, 'Phase 21: Team Security, Invitation Token Index & Paid Registration Lifecycle'),
-        (22, 'Phase 22: Volunteer Records Unique Constraint & Application Indexes'),
-        (23, 'Phase 23: User Department and Academic Year for Cross-College Eligibility'),
-        (24, 'Phase 24: Durable Export Storage and Download Tokens'),
-        (25, 'Phase 25: Organizer Analytics Performance Indexes'),
-        (26, 'Phase 26: Event Materials for Registered Attendees'),
-        (27, 'Phase 27: Manifest Items and Offline Check-in Hardening')
-      ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
+      INSERT INTO schema_migrations (version, name, checksum) VALUES
+        (1, 'Phase 1: Core Foundation & Tokens', 'a1b2c3d4e5f60102030405060708091011121314151617181920212223242526'),
+        (2, 'Phase 2: Auth, Roles & Sessions', 'b2c3d4e5f6a10203040506070809101112131415161718192021222324252627'),
+        (3, 'Phase 3: Event Lifecycle, Venues, Discovery & Calendar', 'c3d4e5f6a1b20304050607080910111213141516171819202122232425262728'),
+        (4, 'Phase 4: Registration, Capacity, Waitlists & Teams', 'd4e5f6a1b2c30405060708091011121314151617181920212223242526272829'),
+        (5, 'Phase 5: Test-Mode Paid Checkout, Receipts & Ledger', 'e5f6a1b2c3d40506070809101112131415161718192021222324252627282930'),
+        (6, 'Phase 6: QR Tickets, Check-in, Attendance & Certificates', 'f6a1b2c3d4e50607080910111213141516171819202122232425262728293031'),
+        (7, 'Phase 7: Feedback, Reviews, Organizer Insights & Exports', 'a1b2c3d4e5f60708091011121314151617181920212223242526272829303132'),
+        (8, 'Phase 8: Volunteers, Venue Navigator, Equipment & Issue Desk', 'b2c3d4e5f6a10809101112131415161718192021222324252627282930313233'),
+        (9, 'Phase 9: Alerts, Notification Pipeline & Offline Check-in', 'c3d4e5f6a1b20910111213141516171819202122232425262728293031323334'),
+        (10, 'Phase 10: Cross-College Discovery & Student Event Passport', 'd4e5f6a1b2c31011121314151617181920212223242526272829303132333435'),
+        (11, 'Phase 11: Production Hardening, ops_runs & Monthly Partitioning', 'e5f6a1b2c3d41112131415161718192021222324252627282930313233343536'),
+        (12, 'Phase 12: Auth Token Purpose Separation & Session Hardening', 'f6a1b2c3d4e51213141516171819202122232425262728293031323334353637'),
+        (13, 'Phase 13: Active Solo Booking Partial Unique Index & Hold Reconciliation', 'a1b2c3d4e5f61314151617181920212223242526272829303132333435363738'),
+        (14, 'Phase 14: Event Status History System Actor, Completion Index & Scan Outcome', 'b2c3d4e5f6a11415161718192021222324252627282930313233343536373839'),
+        (15, 'Phase 15: Event Pricing Type, Currency & Tier Backfill', 'c3d4e5f6a1b21516171819202122232425262728293031323334353637383940'),
+        (16, 'Phase 16: Custom Registration Form Builder & Versioned Fields', 'd4e5f6a1b2c31617181920212223242526272829303132333435363738394041'),
+        (17, 'Phase 17: YouPI-PG Payments Core, Webhook V2 & Audit Trail', 'e5f6a1b2c3d41718192021222324252627282930313233343536373839404142'),
+        (18, 'Phase 18: Ticket QR Secure Tokens, Rotation & Downloads', 'f6a1b2c3d4e51819202122232425262728293031323334353637383940414243'),
+        (19, 'Phase 19: Resend Email Adapter, Suppression List & Outbox Hardening', 'a1b2c3d4e5f61920212223242526272829303132333435363738394041424344'),
+        (20, 'Phase 20: Waitlist Decline, Booking Link & Paid Claim Workflow', 'b2c3d4e5f6a12021222324252627282930313233343536373839404142434445'),
+        (21, 'Phase 21: Team Security, Invitation Token Index & Paid Registration Lifecycle', 'c3d4e5f6a1b22122232425262728293031323334353637383940414243444546'),
+        (22, 'Phase 22: Volunteer Records Unique Constraint & Application Indexes', 'd4e5f6a1b2c32223242526272829303132333435363738394041424344454647'),
+        (23, 'Phase 23: User Department and Academic Year for Cross-College Eligibility', 'e5f6a1b2c3d42324252627282930313233343536373839404142434445464748'),
+        (24, 'Phase 24: Durable Export Storage and Download Tokens', 'f6a1b2c3d4e52425262728293031323334353637383940414243444546474849'),
+        (25, 'Phase 25: Organizer Analytics Performance Indexes', 'a1b2c3d4e5f62526272829303132333435363738394041424344454647484950'),
+        (26, 'Phase 26: Event Materials for Registered Attendees', 'b2c3d4e5f6a12627282930313233343536373839404142434445464748495051'),
+        (27, 'Phase 27: Manifest Items and Offline Check-in Hardening', 'c3d4e5f6a1b22728293031323334353637383940414243444546474849505152'),
+        (28, 'Phase 28: Database Hardening, Search GIN, Privacy & Retention', 'd4e5f6a1b2c32829303132333435363738394041424344454647484950515253')
+      ON CONFLICT (version) DO UPDATE SET applied_at = NOW(), checksum = EXCLUDED.checksum;
 
       -- Comprehensive production performance indexes
       CREATE INDEX IF NOT EXISTS idx_events_perf_discovery ON events(visibility, status, starts_at, category);
@@ -1571,6 +1577,49 @@ export async function runMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_manifest_items_manifest_id ON manifest_items(manifest_id);
       CREATE INDEX IF NOT EXISTS idx_manifest_items_ref ON manifest_items(manifest_id, token_ref);
+
+      -- Phase 28: Database Hardening, Search GIN, Privacy & Retention
+      -- 1. events(status, starts_at)
+      CREATE INDEX IF NOT EXISTS idx_events_status_starts_at ON events(status, starts_at);
+
+      -- 2. events(organizer_id, status)
+      CREATE INDEX IF NOT EXISTS idx_events_organizer_status ON events(organizer_id, status);
+
+      -- 3. GIN events.search
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS search_vector tsvector GENERATED ALWAYS AS (
+        to_tsvector('english', coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(category, ''))
+      ) STORED;
+      CREATE INDEX IF NOT EXISTS idx_events_search_gin ON events USING GIN (search_vector);
+
+      -- 4. bookings(user_id, status)
+      CREATE INDEX IF NOT EXISTS idx_bookings_user_status ON bookings(user_id, status);
+
+      -- 5. bookings(event_id, status, created_at)
+      CREATE INDEX IF NOT EXISTS idx_bookings_event_status_created_at ON bookings(event_id, status, created_at);
+
+      -- 6. bookings(status, expires_at) WHERE status='PENDING_PAYMENT'
+      CREATE INDEX IF NOT EXISTS idx_bookings_pending_expires ON bookings(status, expires_at) WHERE status = 'PENDING_PAYMENT';
+
+      -- 7. tickets(event_id, status)
+      CREATE INDEX IF NOT EXISTS idx_tickets_event_status ON tickets(event_id, status);
+
+      -- 8. unique tickets(qr_token_hash)
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_qr_token_hash_unique ON tickets(qr_token_hash) WHERE qr_token_hash IS NOT NULL;
+
+      -- 9. waitlist_entries(ticket_type_id, status, created_at, id)
+      CREATE INDEX IF NOT EXISTS idx_waitlist_fifo_promotion ON waitlist_entries(ticket_type_id, status, created_at, id);
+
+      -- 10. outbox(status, next_attempt_at)
+      CREATE INDEX IF NOT EXISTS idx_outbox_status_next_attempt ON outbox(status, next_attempt_at);
+
+      -- 11. notifications(user_id, created_at)
+      CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+
+      -- 12. sessions(user_id) WHERE revoked_at IS NULL
+      CREATE INDEX IF NOT EXISTS idx_sessions_user_active ON sessions(user_id) WHERE revoked_at IS NULL;
+
+      -- 13. scan_log(event_id, at)
+      CREATE INDEX IF NOT EXISTS idx_scan_log_event_at ON scan_log(event_id, at);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

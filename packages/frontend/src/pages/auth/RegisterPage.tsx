@@ -336,6 +336,30 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
               )}
             </div>
 
+            <div className="flex items-start gap-2 pt-1 text-xs text-text-muted">
+              <input
+                id="reg-consent"
+                type="checkbox"
+                required
+                className="mt-0.5 rounded border-border text-brand focus:ring-brand"
+              />
+              <label htmlFor="reg-consent" className="cursor-pointer">
+                I agree to Eventora's{' '}
+                <a href="/terms" target="_blank" rel="noreferrer" className="text-brand hover:underline font-medium">
+                  Terms of Service
+                </a>
+                ,{' '}
+                <a href="/privacy" target="_blank" rel="noreferrer" className="text-brand hover:underline font-medium">
+                  Privacy Policy
+                </a>
+                , and{' '}
+                <a href="/refunds" target="_blank" rel="noreferrer" className="text-brand hover:underline font-medium">
+                  Refund Policy
+                </a>
+                .
+              </label>
+            </div>
+
             <Button
               type="submit"
               variant="primary"

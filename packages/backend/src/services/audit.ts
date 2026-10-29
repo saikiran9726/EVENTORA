@@ -1,6 +1,6 @@
 import { db } from '../db/index.js';
 import { auditLogs } from '../db/schema.js';
-import { hashStringToHex } from './auth.js';
+import { anonymizeAndHashIp } from './privacy.js';
 
 export interface AuditLogParams {
   actorId?: string;
@@ -17,7 +17,7 @@ export interface AuditLogParams {
  * If an active database client/transaction is provided, executes within that transaction.
  */
 export async function logAuditEvent(params: AuditLogParams, clientOrTx?: any): Promise<void> {
-  const ipHash = params.ip ? hashStringToHex(params.ip) : null;
+  const ipHash = params.ip ? anonymizeAndHashIp(params.ip) : null;
   const actorId = (params.actorId && params.actorId !== 'system') ? params.actorId : null;
 
   if (clientOrTx && typeof clientOrTx.query === 'function') {

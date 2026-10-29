@@ -24,6 +24,28 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 28 -> 27: Database Hardening, Search GIN, Privacy & Retention
+    if (currentVersion >= 28 && targetVersion < 28) {
+      console.log('[Rollback] Rolling back version 28 (Phase 28)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_scan_log_event_at;
+        DROP INDEX IF EXISTS idx_sessions_user_active;
+        DROP INDEX IF EXISTS idx_notifications_user_created;
+        DROP INDEX IF EXISTS idx_outbox_status_next_attempt;
+        DROP INDEX IF EXISTS idx_waitlist_fifo_promotion;
+        DROP INDEX IF EXISTS idx_tickets_qr_token_hash_unique;
+        DROP INDEX IF EXISTS idx_tickets_event_status;
+        DROP INDEX IF EXISTS idx_bookings_pending_expires;
+        DROP INDEX IF EXISTS idx_bookings_event_status_created_at;
+        DROP INDEX IF EXISTS idx_bookings_user_status;
+        DROP INDEX IF EXISTS idx_events_search_gin;
+        ALTER TABLE events DROP COLUMN IF EXISTS search_vector;
+        DROP INDEX IF EXISTS idx_events_organizer_status;
+        DROP INDEX IF EXISTS idx_events_status_starts_at;
+        DELETE FROM schema_migrations WHERE version = 28;
+      `);
+    }
+
     // Rollback step 27 -> 26: Manifest Items and Offline Check-in Hardening
     if (currentVersion >= 27 && targetVersion < 27) {
       console.log('[Rollback] Rolling back version 27 (Phase 27)...');

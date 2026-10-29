@@ -1,5 +1,100 @@
 # Eventora Overhaul Changelog
 
+## Phase P27 — Database Hardening, Search GIN, Privacy Compliance & Nightly Reconciliation
+
+**Date:** 2026-10-29  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Performance Indexes & Full-Text Search GIN
+- **Migration 28 (`packages/backend/src/db/migrate.ts`):**
+  - Applied transactional advisory locking `SELECT pg_advisory_xact_lock(71829301)` to prevent concurrent migration collisions.
+  - Added SHA-256 migration checksum tracking to `schema_migrations`.
+  - Added 13 production performance indexes across hot query paths:
+    - `idx_events_status_starts_at` on `events(status, starts_at)`
+    - `idx_events_organizer_status` on `events(organizer_id, status)`
+    - `events.search_vector` generated column (`tsvector` over `title`, `description`, `category`, `tags`) with GIN index `idx_events_search_vector`
+    - `idx_bookings_user_status` on `bookings(user_id, status)`
+    - `idx_bookings_event_status_created` on `bookings(event_id, status, created_at)`
+    - `idx_bookings_pending_payment` on `bookings(status, expires_at) WHERE status = 'PENDING_PAYMENT'`
+    - `idx_tickets_event_status` on `tickets(event_id, status)`
+    - `idx_tickets_qr_token_hash` unique index on `tickets(qr_token_hash)`
+    - `idx_waitlist_tier_status_created` on `waitlist_entries(ticket_type_id, status, created_at, id)`
+    - `idx_outbox_status_next_attempt` on `outbox(status, next_attempt_at)`
+    - `idx_notifications_user_created` on `notifications(user_id, created_at)`
+    - `idx_sessions_user_active` on `sessions(user_id) WHERE revoked_at IS NULL`
+    - `idx_scan_log_event_at` on `scan_log(event_id, at)`
+  - Reversible down-migration 28 $\rightarrow$ 27 in `packages/backend/src/db/migrate-down.ts` tested and verified live against PostgreSQL 18.
+  - Synchronized Drizzle schema definitions in `packages/backend/src/db/schema.ts`.
+
+---
+
+### 2. Transaction Retry Mechanism
+- **Serialization & Deadlock Resilience (`packages/backend/src/db/transaction.ts`):**
+  - Implemented `withTransactionRetry` helper supporting retryable PostgreSQL error codes `40001` (`serialization_failure`) and `40P01` (`deadlock_detected`).
+  - Configurable exponential backoff with randomized jitter (`baseDelayMs`, `maxDelayMs`, `maxRetries`) and strict rollback on failure.
+
+---
+
+### 3. DPDP & GDPR Privacy Compliance
+- **Frontend Legal Pages & User Consent:**
+  - Added statutory policy routes and components in `packages/frontend/src/pages/legal/`:
+    - Privacy Policy (`/privacy` $\rightarrow$ `PrivacyPolicyPage.tsx`) detailing DPDP Act 2023 compliance, data collection, rights, and retention.
+    - Terms of Service (`/terms` $\rightarrow$ `TermsOfServicePage.tsx`) covering student/organizer usage guidelines, ticketing, and platform rules.
+    - Refund Policy (`/refunds` $\rightarrow$ `RefundPolicyPage.tsx`) specifying 48-hour event refund eligibility, organizer review windows, and platform processing.
+  - Updated `packages/frontend/src/pages/auth/RegisterPage.tsx` with mandatory explicit consent checkbox requiring acceptance of Terms of Service and Privacy Policy before registration.
+- **Privacy Service & Personal Data Operations (`packages/backend/src/services/privacy.ts`):**
+  - `truncateIp`: Truncates IPv4 addresses to `/24` (zeroing last octet) and IPv6 to `/48` (first 3 hextets).
+  - `anonymizeAndHashIp`: Hashes truncated IP with SHA-256 and salted pepper (`PRIVACY_PEPPER`).
+  - Integrated privacy-preserving IP hashing into `logAuditEvent` and `createSession`.
+  - `getUserDataExport(userId)`: Generates machine-readable personal data export in JSON across user profile, bookings, tickets, certificates, feedback, waitlists, notifications, and team memberships via `GET /api/v1/me/data-export`.
+  - `anonymizeUserData(userId)`: Right to Erasure / erasure workflow via `DELETE /api/v1/me`:
+    - Pseudonymizes user profile (scrambles email to `deleted_<hash>@privacy.eventora.internal`, sets displayName to `Anonymous User`, clears department and year).
+    - Clears registration answers and non-essential PII.
+    - Retains legally required financial ledger and transaction entries.
+    - Immediately revokes all active sessions and refresh tokens.
+
+---
+
+### 4. Statutory Data Retention Purge Engine
+- **Automated Retention Service (`packages/backend/src/services/retention.ts`):**
+  - `runDataRetentionPurge(options)` purges expired operational data across:
+    - Check-in `scan_log` older than 90 days.
+    - Delivered / dead `outbox` records older than 30 days.
+    - Revoked / expired `sessions` older than 30 days.
+    - Expired `password_resets` tokens older than 7 days.
+    - Historical `ops_runs` metrics older than 90 days.
+  - Audits execution summary and purged counts inside `ops_runs` with `kind = 'retention_purge'`.
+
+---
+
+### 5. Nightly Financial & Inventory Reconciliation
+- **Reconciliation Engine (`packages/backend/src/services/reconciliation.ts`):**
+  - Computes net ledger paise ($\sum \text{charges} - \sum \text{refunds}$) and compares against settled payments minus succeeded refunds.
+  - Recomputes live `sold` and `held` ticket counts directly from confirmed bookings and active booking items per ticket type.
+  - Detects inventory and financial drift, recording status (`SUCCESS` or `DRIFT_ALERT`) into `ops_runs`.
+  - Provides optional auto-healing flag (`autoHeal: true`) to realign `ticket_types.sold` and `held` to physical ticket realities without violating capacity constraints.
+
+---
+
+### 6. Tenant Isolation Security Gate
+- **Multi-Tenancy Guard (`packages/backend/src/routes/api/v1/events.ts`, `packages/backend/src/services/passport-crosscollege.ts`):**
+  - Strictly enforces campus tenant boundary: college-scoped events (`visibility = 'college'`) cannot be discovered, fetched by direct ID/slug, or booked by students or organizers of other institutions.
+  - Cross-college events (`visibility = 'public'`) remain accessible to eligible participating institutions.
+  - Tested in `tests/security/tenant-isolation.test.ts`.
+
+---
+
+### 7. Verification & Quality Gates
+- `tests/unit/phase-p27-db-hardening-privacy.test.ts`: **16/16 tests passing**.
+- `tests/security/tenant-isolation.test.ts`: **5/5 tests passing**.
+- `pnpm typecheck`: **0 errors across @eventora/shared, @eventora/backend, @eventora/frontend**.
+- `pnpm lint`: **0 errors**.
+
+---
+
 ## Phase P26 — Remove Every Mock / Prototype Artifact, Tree-Shake Demo Mode & ESLint Import Bans
 
 **Date:** 2026-10-29  

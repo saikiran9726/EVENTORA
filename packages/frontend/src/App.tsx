@@ -87,6 +87,15 @@ const ResetPasswordPage = React.lazy(() =>
 const VerifyEmailPage = React.lazy(() =>
   import('@/pages/auth/VerifyEmailPage').then((m) => ({ default: m.VerifyEmailPage }))
 );
+const PrivacyPolicyPage = React.lazy(() =>
+  import('@/pages/legal/PrivacyPolicyPage').then((m) => ({ default: m.PrivacyPolicyPage }))
+);
+const TermsOfServicePage = React.lazy(() =>
+  import('@/pages/legal/TermsOfServicePage').then((m) => ({ default: m.TermsOfServicePage }))
+);
+const RefundPolicyPage = React.lazy(() =>
+  import('@/pages/legal/RefundPolicyPage').then((m) => ({ default: m.RefundPolicyPage }))
+);
 const ComponentGalleryPage = React.lazy(() =>
   import('@/pages/ComponentGalleryPage').then((m) => ({ default: m.ComponentGalleryPage }))
 );
@@ -584,6 +593,34 @@ const AppContent: React.FC = () => {
           element={
             <RouteView fallbackTitle="Email Verification Error">
               <VerifyEmailPage />
+            </RouteView>
+          }
+        />
+
+        {/* Legal & Privacy Routes (Public) */}
+        <Route
+          path="/privacy"
+          element={
+            <RouteView fallbackTitle="Privacy Policy Error">
+              <PrivacyPolicyPage />
+            </RouteView>
+          }
+        />
+
+        <Route
+          path="/terms"
+          element={
+            <RouteView fallbackTitle="Terms of Service Error">
+              <TermsOfServicePage />
+            </RouteView>
+          }
+        />
+
+        <Route
+          path="/refunds"
+          element={
+            <RouteView fallbackTitle="Refund Policy Error">
+              <RefundPolicyPage />
             </RouteView>
           }
         />

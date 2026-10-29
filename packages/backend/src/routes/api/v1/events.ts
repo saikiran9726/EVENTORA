@@ -495,6 +495,25 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         }
       }
 
+      // Check college isolation guard if visibility is 'college'
+      if (event.visibility === 'college') {
+        const user = req.user;
+        const isAdmin = user?.globalRole === 'admin';
+        const isSameCollege = Boolean(user?.collegeId && user.collegeId === event.collegeId);
+        const isCreator = user?.id === event.createdBy;
+
+        if (!isAdmin && !isSameCollege && !isCreator) {
+          return reply.code(404).send({
+            error: {
+              code: 'EVENT_NOT_FOUND',
+              message: `Event '${slug}' was not found`,
+              details: { slug },
+              requestId: req.id,
+            },
+          });
+        }
+      }
+
       return reply.code(200).send({ event });
     }
   );

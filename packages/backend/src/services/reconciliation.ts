@@ -272,3 +272,203 @@ export async function runDailyYouPiReconciliation(date = new Date()): Promise<{
     client.release();
   }
 }
+
+export interface InventoryDriftItem {
+  ticketTypeId: string;
+  ticketTypeName: string;
+  eventId: string;
+  storedSold: number;
+  actualSold: number;
+  soldDrift: number;
+  storedHeld: number;
+  actualHeld: number;
+  heldDrift: number;
+  healed: boolean;
+}
+
+export interface NightlyReconciliationReport {
+  timestamp: string;
+  financial: {
+    ledgerSalesPaise: number;
+    ledgerRefundsPaise: number;
+    netLedgerPaise: number;
+    paymentsSettledPaise: number;
+    refundsSettledPaise: number;
+    netSettledPaise: number;
+    driftPaise: number;
+    hasFinancialDrift: boolean;
+  };
+  inventory: {
+    scannedTiers: number;
+    driftTiersCount: number;
+    hasInventoryDrift: boolean;
+    driftItems: InventoryDriftItem[];
+  };
+  hasDrift: boolean;
+}
+
+/**
+ * Nightly automated financial & inventory reconciliation:
+ * 1. Financial: verifies ledger = payments − refunds (zero discrepancy).
+ * 2. Inventory: recomputes actual sold and held tickets from bookings/tickets and detects drift.
+ */
+export async function runNightlyLedgerAndInventoryReconciliation(options: {
+  autoHealInventory?: boolean;
+} = {}): Promise<NightlyReconciliationReport> {
+  const { autoHealInventory = false } = options;
+  const client = await pool.connect();
+  const timestamp = new Date().toISOString();
+
+  try {
+    await client.query('BEGIN');
+
+    // 1. Financial Ledger vs Settled Payments/Refunds
+    const ledgerRes = await client.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN entry_type = 'SALE' THEN amount_paise ELSE 0 END), 0)::BIGINT AS sales_paise,
+        COALESCE(SUM(CASE WHEN entry_type = 'REFUND' THEN amount_paise ELSE 0 END), 0)::BIGINT AS refunds_paise
+      FROM organizer_ledger_entries;
+    `);
+    const ledgerSalesPaise = Number(ledgerRes.rows[0]?.sales_paise || 0);
+    const ledgerRefundsPaise = Number(ledgerRes.rows[0]?.refunds_paise || 0);
+    const netLedgerPaise = ledgerSalesPaise - ledgerRefundsPaise;
+
+    const settledPaymentsRes = await client.query(`
+      SELECT COALESCE(SUM(amount_paise), 0)::BIGINT AS total_payments
+      FROM payments
+      WHERE status IN ('SUCCESS', 'SUCCEEDED');
+    `);
+    const paymentsSettledPaise = Number(settledPaymentsRes.rows[0]?.total_payments || 0);
+
+    const settledRefundsRes = await client.query(`
+      SELECT COALESCE(SUM(amount_paise), 0)::BIGINT AS total_refunds
+      FROM refunds
+      WHERE status = 'SUCCEEDED';
+    `);
+    const refundsSettledPaise = Number(settledRefundsRes.rows[0]?.total_refunds || 0);
+    const netSettledPaise = paymentsSettledPaise - refundsSettledPaise;
+
+    const financialDriftPaise = netLedgerPaise - netSettledPaise;
+    const hasFinancialDrift = financialDriftPaise !== 0;
+
+    // 2. Inventory: recompute actual sold and held per ticket type
+    const tiersRes = await client.query(`
+      SELECT
+        tt.id,
+        tt.name,
+        tt.event_id,
+        tt.sold AS stored_sold,
+        tt.held AS stored_held,
+        COALESCE(actual_t.actual_sold, 0)::INT AS actual_sold,
+        COALESCE(actual_b.actual_held, 0)::INT AS actual_held
+      FROM ticket_types tt
+      LEFT JOIN (
+        SELECT ticket_type_id, COUNT(*)::INT AS actual_sold
+        FROM tickets
+        WHERE status IN ('VALID', 'CHECKED_IN')
+        GROUP BY ticket_type_id
+      ) actual_t ON actual_t.ticket_type_id = tt.id
+      LEFT JOIN (
+        SELECT bi.ticket_type_id, SUM(bi.quantity)::INT AS actual_held
+        FROM booking_items bi
+        INNER JOIN bookings b ON b.id = bi.booking_id
+        WHERE b.status = 'PENDING_PAYMENT'
+          AND (b.expires_at IS NULL OR b.expires_at > NOW())
+        GROUP BY bi.ticket_type_id
+      ) actual_b ON actual_b.ticket_type_id = tt.id;
+    `);
+
+    const driftItems: InventoryDriftItem[] = [];
+
+    for (const row of tiersRes.rows) {
+      const storedSold = Number(row.stored_sold || 0);
+      const actualSold = Number(row.actual_sold || 0);
+      const storedHeld = Number(row.stored_held || 0);
+      const actualHeld = Number(row.actual_held || 0);
+
+      const soldDrift = storedSold - actualSold;
+      const heldDrift = storedHeld - actualHeld;
+
+      if (soldDrift !== 0 || heldDrift !== 0) {
+        let healed = false;
+        if (autoHealInventory) {
+          await client.query(
+            `UPDATE ticket_types
+             SET sold = $1, held = $2
+             WHERE id = $3;`,
+            [actualSold, actualHeld, row.id]
+          );
+          healed = true;
+        }
+
+        driftItems.push({
+          ticketTypeId: row.id,
+          ticketTypeName: row.name,
+          eventId: row.event_id,
+          storedSold,
+          actualSold,
+          soldDrift,
+          storedHeld,
+          actualHeld,
+          heldDrift,
+          healed,
+        });
+      }
+    }
+
+    const hasInventoryDrift = driftItems.length > 0;
+    const hasDrift = hasFinancialDrift || hasInventoryDrift;
+
+    // Record ops_runs audit entry
+    await client.query(
+      `INSERT INTO ops_runs (kind, started_at, finished_at, outcome, evidence_ref)
+       VALUES ('nightly_reconciliation', $1, NOW(), $2, $3);`,
+      [
+        timestamp,
+        hasDrift ? 'DRIFT_ALERT' : 'SUCCESS',
+        JSON.stringify({
+          financial: {
+            netLedgerPaise,
+            netSettledPaise,
+            financialDriftPaise,
+          },
+          inventoryDriftCount: driftItems.length,
+          driftItems: driftItems.map((d) => ({
+            ticketTypeId: d.ticketTypeId,
+            soldDrift: d.soldDrift,
+            heldDrift: d.heldDrift,
+            healed: d.healed,
+          })),
+        }),
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      timestamp,
+      financial: {
+        ledgerSalesPaise,
+        ledgerRefundsPaise,
+        netLedgerPaise,
+        paymentsSettledPaise,
+        refundsSettledPaise,
+        netSettledPaise,
+        driftPaise: financialDriftPaise,
+        hasFinancialDrift,
+      },
+      inventory: {
+        scannedTiers: tiersRes.rows.length,
+        driftTiersCount: driftItems.length,
+        hasInventoryDrift,
+        driftItems,
+      },
+      hasDrift,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}

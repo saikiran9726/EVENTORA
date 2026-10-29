@@ -53,6 +53,7 @@ function mapEventRow(row: any): Event {
     allowGuests: row.allow_guests ?? false,
     version: row.version,
     createdBy: row.created_by,
+    searchVector: row.search_vector || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

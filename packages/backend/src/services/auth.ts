@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { db } from '../db/index.js';
 import { sessions, users, type User, type Session } from '../db/schema.js';
 import { eq, and, isNull } from 'drizzle-orm';
+import { anonymizeAndHashIp } from './privacy.js';
 
 export const ARGON2_CONFIG = {
   type: argon2.argon2id,
@@ -92,7 +93,7 @@ export async function createSession(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_CONFIG.absoluteTimeoutMs);
 
-  const ipHash = ip ? hashStringToHex(ip) : null;
+  const ipHash = ip ? anonymizeAndHashIp(ip) : null;
   const uaHash = userAgent ? hashStringToHex(userAgent) : null;
 
   await db.insert(sessions).values({

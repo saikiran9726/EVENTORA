@@ -12,6 +12,7 @@ import {
 import { eq, and, ne, isNull, gt, desc } from 'drizzle-orm';
 import { logAuditEvent } from '../../../services/audit.js';
 import { SESSION_CONFIG, revokeAllUserSessions } from '../../../services/auth.js';
+import { getUserDataExport, anonymizeUserData } from '../../../services/privacy.js';
 
 const updateProfileSchema = z.object({
   displayName: z.string().min(2).max(100).optional(),
@@ -422,6 +423,59 @@ export const meRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => 
       return reply.code(200).send({
         success: true,
         message: 'Session successfully revoked.',
+      });
+    }
+  );
+
+  // 8. GET /api/v1/me/data-export (GDPR Art 20 / DPDP Machine-readable Data Portability)
+  fastify.get(
+    '/data-export',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const user = req.user!;
+      const dataExport = await getUserDataExport(user.id);
+
+      await logAuditEvent({
+        actorId: user.id,
+        action: 'user.data_exported',
+        resourceType: 'user',
+        resourceId: user.id,
+        collegeId: user.collegeId,
+        ip: req.ip,
+      });
+
+      return reply.code(200).send({
+        dataExport,
+      });
+    }
+  );
+
+  // 9. DELETE /api/v1/me (Right to Erasure / GDPR Art 17 / DPDP Section 12 Anonymization)
+  fastify.delete(
+    '/',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const user = req.user!;
+      await anonymizeUserData(user.id);
+
+      reply.clearCookie(SESSION_CONFIG.cookieName, { path: '/' });
+      reply.clearCookie(SESSION_CONFIG.csrfCookieName, { path: '/' });
+
+      return reply.code(200).send({
+        success: true,
+        message: 'Account and personal data have been anonymised per privacy regulations.',
       });
     }
   );

@@ -386,6 +386,16 @@ export async function checkRegistrationEligibility(
   const event = rows[0];
   const eligibility = event.eligibility || {};
 
+  // 0. College-internal visibility check:
+  // If event is scoped to a specific college (visibility === 'college'), cross-college students cannot register
+  if (event.visibility === 'college' && user.collegeId && user.collegeId !== event.college_id) {
+    return {
+      eligible: false,
+      reason: 'COLLEGE_INELIGIBLE',
+      message: 'This event is restricted to members of this institution.',
+    };
+  }
+
   // 1. College Restriction check
   if (Array.isArray(eligibility.colleges) && eligibility.colleges.length > 0) {
     if (!eligibility.colleges.includes(user.collegeId)) {

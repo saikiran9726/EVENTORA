@@ -346,7 +346,9 @@ export const sessions = pgTable('sessions', {
   ipHash: varchar('ip_hash', { length: 64 }),
   uaHash: varchar('ua_hash', { length: 64 }),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
-});
+}, (table) => ({
+  userActiveIdx: index('idx_sessions_user_active').on(table.userId).where(sql`revoked_at IS NULL`),
+}));
 
 // 4. Password Resets
 export const passwordResets = pgTable('password_resets', {
@@ -493,9 +495,13 @@ export const events = pgTable('events', {
   createdBy: uuid('created_by')
     .references(() => users.id, { onDelete: 'restrict' })
     .notNull(),
+  searchVector: text('search_vector').default(sql`NULL`),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  statusStartsAtIdx: index('idx_events_status_starts_at').on(table.status, table.startsAt),
+  organizerStatusIdx: index('idx_events_organizer_status').on(table.organizerId, table.status),
+}));
 
 // 12. Event Status History
 export const eventStatusHistory = pgTable('event_status_history', {
@@ -580,7 +586,9 @@ export const outbox = pgTable('outbox', {
   dedupeKey: varchar('dedupe_key', { length: 255 }).unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   processedAt: timestamp('processed_at', { withTimezone: true }),
-});
+}, (table) => ({
+  statusNextAttemptIdx: index('idx_outbox_status_next_attempt').on(table.status, table.nextAttemptAt),
+}));
 
 // 18. Ticket Types
 export const ticketTypes = pgTable('ticket_types', {
@@ -733,6 +741,11 @@ export const bookings = pgTable(
       .where(sql`status IN ('PENDING_PAYMENT', 'CONFIRMED') AND team_registration_id IS NULL`),
     eventCreatedAtIdx: index('idx_bookings_event_created_at').on(table.eventId, table.createdAt),
     eventStatusIdx: index('idx_bookings_event_status').on(table.eventId, table.status),
+    userStatusIdx: index('idx_bookings_user_status').on(table.userId, table.status),
+    eventStatusCreatedAtIdx: index('idx_bookings_event_status_created_at').on(table.eventId, table.status, table.createdAt),
+    pendingExpiresIdx: index('idx_bookings_pending_expires')
+      .on(table.status, table.expiresAt)
+      .where(sql`status = 'PENDING_PAYMENT'`),
   })
 );
 
@@ -784,6 +797,7 @@ export const tickets = pgTable('tickets', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   eventStatusScannedIdx: index('idx_tickets_event_status_scanned').on(table.eventId, table.status, table.checkedInAt),
+  eventStatusIdx: index('idx_tickets_event_status').on(table.eventId, table.status),
 }));
 
 // 28. Registration Form Questions (Legacy)
@@ -866,6 +880,7 @@ export const waitlistEntries = pgTable('waitlist_entries', {
   bookingId: uuid('booking_id').references(() => bookings.id, { onDelete: 'set null' }),
 }, (table) => ({
   eventStatusIdx: index('idx_waitlist_event_status').on(table.eventId, table.status),
+  fifoPromotionIdx: index('idx_waitlist_fifo_promotion').on(table.ticketTypeId, table.status, table.createdAt, table.id),
 }));
 
 // 31. Cancellations
@@ -1120,7 +1135,9 @@ export const scanLog = pgTable('scan_log', {
     .notNull(),
   outcome: scanOutcomeEnum('outcome').notNull(),
   at: timestamp('at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  eventAtIdx: index('idx_scan_log_event_at').on(table.eventId, table.at),
+}));
 
 // 43. Event Feedback
 export const eventFeedback = pgTable(
@@ -1621,7 +1638,9 @@ export const notifications = pgTable('notifications', {
   payload: jsonb('payload'),
   readAt: timestamp('read_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  userCreatedIdx: index('idx_notifications_user_created').on(table.userId, table.createdAt),
+}));
 
 // 47. Notification Deliveries
 export const notificationDeliveries = pgTable(
