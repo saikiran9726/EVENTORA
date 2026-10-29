@@ -3,6 +3,7 @@ import { pool } from '../db/index.js';
 import { config } from '../config.js';
 import { expireOffers } from './waitlist.js';
 import { recordWorkerHeartbeat } from '../routes/monitoring.js';
+import { triggerDeadLetterAlert } from '../lib/sentry.js';
 import { generateOpaqueToken, hashStringToHex } from './auth.js';
 import { getEmailAdapter } from './email/index.js';
 import {
@@ -686,7 +687,8 @@ export async function dispatchPendingOutboxMessages(batchSize = 50) {
       const errorMessage = err?.message ? String(err.message).slice(0, 1000) : 'UNKNOWN_ERROR';
 
       if (currentAttempts >= 8 || errorMessage === 'INVALID_JSON_PAYLOAD') {
-        // Dead letter cap reached -> mark DEAD
+        // Dead letter cap reached -> mark DEAD and alert
+        triggerDeadLetterAlert(msg.id, errorMessage);
         await pool.query(
           `UPDATE outbox
            SET status = 'DEAD', attempts = $1::smallint, retries = $1::integer,

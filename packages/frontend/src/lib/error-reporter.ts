@@ -1,3 +1,5 @@
+import { captureFrontendException } from './sentry';
+
 /**
  * Eventora Frontend Error Reporter
  * Centralized error logging and diagnostics utility.
@@ -22,6 +24,13 @@ export function reportError(error: unknown, context?: ErrorReportContext): void 
       context: context || {},
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // Forward to Sentry if initialized
+  try {
+    captureFrontendException(error, context);
+  } catch {
+    // Sentry capture guard
   }
 
   // Dispatch custom event for telemetry or dev monitors

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { pool } from '../db/index.js';
 import { getPaymentAdapter } from './payment-adapter.js';
+import { triggerDriftAlert } from '../lib/sentry.js';
 
 export interface BankStatementRow {
   date: string;
@@ -418,6 +419,14 @@ export async function runNightlyLedgerAndInventoryReconciliation(options: {
 
     const hasInventoryDrift = driftItems.length > 0;
     const hasDrift = hasFinancialDrift || hasInventoryDrift;
+
+    if (hasDrift) {
+      triggerDriftAlert({
+        financialDriftPaise,
+        inventoryDriftCount: driftItems.length,
+        driftItems,
+      });
+    }
 
     // Record ops_runs audit entry
     await client.query(

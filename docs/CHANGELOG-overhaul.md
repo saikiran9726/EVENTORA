@@ -1,5 +1,95 @@
 # Eventora Overhaul Changelog
 
+## Phase P28 — Observability, Runtime Hardening, Sentry, Graceful Teardown & Health Split
+
+**Date:** 2026-10-29  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. Unified Pino Logger, Extended Redaction & Request ID Tracing
+- **Unified Logger (`packages/backend/src/logger.ts`):**
+  - Exported single unified Pino logger instance across API server and background worker.
+  - Extended redaction paths covering all sensitive and financial vectors:
+    - Passwords & secrets: `password`, `*.password`, `body.password`, `passwordHash`, `secret`, `body.secret`.
+    - Session & auth tokens: `token`, `*.token`, `body.token`, `sessionToken`, `refreshToken`, `csrfToken`, `cookie`, `authorization`.
+    - QR codes: `qr`, `*.qr`, `qrTokenHash`, `qrData`.
+    - Banking & UPI/UTR details: `utr`, `*.utr`, `body.utr`, `youpiUtr`, `cardNumber`, `cvv`, `pin`, `pan`, `aadhaar`.
+    - Personal Identifiable Information: `email`, `phone`, `phoneNumber`, `answers`, `registrationAnswers`.
+  - Serializers/formatters with privacy-preserving string masking:
+    - `maskEmail`: Formats emails to `a***t@domain.com` (first and last characters visible).
+    - `maskPhone`: Formats phones to `******3210` (preserving only the last 4 digits).
+- **Request ID Propagation (Browser $\rightarrow$ API $\rightarrow$ Logs $\rightarrow$ Errors):**
+  - Frontend (`packages/frontend/src/lib/api-client.ts`): Generates UUID `X-Request-ID` header on requests and captures `x-request-id` response header onto `ApiError`.
+  - Backend (`packages/backend/src/app.ts`):
+    - Configured Fastify with `requestIdHeader: 'x-request-id'`, `requestIdLogLabel: 'requestId'`, and `genReqId` checking client headers.
+    - Added `onSend` hook echoing `x-request-id` on every HTTP response.
+    - Attached `requestId: req.id` to all error envelopes.
+  - UI Error Surfaces:
+    - `packages/frontend/src/components/ui/Toast.tsx`: Added `requestId?: string` to `ToastItem`. Error toasts render `Ref: {requestId}` with one-click copy button.
+    - `packages/frontend/src/components/ui/FeedbackStates.tsx`: `ErrorState` view presents request ID and copy pill.
+
+---
+
+### 2. Sentry Observability Across Backend, Worker & Frontend
+- **Backend & Worker Sentry (`packages/backend/src/lib/sentry.ts`):**
+  - Configured `@sentry/node` initialization for backend API (`initBackendSentry`) and worker (`initWorkerSentry`).
+  - Automated release tracking (`SENTRY_RELEASE` or package version) and environment tagging (`NODE_ENV`).
+  - Error tagging with `requestId`, user context, and route metadata in Fastify error handler.
+- **Frontend Sentry (`packages/frontend/src/lib/sentry.ts`):**
+  - Configured `@sentry/react` initialization (`initFrontendSentry`) inside `packages/frontend/src/main.tsx`.
+  - Integrated with `packages/frontend/src/lib/error-reporter.ts`.
+  - Enabled production source maps in `packages/frontend/vite.config.ts` (`build: { sourcemap: true }`).
+
+---
+
+### 3. Operational Alerts Instrumentation
+- **Automated Metric Alerts (`packages/backend/src/lib/sentry.ts`):**
+  - **5xx Error Rate Alert:** Monitored over sliding 5-minute window in `packages/backend/src/routes/monitoring.ts`. Triggers `trigger5xxAlert` if error rate exceeds 5% over $\ge 20$ requests.
+  - **p95 Latency Alert:** Aggregated in `metricsStore.requestDurations`. Triggers `triggerP95Alert` if p95 response time exceeds 1000ms.
+  - **Dead Letter Alert:** Integrated into `packages/backend/src/services/outbox-worker.ts`. Triggers `triggerDeadLetterAlert` when transactional outbox records exceed retry cap and transition to `DEAD`.
+  - **Payment Mismatch Alert:** Integrated into `packages/backend/src/services/payment.ts`. Triggers `triggerPaymentMismatchAlert` when webhook amounts or currencies deviate from stored orders.
+  - **Reconciliation Drift Alert:** Integrated into `packages/backend/src/services/reconciliation.ts`. Triggers `triggerDriftAlert` during nightly reconciliation runs.
+  - **Worker Heartbeat Alert:** Evaluated in `packages/backend/src/routes/monitoring.ts`. Triggers `triggerWorkerHeartbeatAlert` when background worker loop heartbeat exceeds 30 seconds.
+
+---
+
+### 4. Split Liveness vs Deep Readiness
+- **Liveness Routes (`GET /health` & `GET /healthz`):**
+  - Immediate process alive check (200 OK with `status: 'ok'`, `uptime`, `timestamp`). Zero external database or cache queries.
+  - Exempt from authentication and session decoding overhead in `packages/backend/src/plugins/auth-policy.ts`.
+- **Readiness Routes (`GET /readiness`, `GET /ready`, `GET /readyz`):**
+  - Deep dependency health check:
+    - Postgres: `SELECT 1` with a strict 3-second timeout. Returns **503 Service Unavailable** if database connection fails.
+    - Redis: Evaluates connection via `getRedisClient().ping()`.
+    - Schema Migrations: Validates `MAX(version) >= 11`.
+    - Worker Heartbeat: Validates worker pulse freshness.
+
+---
+
+### 5. Graceful Teardown Lifecycle & Process Safety
+- **Shutdown Sequence (`packages/backend/src/index.ts` & `packages/backend/src/worker.ts`):**
+  - Ordered graceful shutdown via `createGracefulShutdown`:
+    1. Stop accepting new HTTP requests and drain in-flight connections (`await server.close()`).
+    2. Stop background schedulers and worker loops (`stopOutboxWorker()`, `stopHoldReconcilerWorker()`, `stopEventCompleterWorker()`).
+    3. Close database connection pool (`await pool.end()`).
+  - Signal listeners for `SIGTERM` and `SIGINT` trigger clean shutdown.
+  - Safety timeout (10s) prevents hung processes from stalling deployments.
+  - Global process error handling for `uncaughtException` and `unhandledRejection` with structured logging, Sentry exception capture, and graceful process exit.
+  - Wrapped `start()` in `.catch(...)` in `index.ts` to ensure unhandled startup failures are logged and terminate with non-zero exit code.
+
+---
+
+### 6. Verification & Quality Gates
+- `tests/unit/phase-p28-observability-runtime.test.ts`: **15/15 tests passing**.
+- `tests/unit/phase-p27-db-hardening-privacy.test.ts`: **16/16 tests passing**.
+- `tests/security/tenant-isolation.test.ts`: **5/5 tests passing**.
+- `pnpm typecheck`: **0 errors across @eventora/shared, @eventora/backend, @eventora/frontend**.
+- `pnpm lint`: **0 errors**.
+
+---
+
 ## Phase P27 — Database Hardening, Search GIN, Privacy Compliance & Nightly Reconciliation
 
 **Date:** 2026-10-29  

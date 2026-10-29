@@ -11,10 +11,11 @@ export interface ToastItem {
   title: string;
   message?: string;
   duration?: number;
+  requestId?: string;
 }
 
 interface ToastContextType {
-  toast: (options: { type?: ToastType; title: string; message?: string; duration?: number }) => void;
+  toast: (options: { type?: ToastType; title: string; message?: string; duration?: number; requestId?: string }) => void;
   removeToast: (id: string) => void;
 }
 
@@ -40,14 +41,16 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       title,
       message,
       duration = 4000,
+      requestId,
     }: {
       type?: ToastType;
       title: string;
       message?: string;
       duration?: number;
+      requestId?: string;
     }) => {
       const id = Math.random().toString(36).substring(2, 9);
-      const newToast: ToastItem = { id, type, title, message, duration };
+      const newToast: ToastItem = { id, type, title, message, duration, requestId };
 
       setToasts((prev) => [...prev, newToast]);
 
@@ -93,6 +96,24 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               <div className="flex-1 min-w-0 text-left">
                 <p className="text-sm font-semibold leading-tight text-text">{t.title}</p>
                 {t.message && <p className="text-xs text-text-muted mt-1 leading-relaxed">{t.message}</p>}
+                {t.requestId && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[10px] font-mono text-text-muted">
+                    <span>Ref: {t.requestId.slice(0, 16)}...</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (t.requestId && typeof navigator !== 'undefined') {
+                          navigator.clipboard.writeText(t.requestId);
+                        }
+                      }}
+                      className="underline hover:text-text cursor-pointer"
+                      title="Copy Request ID"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => removeToast(t.id)}

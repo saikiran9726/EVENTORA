@@ -2,11 +2,20 @@ import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { pool } from '../db/index.js';
 import { config } from '../config.js';
 import { constantTimeCompare } from '../services/auth.js';
+import { getRedisClient } from '../services/redis.js';
+import {
+  trigger5xxAlert,
+  triggerP95Alert,
+  triggerWorkerHeartbeatAlert,
+} from '../lib/sentry.js';
 
 // In-memory Prometheus metric counters for runtime aggregation
 const metricsStore = {
   requestCounts: new Map<string, number>(),
   requestDurations: new Map<string, number[]>(),
+  totalRequestsWindow: 0,
+  serverErrorsWindow: 0,
+  windowStartedAt: Date.now(),
   startTime: Date.now(),
 };
 
@@ -19,6 +28,36 @@ export function recordMetricRequest(method: string, route: string, status: numbe
   if (list.length >= 1000) list.shift();
   list.push(durationSec);
   metricsStore.requestDurations.set(durKey, list);
+
+  // 1. Sliding window 5xx rate calculation & alerting
+  const now = Date.now();
+  if (now - metricsStore.windowStartedAt > 300000) {
+    // Reset window every 5 minutes
+    metricsStore.totalRequestsWindow = 0;
+    metricsStore.serverErrorsWindow = 0;
+    metricsStore.windowStartedAt = now;
+  }
+  metricsStore.totalRequestsWindow++;
+  if (status >= 500) {
+    metricsStore.serverErrorsWindow++;
+  }
+
+  if (metricsStore.totalRequestsWindow >= 20) {
+    const errorRate = metricsStore.serverErrorsWindow / metricsStore.totalRequestsWindow;
+    if (errorRate > 0.05) {
+      trigger5xxAlert(errorRate, 300);
+    }
+  }
+
+  // 2. p95 latency check
+  if (list.length >= 20) {
+    const sorted = [...list].sort((a, b) => a - b);
+    const p95 = sorted[Math.floor(sorted.length * 0.95)];
+    const p95Ms = p95 * 1000;
+    if (p95Ms > 1000) {
+      triggerP95Alert(p95Ms, 1000);
+    }
+  }
 }
 
 // In-memory worker heartbeat record (updated by outbox dispatcher)
@@ -28,62 +67,65 @@ export function recordWorkerHeartbeat() {
   lastWorkerHeartbeat = Date.now();
 }
 
+export function getLastWorkerHeartbeat(): number {
+  return lastWorkerHeartbeat;
+}
+
+export function setLastWorkerHeartbeatForTest(timestamp: number) {
+  lastWorkerHeartbeat = timestamp;
+}
+
 export const monitoringRoutes: FastifyPluginAsync = async (fastify) => {
-  // 1. GET /health (Process alive, zero dependencies)
-  fastify.get(
-    '/health',
-    {
-      config: {
-        auth: false,
-        policy: 'public',
-        objectCheck: false,
-      },
-    },
-    async (_req: FastifyRequest, reply: FastifyReply) => {
-      return reply.code(200).send({
-        status: 'ok',
-        uptime: Math.round(process.uptime()),
-        timestamp: new Date().toISOString(),
-      });
-    }
-  );
+  // 1. GET /health & /healthz (Liveness check: process alive, zero external dependencies)
+  const livenessHandler = async (_req: FastifyRequest, reply: FastifyReply) => {
+    return reply.code(200).send({
+      status: 'ok',
+      uptime: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  };
 
-  // 2. GET /readiness (Postgres SELECT 1, Redis PING, Migration version, Worker heartbeat < 30s)
-  fastify.get(
-    '/readiness',
-    {
-      config: {
-        auth: false,
-        policy: 'public',
-        objectCheck: false,
-      },
-    },
-    async (_req: FastifyRequest, reply: FastifyReply) => {
-      const checks: Record<string, any> = {};
-      let isReady = true;
+  fastify.get('/health', { config: { auth: false, policy: 'public', objectCheck: false } }, livenessHandler);
+  fastify.get('/healthz', { config: { auth: false, policy: 'public', objectCheck: false } }, livenessHandler);
 
-      // Check A: Postgres SELECT 1
-      const pgStart = Date.now();
+  // 2. GET /readiness, /ready, /readyz (Deep check: Postgres SELECT 1, Redis PING, Migrations, Worker heartbeat)
+  const readinessHandler = async (_req: FastifyRequest, reply: FastifyReply) => {
+    const checks: Record<string, any> = {};
+    let isReady = true;
+
+    // Check A: Postgres SELECT 1
+    const pgStart = Date.now();
+    try {
+      const client = await Promise.race([
+        pool.connect(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Postgres connection timeout (3s)')), 3000)
+        ),
+      ]);
       try {
-        const client = await pool.connect();
-        try {
-          await client.query('SELECT 1 as alive;');
-          checks.postgres = {
-            status: 'ok',
-            latencyMs: Date.now() - pgStart,
-          };
-        } finally {
-          client.release();
-        }
-      } catch (err: any) {
-        isReady = false;
+        await Promise.race([
+          client.query('SELECT 1 as alive;'),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Postgres query timeout (3s)')), 3000)
+          ),
+        ]);
         checks.postgres = {
-          status: 'failed',
-          error: err.message,
+          status: 'ok',
+          latencyMs: Date.now() - pgStart,
         };
+      } finally {
+        client.release();
       }
+    } catch (err: any) {
+      isReady = false;
+      checks.postgres = {
+        status: 'failed',
+        error: err.message,
+      };
+    }
 
-      // Check B: Schema Migration Version
+    // Check B: Schema Migration Version
+    if (checks.postgres?.status === 'ok') {
       try {
         const migRes = await pool.query<{ current_version: number | null }>(
           'SELECT MAX(version) as current_version FROM schema_migrations;'
@@ -102,33 +144,55 @@ export const monitoringRoutes: FastifyPluginAsync = async (fastify) => {
           error: err.message || 'schema_migrations relation does not exist',
         };
       }
+    } else {
+      checks.migration = {
+        status: 'skipped',
+        error: 'Database offline',
+      };
+    }
 
-      // Check C: Redis / Queue connection
+    // Check C: Redis / Queue connection
+    try {
+      const redis = getRedisClient();
+      const pingResult = await redis.ping();
       checks.redis = {
-        status: 'ok',
+        status: pingResult === 'PONG' ? 'ok' : 'degraded',
         adapter: config.REDIS_URL ? 'redis' : 'in-memory',
       };
-
-      // Check D: Worker Heartbeat < 30 seconds
-      const workerSecondsAgo = Math.round((Date.now() - lastWorkerHeartbeat) / 1000);
-      const isWorkerAlive = workerSecondsAgo <= config.WORKER_HEARTBEAT_THRESHOLD_SECONDS;
-      checks.worker = {
-        status: isWorkerAlive ? 'ok' : 'degraded',
-        lastHeartbeatSecondsAgo: workerSecondsAgo,
-        thresholdSeconds: config.WORKER_HEARTBEAT_THRESHOLD_SECONDS,
-      };
-      if (!isWorkerAlive) {
-        // Worker heartbeat degraded but process still partially serving
+      if (pingResult !== 'PONG') {
+        isReady = false;
       }
-
-      const statusCode = isReady ? 200 : 503;
-      return reply.code(statusCode).send({
-        status: isReady ? 'ready' : 'not_ready',
-        checks,
-        timestamp: new Date().toISOString(),
-      });
+    } catch (err: any) {
+      isReady = false;
+      checks.redis = {
+        status: 'failed',
+        error: err.message,
+      };
     }
-  );
+
+    // Check D: Worker Heartbeat
+    const workerSecondsAgo = Math.round((Date.now() - lastWorkerHeartbeat) / 1000);
+    const isWorkerAlive = workerSecondsAgo <= config.WORKER_HEARTBEAT_THRESHOLD_SECONDS;
+    checks.worker = {
+      status: isWorkerAlive ? 'ok' : 'degraded',
+      lastHeartbeatSecondsAgo: workerSecondsAgo,
+      thresholdSeconds: config.WORKER_HEARTBEAT_THRESHOLD_SECONDS,
+    };
+    if (!isWorkerAlive) {
+      triggerWorkerHeartbeatAlert(workerSecondsAgo, config.WORKER_HEARTBEAT_THRESHOLD_SECONDS);
+    }
+
+    const statusCode = isReady ? 200 : 503;
+    return reply.code(statusCode).send({
+      status: isReady ? 'ready' : 'not_ready',
+      checks,
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  fastify.get('/readiness', { config: { auth: false, policy: 'public', objectCheck: false } }, readinessHandler);
+  fastify.get('/ready', { config: { auth: false, policy: 'public', objectCheck: false } }, readinessHandler);
+  fastify.get('/readyz', { config: { auth: false, policy: 'public', objectCheck: false } }, readinessHandler);
 
   // 3. GET /metrics (Prometheus format; restricted to authorized monitoring scraper via X-Metrics-Token)
   fastify.get(

@@ -23,23 +23,32 @@ import { handleResendWebhook } from './routes/webhooks/resend.js';
 import { monitoringRoutes, recordMetricRequest } from './routes/monitoring.js';
 import { securityHeadersPlugin } from './plugins/security-headers.js';
 import { rateLimiterPlugin } from './plugins/rate-limiter.js';
-import { REDACT_PATHS } from './logger.js';
+import { logger } from './logger.js';
 import { verifyPaymentStartupGuard } from './services/startup-guard.js';
+import { initBackendSentry, captureException } from './lib/sentry.js';
 
 export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
+  initBackendSentry();
   verifyPaymentStartupGuard();
 
   const app = fastify({
     trustProxy: 1,
-    genReqId: () => crypto.randomUUID(),
-    logger: process.env.NODE_ENV === 'test' ? false : {
-      level: 'info',
-      redact: {
-        paths: REDACT_PATHS,
-        censor: '[REDACTED]',
-      },
+    requestIdHeader: 'x-request-id',
+    requestIdLogLabel: 'requestId',
+    genReqId: (req) => {
+      const incomingId = (req.headers['x-request-id'] || req.headers['X-Request-ID']) as string | undefined;
+      if (typeof incomingId === 'string' && incomingId.trim().length > 0 && incomingId.length <= 128) {
+        return incomingId.trim();
+      }
+      return crypto.randomUUID();
     },
+    logger: process.env.NODE_ENV === 'test' ? false : logger,
     ...opts,
+  });
+
+  // Ensure outgoing responses echo the trace requestId
+  app.addHook('onSend', async (req, reply) => {
+    reply.header('x-request-id', req.id);
   });
 
   // Security Headers (CSP, HSTS, X-Content-Type-Options, Permissions-Policy)
@@ -292,6 +301,15 @@ export function buildApp(opts: FastifyServerOptions = {}): FastifyInstance {
     const userMessage = isClientError
       ? error.message
       : 'An unexpected internal error occurred. Please contact support.';
+
+    if (statusCode >= 500) {
+      captureException(error, {
+        requestId: req.id,
+        userId: (req as any).user?.id,
+        method: req.method,
+        url: req.url,
+      });
+    }
 
     reply.code(statusCode).send({
       error: {

@@ -241,6 +241,8 @@ export async function apiClient<T>(
           continue;
         }
 
+        const serverRequestId = response.headers.get('x-request-id') || response.headers.get('X-Request-ID');
+
         // Validate or construct standard error envelope
         const parseResult = ErrorEnvelopeSchema.safeParse(responseData);
         if (parseResult.success) {
@@ -248,7 +250,7 @@ export async function apiClient<T>(
           throw new ApiError(
             err.code,
             err.message,
-            err.requestId || requestId,
+            err.requestId || serverRequestId || requestId,
             err.details,
             response.status
           );
@@ -258,7 +260,7 @@ export async function apiClient<T>(
             typeof responseData === 'string' && responseData.length > 0
               ? responseData
               : response.statusText,
-            requestId,
+            serverRequestId || requestId,
             { status: response.status }
           );
           throw new ApiError(

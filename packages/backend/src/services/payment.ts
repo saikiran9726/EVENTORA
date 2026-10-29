@@ -4,6 +4,7 @@ import { getPaymentAdapter, PaymentAdapterError } from './payment-adapter.js';
 import { promoteNext } from './waitlist.js';
 import { BookingError } from './booking.js';
 import { createTicketWithRetry } from './qr-ticket.js';
+import { triggerPaymentMismatchAlert } from '../lib/sentry.js';
 
 export class PaymentError extends BookingError {
   constructor(code: string, message: string, status = 400, details?: Record<string, any>) {
@@ -554,6 +555,13 @@ export async function processYouPiWebhook(params: YouPiWebhookProcessParams) {
 
     // Amount match check
     if (amountPaise !== payment.amount_paise) {
+      triggerPaymentMismatchAlert({
+        paymentId: payment.id,
+        orderId,
+        expectedPaise: payment.amount_paise,
+        reportedPaise: amountPaise,
+      });
+
       await client.query(
         `UPDATE payments
          SET status = 'VERIFICATION_QUEUE',

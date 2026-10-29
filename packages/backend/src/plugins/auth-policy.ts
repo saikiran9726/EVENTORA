@@ -77,8 +77,8 @@ export function validateRouteSecurity(routeOptions: RouteOptions): void {
 export const authPolicyPlugin = fp(async function (fastify: FastifyInstance) {
   // PreHandler enforcement hook
   fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
-    // Skip health check
-    if (req.url === '/health') return;
+    // Skip liveness health checks (zero auth overhead)
+    if (req.url === '/health' || req.url === '/healthz') return;
 
     const config = req.routeOptions?.config as RouteConfigPolicy | undefined;
 

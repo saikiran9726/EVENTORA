@@ -3,6 +3,10 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { reportError } from './lib/error-reporter';
+import { initFrontendSentry } from './lib/sentry';
+
+// Initialize frontend Sentry observability
+initFrontendSentry();
 
 // Global unhandled promise rejection and uncaught error handlers
 if (typeof window !== 'undefined') {
