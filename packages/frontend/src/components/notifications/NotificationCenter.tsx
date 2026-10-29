@@ -63,7 +63,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     setLoading(true);
 
     try {
-      const data = await apiClient<any>('/api/v1/users/me/notifications');
+      const data = await apiClient<any>('/api/v1/me/notifications');
       if (data) {
         setNotifications(data.notifications || []);
         setUnreadCount(data.unreadCount || 0);
@@ -124,7 +124,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   // Fetch preferences
   const fetchPreferences = useCallback(async () => {
     try {
-      const data = await apiClient<any>('/api/v1/users/me/notifications/preferences');
+      const data = await apiClient<any>('/api/v1/me/notification-preferences');
       if (data?.preferences) {
         setPreferences(data.preferences);
       }
@@ -143,7 +143,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   // Mark single notification read
   const handleMarkRead = async (id: string) => {
     try {
-      await apiClient(`/api/v1/users/me/notifications/${id}/read`, {
+      await apiClient(`/api/v1/me/notifications/${id}/read`, {
         method: 'PATCH',
       });
     } catch {
@@ -160,7 +160,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   // Mark all read
   const handleMarkAllRead = async () => {
     try {
-      await apiClient('/api/v1/users/me/notifications/read-all', {
+      await apiClient('/api/v1/me/notifications/read-all', {
         method: 'POST',
       });
     } catch {
@@ -181,8 +181,8 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     setSavingPrefs(true);
 
     try {
-      await apiClient('/api/v1/users/me/notifications/preferences', {
-        method: 'PUT',
+      await apiClient('/api/v1/me/notification-preferences', {
+        method: 'PATCH',
         body: JSON.stringify(updated),
       });
     } catch {

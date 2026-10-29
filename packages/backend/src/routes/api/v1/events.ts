@@ -12,6 +12,8 @@ import {
   eventAnnouncements,
   ticketTypes,
   tickets,
+  bookings,
+  eventMaterials,
   outbox,
   type EventStatus,
 } from '../../../db/schema.js';
@@ -1678,6 +1680,242 @@ export const eventRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       const { id } = req.params as { id: string };
       const submissions = await getEventFormSubmissions(id);
       return reply.code(200).send(submissions);
+    }
+  );
+
+  // 15. Event Materials: GET /api/v1/events/:id/materials (Registered-only attendee visibility or Organizer/Admin)
+  fastify.get(
+    '/:id/materials',
+    {
+      config: {
+        auth: true,
+        policy: 'authenticated',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const user = req.user!;
+
+      const targetEvent = await db.query.events.findFirst({
+        where: eq(events.id, id),
+      });
+
+      if (!targetEvent) {
+        return reply.code(404).send({
+          error: {
+            code: 'EVENT_NOT_FOUND',
+            message: `Event ${id} not found`,
+            details: { eventId: id },
+            requestId: req.id,
+          },
+        });
+      }
+
+      // Check registered attendee status or organizer / admin privileges
+      const isAdmin = user.globalRole === 'admin';
+      const isCreator = targetEvent.createdBy === user.id;
+
+      let isOrganizerMember = false;
+      if (!isAdmin && !isCreator) {
+        const membership = await db.query.organizerMembers.findFirst({
+          where: and(
+            eq(organizerMembers.organizerId, targetEvent.organizerId),
+            eq(organizerMembers.userId, user.id),
+            eq(organizerMembers.status, 'active')
+          ),
+        });
+        isOrganizerMember = !!membership;
+      }
+
+      let isRegisteredAttendee = false;
+      if (!isAdmin && !isCreator && !isOrganizerMember) {
+        const attendeeBooking = await db.query.bookings.findFirst({
+          where: and(
+            eq(bookings.eventId, id),
+            eq(bookings.userId, user.id),
+            eq(bookings.status, 'CONFIRMED')
+          ),
+        });
+        isRegisteredAttendee = !!attendeeBooking;
+      }
+
+      if (!isAdmin && !isCreator && !isOrganizerMember && !isRegisteredAttendee) {
+        return reply.code(403).send({
+          error: {
+            code: 'REGISTRATION_REQUIRED',
+            message: 'Event materials are accessible only to registered attendees and organizers',
+            details: { eventId: id },
+            requestId: req.id,
+          },
+        });
+      }
+
+      const materials = await db
+        .select()
+        .from(eventMaterials)
+        .where(eq(eventMaterials.eventId, id))
+        .orderBy(desc(eventMaterials.createdAt));
+
+      return reply.code(200).send({
+        materials,
+      });
+    }
+  );
+
+  // 16. Event Materials: POST /api/v1/events/:id/materials (Organizer Upload with Size/Type Limits)
+  const ALLOWED_MATERIAL_MIME_TYPES = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/zip',
+    'application/x-zip-compressed',
+    'text/plain',
+    'text/markdown',
+    'text/csv',
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+  ];
+  const MAX_MATERIAL_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
+
+  const createMaterialSchema = z.object({
+    title: z.string().min(1, 'Title is required').max(255),
+    description: z.string().max(2000).optional(),
+    fileName: z.string().min(1, 'File name is required').max(255),
+    fileSizeBytes: z
+      .number()
+      .int()
+      .positive('File size must be positive')
+      .max(MAX_MATERIAL_SIZE_BYTES, 'File size exceeds 25 MB limit'),
+    mimeType: z.string().refine((val) => ALLOWED_MATERIAL_MIME_TYPES.includes(val.toLowerCase()), {
+      message: 'Unsupported file type. Allowed formats: PDF, Word, PowerPoint, ZIP, CSV, TXT, images',
+    }),
+    fileUrl: z.string().min(1, 'File URL or storage path is required'),
+  });
+
+  fastify.post(
+    '/:id/materials',
+    {
+      config: {
+        auth: true,
+        policy: 'event:manage:owned',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const user = req.user!;
+
+      const parseResult = createMaterialSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid event material payload',
+            details: parseResult.error.flatten(),
+            requestId: req.id,
+          },
+        });
+      }
+
+      const targetEvent = await db.query.events.findFirst({
+        where: eq(events.id, id),
+      });
+
+      if (!targetEvent) {
+        return reply.code(404).send({
+          error: {
+            code: 'EVENT_NOT_FOUND',
+            message: `Event ${id} not found`,
+            details: { eventId: id },
+            requestId: req.id,
+          },
+        });
+      }
+
+      const [created] = await db
+        .insert(eventMaterials)
+        .values({
+          eventId: id,
+          title: parseResult.data.title,
+          description: parseResult.data.description || null,
+          fileName: parseResult.data.fileName,
+          fileSizeBytes: parseResult.data.fileSizeBytes,
+          mimeType: parseResult.data.mimeType.toLowerCase(),
+          fileUrl: parseResult.data.fileUrl,
+          uploadedBy: user.id,
+        })
+        .returning();
+
+      await logAuditEvent({
+        actorId: user.id,
+        action: 'event.material_uploaded',
+        resourceType: 'event_material',
+        resourceId: created.id,
+        collegeId: user.collegeId,
+        meta: {
+          eventId: id,
+          fileName: created.fileName,
+          fileSizeBytes: created.fileSizeBytes,
+          mimeType: created.mimeType,
+        },
+        ip: req.ip,
+      });
+
+      return reply.code(201).send({
+        material: created,
+      });
+    }
+  );
+
+  // 17. Event Materials: DELETE /api/v1/events/:id/materials/:materialId (Organizer deletion)
+  fastify.delete(
+    '/:id/materials/:materialId',
+    {
+      config: {
+        auth: true,
+        policy: 'event:manage:owned',
+        objectCheck: false,
+      },
+    },
+    async (req, reply) => {
+      const { id, materialId } = req.params as { id: string; materialId: string };
+      const user = req.user!;
+
+      const material = await db.query.eventMaterials.findFirst({
+        where: and(eq(eventMaterials.id, materialId), eq(eventMaterials.eventId, id)),
+      });
+
+      if (!material) {
+        return reply.code(404).send({
+          error: {
+            code: 'MATERIAL_NOT_FOUND',
+            message: `Event material ${materialId} not found`,
+            details: { materialId, eventId: id },
+            requestId: req.id,
+          },
+        });
+      }
+
+      await db.delete(eventMaterials).where(eq(eventMaterials.id, materialId));
+
+      await logAuditEvent({
+        actorId: user.id,
+        action: 'event.material_deleted',
+        resourceType: 'event_material',
+        resourceId: materialId,
+        collegeId: user.collegeId,
+        meta: { eventId: id, fileName: material.fileName },
+        ip: req.ip,
+      });
+
+      return reply.code(200).send({
+        success: true,
+        message: 'Event material deleted successfully.',
+      });
     }
   );
 };

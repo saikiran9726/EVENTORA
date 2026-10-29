@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Compass, Calendar, Ticket, Award, User, Bell, Sun, Moon, Users, HeartHandshake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PROTOTYPE_BADGE_TEXT } from '@/prototype/data';
 import { NotificationCenter } from '@/components/notifications/NotificationCenter';
+import { apiClient } from '@/lib/api-client';
 
 export interface ShellCommonProps {
   currentRole?: string;
@@ -23,6 +24,20 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
 }) => {
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    apiClient<any>('/api/v1/me/notifications')
+      .then((res) => {
+        if (isMounted && res && typeof res.unreadCount === 'number') {
+          setUnreadCount(res.unreadCount);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const navItems = [
     { id: 'discover', label: 'Discover', icon: Compass },
@@ -150,6 +165,16 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
             >
               <Users className="w-4 h-4 shrink-0" />
               <span>Teams & Hub</span>
+            </button>
+            <button
+              onClick={() => onRouteChange('volunteers')}
+              className={cn(
+                'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left',
+                activeRoute === 'volunteers' ? 'bg-brand text-white shadow-sm' : 'text-text-muted hover:text-text hover:bg-surface-2'
+              )}
+            >
+              <HeartHandshake className="w-4 h-4 shrink-0" />
+              <span>Volunteers Hub</span>
             </button>
             <div className="pt-2 mt-2 border-t border-border">
               <button

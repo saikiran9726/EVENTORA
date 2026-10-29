@@ -1866,4 +1866,33 @@ export const emailSuppressions = pgTable(
 export type EmailSuppression = typeof emailSuppressions.$inferSelect;
 export type NewEmailSuppression = typeof emailSuppressions.$inferInsert;
 
+// 60. Event Materials (Registered-only attendee downloads)
+export const eventMaterials = pgTable(
+  'event_materials',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    eventId: uuid('event_id')
+      .references(() => events.id, { onDelete: 'cascade' })
+      .notNull(),
+    title: varchar('title', { length: 255 }).notNull(),
+    description: text('description'),
+    fileUrl: text('file_url').notNull(),
+    fileName: varchar('file_name', { length: 255 }).notNull(),
+    fileSizeBytes: integer('file_size_bytes').notNull(),
+    mimeType: varchar('mime_type', { length: 100 }).notNull(),
+    uploadedBy: uuid('uploaded_by')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idxEventMaterialsEventId: index('idx_event_materials_event_id').on(table.eventId),
+  })
+);
+
+export type EventMaterial = typeof eventMaterials.$inferSelect;
+export type NewEventMaterial = typeof eventMaterials.$inferInsert;
+
+
 

@@ -179,6 +179,7 @@ const AppContent: React.FC = () => {
     setIsSessionExpiredModalOpen,
     returnPath,
     setReturnPath,
+    logout,
   } = useAuth();
 
   const navigate = useNavigate();
@@ -406,6 +407,7 @@ const AppContent: React.FC = () => {
                 <RouteView fallbackTitle="Profile Error">
                   <ProfilePreferencesPage
                     onLogout={async () => {
+                      await logout();
                       navigate('/');
                     }}
                     isDarkMode={isDarkMode}

@@ -24,6 +24,16 @@ export async function runRollbackToVersion(targetVersion: number) {
 
     const startedAt = new Date().toISOString();
 
+    // Rollback step 26 -> 25: Event Materials for Registered Attendees
+    if (currentVersion >= 26 && targetVersion < 26) {
+      console.log('[Rollback] Rolling back version 26 (Phase 26)...');
+      await client.query(`
+        DROP INDEX IF EXISTS idx_event_materials_event_id;
+        DROP TABLE IF EXISTS event_materials CASCADE;
+        DELETE FROM schema_migrations WHERE version = 26;
+      `);
+    }
+
     // Rollback step 25 -> 24: Organizer Analytics Performance Indexes
     if (currentVersion >= 25 && targetVersion < 25) {
       console.log('[Rollback] Rolling back version 25 (Phase 25)...');

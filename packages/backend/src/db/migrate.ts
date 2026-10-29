@@ -1314,7 +1314,8 @@ export async function runMigrations() {
         (22, 'Phase 22: Volunteer Records Unique Constraint & Application Indexes'),
         (23, 'Phase 23: User Department and Academic Year for Cross-College Eligibility'),
         (24, 'Phase 24: Durable Export Storage and Download Tokens'),
-        (25, 'Phase 25: Organizer Analytics Performance Indexes')
+        (25, 'Phase 25: Organizer Analytics Performance Indexes'),
+        (26, 'Phase 26: Event Materials for Registered Attendees')
       ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
 
       -- Comprehensive production performance indexes
@@ -1534,6 +1535,22 @@ export async function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_bookings_event_status ON bookings(event_id, status);
       CREATE INDEX IF NOT EXISTS idx_tickets_event_status_scanned ON tickets(event_id, status, checked_in_at);
       CREATE INDEX IF NOT EXISTS idx_waitlist_event_status ON waitlist_entries(event_id, status);
+
+      -- Phase 26: Event Materials for Registered Attendees
+      CREATE TABLE IF NOT EXISTS event_materials (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        file_url TEXT NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_size_bytes INT NOT NULL,
+        mime_type VARCHAR(100) NOT NULL,
+        uploaded_by UUID NOT NULL REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_event_materials_event_id ON event_materials(event_id);
     `);
 
     // Non-negotiable audit log immutability: ensure append-only restriction is applied to PUBLIC

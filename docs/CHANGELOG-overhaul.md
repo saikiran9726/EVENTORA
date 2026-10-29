@@ -1683,6 +1683,99 @@
 
 ---
 
+## [Phase P24] - 2026-10-29
+### Student Portal Restoration & Audit Fixes
+
+### 1. Database Migrations & Schema Architecture (Migration 26)
+- **Migration 26 (`Phase 26: Event Materials for Registered Attendees`):**
+  - Created `event_materials` table:
+    - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+    - `event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE`
+    - `title VARCHAR(255) NOT NULL`
+    - `description TEXT`
+    - `file_url TEXT NOT NULL`
+    - `file_name VARCHAR(255) NOT NULL`
+    - `file_size_bytes INT NOT NULL`
+    - `mime_type VARCHAR(100) NOT NULL`
+    - `uploaded_by UUID NOT NULL REFERENCES users(id)`
+    - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+    - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+  - Added composite index: `CREATE INDEX IF NOT EXISTS idx_event_materials_event_id ON event_materials(event_id);`
+  - Registered version 26 in `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 26 $\to$ 25 dropping `idx_event_materials_event_id` and `event_materials` table and deleting version 26 from `schema_migrations`.
+  - Verified live rollback and re-application against PostgreSQL.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Defined `eventMaterials` pgTable, exported types `EventMaterial` and `NewEventMaterial`.
+
+---
+
+### 2. Backend Event Materials & Student Endpoints
+- **Registered-Only Materials Access (`GET /api/v1/events/:id/materials`):**
+  - Protected with `{ auth: true, policy: 'authenticated', objectCheck: false }`.
+  - Enforces registered attendee authorization: caller must possess a booking on the event with `status = 'CONFIRMED'` OR be the creator/organizer member/admin.
+  - Unregistered students receive `403 FORBIDDEN` with code `REGISTRATION_REQUIRED`.
+- **Organizer Upload & Guardrails (`POST /api/v1/events/:id/materials`):**
+  - Protected with `{ auth: true, policy: 'event:manage:owned', objectCheck: false }`.
+  - Strict upload limit: max 25 MB file size. Files exceeding 25 MB rejected with `400 VALIDATION_ERROR`.
+  - Whitelisted MIME types: PDF, Word (`.doc`, `.docx`), PowerPoint (`.ppt`, `.pptx`), ZIP, CSV, TXT, markdown, images (`.png`, `.jpg`, `.webp`). Executables/disallowed types rejected with `400 VALIDATION_ERROR`.
+- **Organizer Deletion (`DELETE /api/v1/events/:id/materials/:materialId`):**
+  - Protected with `{ auth: true, policy: 'event:manage:owned', objectCheck: false }`.
+  - Deletes material from `event_materials` and logs audit log event.
+- **Calendar Route Hardening (`GET /api/v1/calendar`):**
+  - Accepted `month` (`YYYY-MM`) and `view` query parameters, calculating UTC month bounds automatically for frontend calendar queries.
+- **User Teams Filtering (`GET /api/v1/teams?mine=true`):**
+  - Supported `mine=true` query parameter for authenticated students to view only their joined teams.
+- **Notification Preferences Storage:**
+  - Fixed `updateUserNotificationPreferences` and `getUserNotificationPreferences` to store preferences in `user_preferences` table instead of non-existent `users.meta` column.
+
+---
+
+### 3. Frontend Student Portal Restorations & UI Enhancements
+- **Audit Documentation (`docs/student-portal-audit.md`):**
+  - Audited every route, button, link, and state across `StudentShell`, `MyBookingsPage`, `PassportPage`, `CalendarPage`, `TeamsPage`, `VolunteerHubPage`, `NotificationCenter`, and `ProfilePreferencesPage`.
+- **MyBookingsPage (My Events):**
+  - **Upcoming vs. Past Tabs:** Segmented registrations into `Upcoming Events` and `Past & Completed` tabs with dynamic count badges.
+  - **Status Chips:** Rendered semantic badges for `CONFIRMED`, `PENDING PAYMENT`, `CHECKED IN`, and `CANCELLED`.
+  - **Resume-Checkout Flow:** Added prominent "Resume Checkout ({formatINR(totalPaise)})" CTA button for bookings in `PENDING_PAYMENT` status routing to `/checkout/:bookingId`.
+  - **Schedule + `.ics` Export:** Added "Add to Calendar (.ics)" button downloading standard RFC 5545 calendar files.
+  - **Offline Caching:** Added `localStorage` caching key `eventora_offline_tickets_cache` with offline indicator and full dynamic QR rendering.
+  - **Ticket Download:** Added "Download Pass" button.
+  - **Refund / Cancellation Policy Modal:** Added clear policy disclosure for paid tickets (refund in paise via YouPI-PG) vs free passes.
+  - **Event Materials Modal:** Added attendee materials viewer with file size formatting, MIME badges, and direct downloads.
+- **NotificationCenter Route Path Alignment:**
+  - Fixed endpoint paths from `/api/v1/users/me/notifications*` to `/api/v1/me/notifications*` and `/api/v1/me/notification-preferences`.
+- **StudentShell:**
+  - Added on-mount unread notifications fetch.
+  - Added desktop sidebar navigation item for `Volunteers Hub`.
+- **TeamsPage:**
+  - Wired "Request to Join" button to `POST /api/v1/teams/:id/join-requests`.
+  - Concurrently fetched discoverable and user-joined teams.
+- **ProfilePreferencesPage / App.tsx:**
+  - Wired "Sign Out" to await `logout()` from `useAuth()` before redirecting.
+
+---
+
+### 4. Verification & Quality Gate
+- **Unit & Security Integration Suite (`tests/unit/phase-p24-student-portal.test.ts`):** 12/12 passing tests:
+  1. Migration 26 down-migration to 25 and re-migration to 26.
+  2. Organizer material upload within 25MB and MIME limits.
+  3. Rejection of oversized files (>25MB) with 400.
+  4. Rejection of unsupported MIME types with 400.
+  5. Confirmed attendee access to event materials.
+  6. Unregistered attendee rejection with 403 `REGISTRATION_REQUIRED`.
+  7. Organizer and Admin materials access.
+  8. Calendar query with `month` parameter and RFC 5545 `.ics` export.
+  9. `GET /api/v1/me/bookings` with confirmed and pending bookings.
+  10. `GET /api/v1/teams?mine=true` user teams filtering.
+  11. `GET /api/v1/me/notifications` and `PATCH /api/v1/me/notification-preferences`.
+  12. Organizer material deletion.
+- **Playwright E2E Suite (`tests/e2e/student-portal-journey.spec.ts`):** End-to-end student journey covering Shell navigation, upcoming/past bookings, materials modal, resume payment CTA, calendar, teams, volunteer hub, notifications, and profile logout.
+- **Monorepo Quality Gate:** All 50 test files and 525 tests passing (100%), `pnpm typecheck` 0 errors, `pnpm lint` 0 errors.
+
+
+---
+
 ## Phase P14 — Ticket QR, Token Rotation, Downloads & Offline Mode
 
 **Date:** 2026-10-27  
@@ -1768,6 +1861,99 @@
 - **Static Analysis & Builds:**
   - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
   - `pnpm lint`: 0 errors.
+
+---
+
+## [Phase P24] - 2026-10-29
+### Student Portal Restoration & Audit Fixes
+
+### 1. Database Migrations & Schema Architecture (Migration 26)
+- **Migration 26 (`Phase 26: Event Materials for Registered Attendees`):**
+  - Created `event_materials` table:
+    - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+    - `event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE`
+    - `title VARCHAR(255) NOT NULL`
+    - `description TEXT`
+    - `file_url TEXT NOT NULL`
+    - `file_name VARCHAR(255) NOT NULL`
+    - `file_size_bytes INT NOT NULL`
+    - `mime_type VARCHAR(100) NOT NULL`
+    - `uploaded_by UUID NOT NULL REFERENCES users(id)`
+    - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+    - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+  - Added composite index: `CREATE INDEX IF NOT EXISTS idx_event_materials_event_id ON event_materials(event_id);`
+  - Registered version 26 in `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 26 $\to$ 25 dropping `idx_event_materials_event_id` and `event_materials` table and deleting version 26 from `schema_migrations`.
+  - Verified live rollback and re-application against PostgreSQL.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Defined `eventMaterials` pgTable, exported types `EventMaterial` and `NewEventMaterial`.
+
+---
+
+### 2. Backend Event Materials & Student Endpoints
+- **Registered-Only Materials Access (`GET /api/v1/events/:id/materials`):**
+  - Protected with `{ auth: true, policy: 'authenticated', objectCheck: false }`.
+  - Enforces registered attendee authorization: caller must possess a booking on the event with `status = 'CONFIRMED'` OR be the creator/organizer member/admin.
+  - Unregistered students receive `403 FORBIDDEN` with code `REGISTRATION_REQUIRED`.
+- **Organizer Upload & Guardrails (`POST /api/v1/events/:id/materials`):**
+  - Protected with `{ auth: true, policy: 'event:manage:owned', objectCheck: false }`.
+  - Strict upload limit: max 25 MB file size. Files exceeding 25 MB rejected with `400 VALIDATION_ERROR`.
+  - Whitelisted MIME types: PDF, Word (`.doc`, `.docx`), PowerPoint (`.ppt`, `.pptx`), ZIP, CSV, TXT, markdown, images (`.png`, `.jpg`, `.webp`). Executables/disallowed types rejected with `400 VALIDATION_ERROR`.
+- **Organizer Deletion (`DELETE /api/v1/events/:id/materials/:materialId`):**
+  - Protected with `{ auth: true, policy: 'event:manage:owned', objectCheck: false }`.
+  - Deletes material from `event_materials` and logs audit log event.
+- **Calendar Route Hardening (`GET /api/v1/calendar`):**
+  - Accepted `month` (`YYYY-MM`) and `view` query parameters, calculating UTC month bounds automatically for frontend calendar queries.
+- **User Teams Filtering (`GET /api/v1/teams?mine=true`):**
+  - Supported `mine=true` query parameter for authenticated students to view only their joined teams.
+- **Notification Preferences Storage:**
+  - Fixed `updateUserNotificationPreferences` and `getUserNotificationPreferences` to store preferences in `user_preferences` table instead of non-existent `users.meta` column.
+
+---
+
+### 3. Frontend Student Portal Restorations & UI Enhancements
+- **Audit Documentation (`docs/student-portal-audit.md`):**
+  - Audited every route, button, link, and state across `StudentShell`, `MyBookingsPage`, `PassportPage`, `CalendarPage`, `TeamsPage`, `VolunteerHubPage`, `NotificationCenter`, and `ProfilePreferencesPage`.
+- **MyBookingsPage (My Events):**
+  - **Upcoming vs. Past Tabs:** Segmented registrations into `Upcoming Events` and `Past & Completed` tabs with dynamic count badges.
+  - **Status Chips:** Rendered semantic badges for `CONFIRMED`, `PENDING PAYMENT`, `CHECKED IN`, and `CANCELLED`.
+  - **Resume-Checkout Flow:** Added prominent "Resume Checkout ({formatINR(totalPaise)})" CTA button for bookings in `PENDING_PAYMENT` status routing to `/checkout/:bookingId`.
+  - **Schedule + `.ics` Export:** Added "Add to Calendar (.ics)" button downloading standard RFC 5545 calendar files.
+  - **Offline Caching:** Added `localStorage` caching key `eventora_offline_tickets_cache` with offline indicator and full dynamic QR rendering.
+  - **Ticket Download:** Added "Download Pass" button.
+  - **Refund / Cancellation Policy Modal:** Added clear policy disclosure for paid tickets (refund in paise via YouPI-PG) vs free passes.
+  - **Event Materials Modal:** Added attendee materials viewer with file size formatting, MIME badges, and direct downloads.
+- **NotificationCenter Route Path Alignment:**
+  - Fixed endpoint paths from `/api/v1/users/me/notifications*` to `/api/v1/me/notifications*` and `/api/v1/me/notification-preferences`.
+- **StudentShell:**
+  - Added on-mount unread notifications fetch.
+  - Added desktop sidebar navigation item for `Volunteers Hub`.
+- **TeamsPage:**
+  - Wired "Request to Join" button to `POST /api/v1/teams/:id/join-requests`.
+  - Concurrently fetched discoverable and user-joined teams.
+- **ProfilePreferencesPage / App.tsx:**
+  - Wired "Sign Out" to await `logout()` from `useAuth()` before redirecting.
+
+---
+
+### 4. Verification & Quality Gate
+- **Unit & Security Integration Suite (`tests/unit/phase-p24-student-portal.test.ts`):** 12/12 passing tests:
+  1. Migration 26 down-migration to 25 and re-migration to 26.
+  2. Organizer material upload within 25MB and MIME limits.
+  3. Rejection of oversized files (>25MB) with 400.
+  4. Rejection of unsupported MIME types with 400.
+  5. Confirmed attendee access to event materials.
+  6. Unregistered attendee rejection with 403 `REGISTRATION_REQUIRED`.
+  7. Organizer and Admin materials access.
+  8. Calendar query with `month` parameter and RFC 5545 `.ics` export.
+  9. `GET /api/v1/me/bookings` with confirmed and pending bookings.
+  10. `GET /api/v1/teams?mine=true` user teams filtering.
+  11. `GET /api/v1/me/notifications` and `PATCH /api/v1/me/notification-preferences`.
+  12. Organizer material deletion.
+- **Playwright E2E Suite (`tests/e2e/student-portal-journey.spec.ts`):** End-to-end student journey covering Shell navigation, upcoming/past bookings, materials modal, resume payment CTA, calendar, teams, volunteer hub, notifications, and profile logout.
+- **Monorepo Quality Gate:** All 50 test files and 525 tests passing (100%), `pnpm typecheck` 0 errors, `pnpm lint` 0 errors.
+
 
 ---
 
@@ -1857,5 +2043,98 @@
 - **Static Analysis & Builds:**
   - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
   - `pnpm lint`: 0 errors.
+
+---
+
+## [Phase P24] - 2026-10-29
+### Student Portal Restoration & Audit Fixes
+
+### 1. Database Migrations & Schema Architecture (Migration 26)
+- **Migration 26 (`Phase 26: Event Materials for Registered Attendees`):**
+  - Created `event_materials` table:
+    - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+    - `event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE`
+    - `title VARCHAR(255) NOT NULL`
+    - `description TEXT`
+    - `file_url TEXT NOT NULL`
+    - `file_name VARCHAR(255) NOT NULL`
+    - `file_size_bytes INT NOT NULL`
+    - `mime_type VARCHAR(100) NOT NULL`
+    - `uploaded_by UUID NOT NULL REFERENCES users(id)`
+    - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+    - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+  - Added composite index: `CREATE INDEX IF NOT EXISTS idx_event_materials_event_id ON event_materials(event_id);`
+  - Registered version 26 in `schema_migrations`.
+- **Down-Migration Engine (`packages/backend/src/db/migrate-down.ts`):**
+  - Added rollback step 26 $\to$ 25 dropping `idx_event_materials_event_id` and `event_materials` table and deleting version 26 from `schema_migrations`.
+  - Verified live rollback and re-application against PostgreSQL.
+- **Drizzle Schema Alignment (`packages/backend/src/db/schema.ts`):**
+  - Defined `eventMaterials` pgTable, exported types `EventMaterial` and `NewEventMaterial`.
+
+---
+
+### 2. Backend Event Materials & Student Endpoints
+- **Registered-Only Materials Access (`GET /api/v1/events/:id/materials`):**
+  - Protected with `{ auth: true, policy: 'authenticated', objectCheck: false }`.
+  - Enforces registered attendee authorization: caller must possess a booking on the event with `status = 'CONFIRMED'` OR be the creator/organizer member/admin.
+  - Unregistered students receive `403 FORBIDDEN` with code `REGISTRATION_REQUIRED`.
+- **Organizer Upload & Guardrails (`POST /api/v1/events/:id/materials`):**
+  - Protected with `{ auth: true, policy: 'event:manage:owned', objectCheck: false }`.
+  - Strict upload limit: max 25 MB file size. Files exceeding 25 MB rejected with `400 VALIDATION_ERROR`.
+  - Whitelisted MIME types: PDF, Word (`.doc`, `.docx`), PowerPoint (`.ppt`, `.pptx`), ZIP, CSV, TXT, markdown, images (`.png`, `.jpg`, `.webp`). Executables/disallowed types rejected with `400 VALIDATION_ERROR`.
+- **Organizer Deletion (`DELETE /api/v1/events/:id/materials/:materialId`):**
+  - Protected with `{ auth: true, policy: 'event:manage:owned', objectCheck: false }`.
+  - Deletes material from `event_materials` and logs audit log event.
+- **Calendar Route Hardening (`GET /api/v1/calendar`):**
+  - Accepted `month` (`YYYY-MM`) and `view` query parameters, calculating UTC month bounds automatically for frontend calendar queries.
+- **User Teams Filtering (`GET /api/v1/teams?mine=true`):**
+  - Supported `mine=true` query parameter for authenticated students to view only their joined teams.
+- **Notification Preferences Storage:**
+  - Fixed `updateUserNotificationPreferences` and `getUserNotificationPreferences` to store preferences in `user_preferences` table instead of non-existent `users.meta` column.
+
+---
+
+### 3. Frontend Student Portal Restorations & UI Enhancements
+- **Audit Documentation (`docs/student-portal-audit.md`):**
+  - Audited every route, button, link, and state across `StudentShell`, `MyBookingsPage`, `PassportPage`, `CalendarPage`, `TeamsPage`, `VolunteerHubPage`, `NotificationCenter`, and `ProfilePreferencesPage`.
+- **MyBookingsPage (My Events):**
+  - **Upcoming vs. Past Tabs:** Segmented registrations into `Upcoming Events` and `Past & Completed` tabs with dynamic count badges.
+  - **Status Chips:** Rendered semantic badges for `CONFIRMED`, `PENDING PAYMENT`, `CHECKED IN`, and `CANCELLED`.
+  - **Resume-Checkout Flow:** Added prominent "Resume Checkout ({formatINR(totalPaise)})" CTA button for bookings in `PENDING_PAYMENT` status routing to `/checkout/:bookingId`.
+  - **Schedule + `.ics` Export:** Added "Add to Calendar (.ics)" button downloading standard RFC 5545 calendar files.
+  - **Offline Caching:** Added `localStorage` caching key `eventora_offline_tickets_cache` with offline indicator and full dynamic QR rendering.
+  - **Ticket Download:** Added "Download Pass" button.
+  - **Refund / Cancellation Policy Modal:** Added clear policy disclosure for paid tickets (refund in paise via YouPI-PG) vs free passes.
+  - **Event Materials Modal:** Added attendee materials viewer with file size formatting, MIME badges, and direct downloads.
+- **NotificationCenter Route Path Alignment:**
+  - Fixed endpoint paths from `/api/v1/users/me/notifications*` to `/api/v1/me/notifications*` and `/api/v1/me/notification-preferences`.
+- **StudentShell:**
+  - Added on-mount unread notifications fetch.
+  - Added desktop sidebar navigation item for `Volunteers Hub`.
+- **TeamsPage:**
+  - Wired "Request to Join" button to `POST /api/v1/teams/:id/join-requests`.
+  - Concurrently fetched discoverable and user-joined teams.
+- **ProfilePreferencesPage / App.tsx:**
+  - Wired "Sign Out" to await `logout()` from `useAuth()` before redirecting.
+
+---
+
+### 4. Verification & Quality Gate
+- **Unit & Security Integration Suite (`tests/unit/phase-p24-student-portal.test.ts`):** 12/12 passing tests:
+  1. Migration 26 down-migration to 25 and re-migration to 26.
+  2. Organizer material upload within 25MB and MIME limits.
+  3. Rejection of oversized files (>25MB) with 400.
+  4. Rejection of unsupported MIME types with 400.
+  5. Confirmed attendee access to event materials.
+  6. Unregistered attendee rejection with 403 `REGISTRATION_REQUIRED`.
+  7. Organizer and Admin materials access.
+  8. Calendar query with `month` parameter and RFC 5545 `.ics` export.
+  9. `GET /api/v1/me/bookings` with confirmed and pending bookings.
+  10. `GET /api/v1/teams?mine=true` user teams filtering.
+  11. `GET /api/v1/me/notifications` and `PATCH /api/v1/me/notification-preferences`.
+  12. Organizer material deletion.
+- **Playwright E2E Suite (`tests/e2e/student-portal-journey.spec.ts`):** End-to-end student journey covering Shell navigation, upcoming/past bookings, materials modal, resume payment CTA, calendar, teams, volunteer hub, notifications, and profile logout.
+- **Monorepo Quality Gate:** All 50 test files and 525 tests passing (100%), `pnpm typecheck` 0 errors, `pnpm lint` 0 errors.
+
 
 

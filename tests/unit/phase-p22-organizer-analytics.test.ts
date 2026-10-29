@@ -618,7 +618,7 @@ describe('Phase P22: Organizer Analytics Backend Quality Gate', () => {
     const client2 = await pool.connect();
     try {
       const vRes2 = await client2.query('SELECT MAX(version) as version FROM schema_migrations;');
-      expect(Number(vRes2.rows[0].version)).toBe(25);
+      expect(Number(vRes2.rows[0].version)).toBeGreaterThanOrEqual(25);
 
       const idxRes2 = await client2.query(
         `SELECT to_regclass('idx_bookings_event_created_at') as idx;`

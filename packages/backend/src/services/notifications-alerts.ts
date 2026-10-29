@@ -272,14 +272,14 @@ export async function markAllNotificationsRead(userId: string) {
  */
 export async function getUserNotificationPreferences(userId: string): Promise<NotificationPreferences> {
   const res = await pool.query(
-    `SELECT meta FROM users WHERE id = $1;`,
+    `SELECT email_enabled, inapp_enabled FROM user_preferences WHERE user_id = $1;`,
     [userId]
   );
-  const meta = res.rows[0]?.meta || {};
+  const row = res.rows[0];
   return {
-    email: meta.notifEmail ?? true,
-    inapp: meta.notifInapp ?? true,
-    urgentOnly: meta.notifUrgentOnly ?? false,
+    email: row?.email_enabled ?? true,
+    inapp: row?.inapp_enabled ?? true,
+    urgentOnly: false,
   };
 }
 
@@ -291,10 +291,13 @@ export async function updateUserNotificationPreferences(userId: string, prefs: P
   const updated = { ...current, ...prefs };
 
   await pool.query(
-    `UPDATE users
-     SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{notification_preferences}', $1)
-     WHERE id = $2;`,
-    [JSON.stringify(updated), userId]
+    `INSERT INTO user_preferences (user_id, email_enabled, inapp_enabled, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (user_id) DO UPDATE SET
+       email_enabled = EXCLUDED.email_enabled,
+       inapp_enabled = EXCLUDED.inapp_enabled,
+       updated_at = NOW();`,
+    [userId, updated.email, updated.inapp]
   );
 
   return updated;

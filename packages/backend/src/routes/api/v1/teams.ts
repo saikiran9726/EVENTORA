@@ -106,8 +106,27 @@ export const teamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       },
     },
     async (req, reply) => {
+      const { mine, filter } = (req.query as { mine?: string; filter?: string }) || {};
       const client = await pool.connect();
       try {
+        if ((mine === 'true' || filter === 'my') && req.user) {
+          const res = await client.query(
+            `SELECT t.*, u.display_name as creator_name,
+                    COUNT(tm2.user_id)::int as member_count
+             FROM teams t
+             JOIN team_members tm ON t.id = tm.team_id
+             JOIN users u ON t.created_by = u.id
+             LEFT JOIN team_members tm2 ON t.id = tm2.team_id AND tm2.status = 'ACTIVE'
+             WHERE tm.user_id = $1 AND tm.status = 'ACTIVE' AND t.status = 'active'
+             GROUP BY t.id, u.id
+             ORDER BY t.created_at DESC;`,
+            [req.user.id]
+          );
+          return reply.code(200).send({
+            teams: res.rows,
+          });
+        }
+
         const res = await client.query(
           `SELECT t.*, u.display_name as creator_name,
                   COUNT(tm.user_id)::int as member_count

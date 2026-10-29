@@ -65,17 +65,49 @@ export const TeamsPage: React.FC = () => {
   const [repoUrl, setRepoUrl] = useState('');
   const [demoUrl, setDemoUrl] = useState('');
 
+  const [joiningTeamId, setJoiningTeamId] = useState<string | null>(null);
+
   const loadTeams = async () => {
     setIsLoading(true);
     try {
-      const data = await apiClient<any>('/api/v1/teams/discover');
-      if (data?.teams) {
-        setDiscoverTeams(data.teams || []);
+      const [discoverRes, myRes] = await Promise.allSettled([
+        apiClient<any>('/api/v1/teams'),
+        apiClient<any>('/api/v1/teams?mine=true'),
+      ]);
+
+      if (discoverRes.status === 'fulfilled' && discoverRes.value?.teams) {
+        setDiscoverTeams(discoverRes.value.teams || []);
+      }
+      if (myRes.status === 'fulfilled' && myRes.value?.teams && myRes.value.teams.length > 0) {
+        setMyTeams(myRes.value.teams);
+        setSelectedTeam(myRes.value.teams[0]);
       }
     } catch {
       // Offline fallback
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRequestJoin = async (team: TeamRecord) => {
+    setJoiningTeamId(team.id);
+    try {
+      await apiClient(`/api/v1/teams/${team.id}/join-requests`, {
+        method: 'POST',
+      });
+      toast({
+        type: 'success',
+        title: 'Join Request Submitted',
+        message: `Requested to join ${team.name}. Team leaders will review your application.`,
+      });
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Could Not Send Request',
+        message: err.message || 'Failed to submit join request.',
+      });
+    } finally {
+      setJoiningTeamId(null);
     }
   };
 
@@ -349,7 +381,14 @@ export const TeamsPage: React.FC = () => {
 
                   <div className="pt-4 border-t border-border mt-4 flex items-center justify-between">
                     <span className="text-xs text-muted">Max {team.maxSize} members</span>
-                    <Button variant="secondary" size="sm">Request to Join</Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleRequestJoin(team)}
+                      disabled={joiningTeamId === team.id}
+                    >
+                      {joiningTeamId === team.id ? 'Sending...' : 'Request to Join'}
+                    </Button>
                   </div>
                 </Card>
               ))

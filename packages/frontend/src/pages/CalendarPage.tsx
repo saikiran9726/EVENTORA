@@ -141,14 +141,9 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ onSelectEvent: propO
 
   const handleExportIcs = async (event: CalendarEvent) => {
     try {
-      const res = await apiClient<{ data: { ics: string; filename: string } }>(
-        `/api/v1/events/${event.id}/ics`
-      );
-      const blob = new Blob([res.data.ics], { type: 'text/calendar;charset=utf-8' });
-      const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', res.data.filename || `${event.slug}.ics`);
+      link.href = `/api/v1/events/${event.id}/ics`;
+      link.setAttribute('download', `${event.slug || 'event'}.ics`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -165,7 +160,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ onSelectEvent: propO
         'PRODID:-//Eventora//Campus Calendar//EN',
         'BEGIN:VEVENT',
         `SUMMARY:${event.title}`,
-        `LOCATION:${event.venueName}`,
+        `LOCATION:${event.venueName || 'Campus Venue'}`,
         `DTSTART:${new Date(event.startsAt).toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
         `DTEND:${new Date(event.endsAt).toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
         'END:VEVENT',
