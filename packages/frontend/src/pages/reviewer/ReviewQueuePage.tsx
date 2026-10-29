@@ -75,41 +75,7 @@ export const ReviewQueuePage: React.FC = () => {
         setProposals([]);
       }
     } catch {
-      // Prototype mock queue if API is offline
-      setProposals([
-        {
-          id: 'mock-prop-1',
-          slug: 'smart-campus-robotics-grand-prix',
-          title: 'Inter-College Robotics Grand Prix 2026',
-          description: 'A 24-hour campus autonomous robotics challenge with line-following, obstacle clearance, and drone navigation.',
-          category: 'AI & Robotics',
-          department: 'Computer Science',
-          format: 'in_person',
-          capacity: 250,
-          startsAt: new Date(Date.now() + 86400000 * 5).toISOString(),
-          endsAt: new Date(Date.now() + 86400000 * 6).toISOString(),
-          status: 'pending_approval',
-          venueName: 'Sir MV Auditorium',
-          organizerName: 'Robotics Club',
-          contactEmail: 'robotics@campus.edu',
-        },
-        {
-          id: 'mock-prop-2',
-          slug: 'national-hackathon-2026',
-          title: 'National Level Smart Campus Hackathon',
-          description: 'Annual overnight hackathon building AI, sustainability, and Web3 solutions for smart campuses.',
-          category: 'Hackathon',
-          department: 'Electronics',
-          format: 'hybrid',
-          capacity: 400,
-          startsAt: new Date(Date.now() + 86400000 * 12).toISOString(),
-          endsAt: new Date(Date.now() + 86400000 * 13).toISOString(),
-          status: 'pending_approval',
-          venueName: 'Kalam Seminar Hall',
-          organizerName: 'Developer Student Club',
-          contactEmail: 'dsc@campus.edu',
-        },
-      ]);
+      setProposals([]);
     } finally {
       setIsLoading(false);
     }
@@ -140,17 +106,6 @@ export const ReviewQueuePage: React.FC = () => {
         message: 'Your current account does not have faculty review privileges. Please sign in as a faculty reviewer (e.g. reviewer.faculty@campus.edu) to record official decisions.',
         type: 'error',
       });
-      return;
-    }
-
-    if (selectedProposal.id.startsWith('mock-')) {
-      toast({
-        title: 'Prototype Demo Event',
-        message: 'This is a sample demo event. Submit a live proposal from the Organizer Dashboard to review real database events.',
-        type: 'info',
-      });
-      setSelectedProposal(null);
-      setDecisionType(null);
       return;
     }
 

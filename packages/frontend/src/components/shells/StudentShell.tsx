@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Compass, Calendar, Ticket, Award, User, Bell, Sun, Moon, Users, HeartHandshake } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PROTOTYPE_BADGE_TEXT } from '@/prototype/data';
 import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 import { apiClient } from '@/lib/api-client';
 
@@ -49,14 +48,16 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text antialiased selection:bg-brand selection:text-white w-full overflow-x-hidden">
-      {/* Top Prototype Badge Banner */}
-      <div className="bg-brand text-white text-xs py-1.5 px-4 font-medium tracking-wide flex items-center justify-between z-50">
-        <div className="flex items-center gap-2 mx-auto">
-          <span className="w-2 h-2 rounded-full bg-warning animate-ping" />
-          <span className="font-semibold">{PROTOTYPE_BADGE_TEXT}</span>
-          <span className="hidden sm:inline text-white/80">| Student Experience Shell</span>
+      {/* Optional Demo Mode Banner (tree-shaken when VITE_DEMO_MODE is not true) */}
+      {import.meta.env.VITE_DEMO_MODE === 'true' && (
+        <div className="bg-brand text-white text-xs py-1.5 px-4 font-medium tracking-wide flex items-center justify-between z-50">
+          <div className="flex items-center gap-2 mx-auto">
+            <span className="w-2 h-2 rounded-full bg-warning animate-ping" />
+            <span className="font-semibold">DEMO MODE</span>
+            <span className="hidden sm:inline text-white/80">| Student Experience Shell</span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Top Header */}
       <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur-md border-b border-border h-14 pt-safe flex items-center justify-between px-4 lg:px-6 w-full">
@@ -98,13 +99,15 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
             <span>Volunteers</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => onRouteChange('components')}
-            className="px-2 py-1 rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
-          >
-            <span>UI Gallery</span>
-          </button>
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              onClick={() => onRouteChange('components')}
+              className="px-2 py-1 rounded-md text-xs font-semibold text-brand bg-brand/10 hover:bg-brand/20 transition-colors flex items-center gap-1"
+            >
+              <span>UI Gallery</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -176,17 +179,19 @@ export const StudentShell: React.FC<ShellCommonProps> = ({
               <HeartHandshake className="w-4 h-4 shrink-0" />
               <span>Volunteers Hub</span>
             </button>
-            <div className="pt-2 mt-2 border-t border-border">
-              <button
-                onClick={() => onRouteChange('components')}
-                className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left',
-                  activeRoute === 'components' ? 'bg-brand text-white' : 'text-text-muted hover:text-text hover:bg-surface-2'
-                )}
-              >
-                <span>UI Components Gallery</span>
-              </button>
-            </div>
+            {import.meta.env.DEV && (
+              <div className="pt-2 mt-2 border-t border-border">
+                <button
+                  onClick={() => onRouteChange('components')}
+                  className={cn(
+                    'w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left',
+                    activeRoute === 'components' ? 'bg-brand text-white' : 'text-text-muted hover:text-text hover:bg-surface-2'
+                  )}
+                >
+                  <span>UI Components Gallery</span>
+                </button>
+              </div>
+            )}
           </div>
         </aside>
 

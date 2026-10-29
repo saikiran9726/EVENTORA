@@ -1,7 +1,6 @@
 import React from 'react';
 import { ShieldAlert, Users, Calendar, FileText, Activity, Sun, Moon, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PROTOTYPE_BADGE_TEXT } from '@/prototype/data';
 import { ShellCommonProps } from './StudentShell';
 
 export const AdminShell: React.FC<ShellCommonProps> = ({
@@ -21,13 +20,16 @@ export const AdminShell: React.FC<ShellCommonProps> = ({
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text antialiased selection:bg-brand selection:text-white w-full overflow-x-hidden">
-      <div className="bg-brand text-white text-xs py-1.5 px-4 font-medium tracking-wide flex items-center justify-between z-50">
-        <div className="flex items-center gap-2 mx-auto">
-          <span className="w-2 h-2 rounded-full bg-warning animate-ping" />
-          <span className="font-semibold">{PROTOTYPE_BADGE_TEXT}</span>
-          <span className="hidden sm:inline text-white/80">| Platform Administrator Shell</span>
+      {/* Optional Demo Mode Banner (tree-shaken when VITE_DEMO_MODE is not true) */}
+      {import.meta.env.VITE_DEMO_MODE === 'true' && (
+        <div className="bg-brand text-white text-xs py-1.5 px-4 font-medium tracking-wide flex items-center justify-between z-50">
+          <div className="flex items-center gap-2 mx-auto">
+            <span className="w-2 h-2 rounded-full bg-warning animate-ping" />
+            <span className="font-semibold">DEMO MODE</span>
+            <span className="hidden sm:inline text-white/80">| Platform Administrator Shell</span>
+          </div>
         </div>
-      </div>
+      )}
 
       <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur-md border-b border-border h-14 pt-safe flex items-center justify-between px-4 lg:px-6 w-full">
         <div className="flex items-center gap-3">
@@ -87,18 +89,20 @@ export const AdminShell: React.FC<ShellCommonProps> = ({
                 </button>
               );
             })}
-            <div className="pt-2 mt-2 border-t border-border">
-              <button
-                onClick={() => onRouteChange('components')}
-                className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left',
-                  activeRoute === 'components' ? 'bg-brand text-white' : 'text-text-muted hover:text-text hover:bg-surface-2'
-                )}
-              >
-                <Sparkles className="w-4 h-4 shrink-0" />
-                <span>UI Components Gallery</span>
-              </button>
-            </div>
+            {import.meta.env.DEV && (
+              <div className="pt-2 mt-2 border-t border-border">
+                <button
+                  onClick={() => onRouteChange('components')}
+                  className={cn(
+                    'w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left',
+                    activeRoute === 'components' ? 'bg-brand text-white' : 'text-text-muted hover:text-text hover:bg-surface-2'
+                  )}
+                >
+                  <Sparkles className="w-4 h-4 shrink-0" />
+                  <span>UI Components Gallery</span>
+                </button>
+              </div>
+            )}
           </div>
         </aside>
 

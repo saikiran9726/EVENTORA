@@ -51,54 +51,19 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ onSelectEvent: propO
         `/api/v1/calendar?month=${monthKey}&view=${viewMode}`
       );
       const itemList = res?.items || res?.data?.items || [];
-      if (itemList.length > 0) {
-        const mapped: CalendarEvent[] = itemList.map((i: any) => ({
-          id: i.id,
-          slug: i.slug,
-          title: i.title,
-          category: i.category,
-          format: i.format,
-          venueName: i.venueName || i.venue?.name || 'Sir MV Auditorium',
-          startsAt: i.startsAt,
-          endsAt: i.endsAt,
-        }));
-        setEvents(mapped);
-      }
+      const mapped: CalendarEvent[] = itemList.map((i: any) => ({
+        id: i.id,
+        slug: i.slug,
+        title: i.title,
+        category: i.category,
+        format: i.format,
+        venueName: i.venueName || i.venue?.name || 'Sir MV Auditorium',
+        startsAt: i.startsAt,
+        endsAt: i.endsAt,
+      }));
+      setEvents(mapped);
     } catch {
-      // Fallback mock events for current month
-      const now = new Date();
-      setEvents([
-        {
-          id: 'evt-1',
-          slug: 'smart-campus-robotics-grand-prix',
-          title: 'Smart Campus AI & Robotics Symposium 2026',
-          category: 'AI & Robotics',
-          format: 'in_person',
-          venueName: 'Sir MV Auditorium',
-          startsAt: new Date(now.getFullYear(), now.getMonth(), 15, 9, 30).toISOString(),
-          endsAt: new Date(now.getFullYear(), now.getMonth(), 15, 17, 30).toISOString(),
-        },
-        {
-          id: 'evt-2',
-          slug: 'national-level-hackathon',
-          title: 'Campus 36-Hour Hackathon 2026',
-          category: 'Hackathon',
-          format: 'hybrid',
-          venueName: 'Kalam Seminar Hall',
-          startsAt: new Date(now.getFullYear(), now.getMonth(), 22, 10, 0).toISOString(),
-          endsAt: new Date(now.getFullYear(), now.getMonth(), 23, 20, 0).toISOString(),
-        },
-        {
-          id: 'evt-3',
-          slug: 'cultural-music-night',
-          title: 'Annual Acoustic Rhythm Fest',
-          category: 'Cultural Fest',
-          format: 'in_person',
-          venueName: 'Central Amphitheater',
-          startsAt: new Date(now.getFullYear(), now.getMonth(), 28, 18, 0).toISOString(),
-          endsAt: new Date(now.getFullYear(), now.getMonth(), 28, 22, 0).toISOString(),
-        },
-      ]);
+      setEvents([]);
     } finally {
       setIsLoading(false);
     }

@@ -23,7 +23,12 @@ export default [
   },
   {
     files: ['packages/frontend/src/**/*.{ts,tsx}'],
-    ignores: ['packages/frontend/src/lib/api-client.ts'],
+    ignores: [
+      'packages/frontend/src/lib/api-client.ts',
+      '**/*.test.{ts,tsx}',
+      '**/*.spec.{ts,tsx}',
+      '**/*.stories.{ts,tsx}',
+    ],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
@@ -32,6 +37,17 @@ export default [
       },
     },
     rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/mock/**', '**/prototype/**', '@/mock/**', '@/prototype/**', '../mock/**', '../prototype/**'],
+              message: 'Importing mock or prototype data outside tests/stories is strictly forbidden.',
+            },
+          ],
+        },
+      ],
       'no-restricted-syntax': [
         'error',
         {

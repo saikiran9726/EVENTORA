@@ -56,24 +56,12 @@ export const PublicVerifyPage: React.FC<{
     } catch (err: any) {
       if (err instanceof ApiError) {
         if (err.status === 404) {
-          if (clean === '7H9K-2M4N-8PQR') {
-            setResult({
-              found: true,
-              valid: true,
-              status: 'VALID',
-              verificationCode: '7H9K-2M4N-8PQR',
-              eventTitle: 'Smart Campus AI & Robotics Symposium 2026',
-              eventDate: '2026-11-20T10:00:00Z',
-              attendeeInitials: 'A. S.',
-            });
-          } else {
-            setResult({
-              found: false,
-              valid: false,
-              status: 'REVOKED',
-              message: err.message || 'Certificate code not found in campus database.',
-            });
-          }
+          setResult({
+            found: false,
+            valid: false,
+            status: 'REVOKED',
+            message: err.message || 'Certificate code not found in campus database.',
+          });
         } else if (err.status === 429) {
           setErrorMsg('Rate limit exceeded (max 30 verifications/minute). Please wait 1 minute before retrying.');
         } else {

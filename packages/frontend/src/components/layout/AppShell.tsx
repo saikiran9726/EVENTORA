@@ -17,7 +17,6 @@ import {
   QrCode,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { MOCK_BANNER_TEXT } from '@/mock/data';
 
 export type CurrentRole = 'student' | 'organizer' | 'reviewer' | 'admin' | 'checkin_staff';
 
@@ -88,13 +87,15 @@ export const AppShell: React.FC<AppShellProps> = ({
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text antialiased selection:bg-brand selection:text-white w-full overflow-x-hidden">
-      {/* Top Phase Prototype Banner */}
-      <div className="bg-brand text-white text-xs py-1.5 px-4 text-center font-medium tracking-wide flex items-center justify-between z-50">
-        <span className="flex items-center gap-1.5 mx-auto">
-          <span className="w-2 h-2 rounded-full bg-warning animate-ping inline-block" />
-          <span>{MOCK_BANNER_TEXT}</span>
-        </span>
-      </div>
+      {/* Optional Demo Mode Banner (tree-shaken when VITE_DEMO_MODE is not true) */}
+      {import.meta.env.VITE_DEMO_MODE === 'true' && (
+        <div className="bg-brand text-white text-xs py-1.5 px-4 text-center font-medium tracking-wide flex items-center justify-between z-50">
+          <span className="flex items-center gap-1.5 mx-auto">
+            <span className="w-2 h-2 rounded-full bg-warning animate-ping inline-block" />
+            <span>Eventora Demo Mode</span>
+          </span>
+        </div>
+      )}
 
       {/* Main Top Header */}
       <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur-md border-b border-border h-14 pt-safe flex items-center justify-between px-4 lg:px-6 w-full">

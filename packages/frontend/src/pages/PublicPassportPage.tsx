@@ -61,73 +61,17 @@ export const PublicPassportPage: React.FC<{
           setPassport(data);
           setIsNotFound(false);
         }
-        return;
       } catch (err: any) {
-        if (err instanceof ApiError && err.status === 404) {
-          // If backend returns 404, check if this is an active prototype session
-          const isPublicStored = typeof localStorage !== 'undefined'
-            ? localStorage.getItem('eventora_passport_public')
-            : null;
-
-          if (isPublicStored === 'false') {
-            if (!isCancelled) setIsNotFound(true);
-            return;
-          }
-        } else {
+        if (!isCancelled) {
+          setPassport(null);
+          setIsNotFound(true);
+        }
+        if (!(err instanceof ApiError && err.status === 404)) {
           reportError(err, { context: 'fetchPublicPassport', slug });
         }
       } finally {
         if (!isCancelled) {
           setIsLoading(false);
-        }
-      }
-
-      if (!isCancelled) {
-        const isPublicStored = typeof localStorage !== 'undefined'
-          ? localStorage.getItem('eventora_passport_public')
-          : null;
-        const storedSlug = typeof localStorage !== 'undefined'
-          ? localStorage.getItem('eventora_passport_slug') || 'aarav-patel'
-          : 'aarav-patel';
-
-        if (isPublicStored === 'false') {
-          setIsNotFound(true);
-        } else if (slug === 'aarav-patel' || slug === 'student-public' || slug === storedSlug) {
-          setPassport({
-            displayName: 'Aarav Patel',
-            slug,
-            collegeName: 'Tech University A',
-            verifiedStudent: true,
-            achievements: [
-              {
-                id: 'ach-proto-1',
-                type: 'CERTIFICATE',
-                title: 'Smart Campus AI & Robotics Symposium 2026',
-                eventDate: '2026-11-20T10:00:00Z',
-                badgeLabel: 'Verified Certificate',
-                verificationStatus: 'VERIFIED',
-              },
-              {
-                id: 'ach-proto-2',
-                type: 'ATTENDANCE',
-                title: 'Inter-College Autonomous Hackathon',
-                eventDate: '2026-10-15T09:00:00Z',
-                badgeLabel: 'Event Check-in Admitted',
-                verificationStatus: 'VERIFIED',
-              },
-              {
-                id: 'ach-proto-3',
-                type: 'VOLUNTEER',
-                title: 'National Tech Summit 2026',
-                eventDate: '2026-09-10T08:00:00Z',
-                badgeLabel: 'Verified Volunteer Service',
-                verificationStatus: 'VERIFIED',
-              },
-            ],
-          });
-          setIsNotFound(false);
-        } else {
-          setIsNotFound(true);
         }
       }
     };

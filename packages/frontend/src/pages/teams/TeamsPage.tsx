@@ -113,26 +113,6 @@ export const TeamsPage: React.FC = () => {
 
   useEffect(() => {
     loadTeams();
-
-    // Default mock team if list empty
-    const mock: TeamRecord = {
-      id: 'team-mock-1',
-      name: 'NeuralHack Squad',
-      description: 'Building AI autonomous edge agents for campus sustainability.',
-      visibility: 'discoverable',
-      maxSize: 4,
-      status: 'active',
-      skillsOffered: ['Python', 'FastAPI', 'PyTorch'],
-      skillsNeeded: ['React', 'Tailwind', 'Embedded IoT'],
-      isLeader: true,
-      members: [
-        { userId: 'u-1', displayName: 'Aarav Sharma (You)', email: 'aarav@campus.edu', role: 'leader', status: 'ACTIVE' },
-        { userId: 'u-2', displayName: 'Priya Patel', email: 'priya@campus.edu', role: 'co_leader', status: 'ACTIVE' },
-        { userId: 'u-3', displayName: 'Kavya Rao', email: 'kavya@campus.edu', role: 'member', status: 'ACTIVE' },
-      ],
-    };
-    setMyTeams([mock]);
-    setSelectedTeam(mock);
   }, []);
 
   const handleCreateTeam = async (e: React.FormEvent) => {

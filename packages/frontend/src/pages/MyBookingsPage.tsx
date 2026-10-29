@@ -145,23 +145,8 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
           // Ignore localStorage quota limits
         }
       } else {
-        // Fallback default mock
-        const defaultBookings: BookingRecord[] = [
-          {
-            id: 'mock-bk-1',
-            eventId: 'mock-evt-1',
-            eventTitle: 'AI & Robotics Annual Symposium',
-            status: 'CONFIRMED',
-            totalPaise: 0,
-            createdAt: new Date().toISOString(),
-            ticketCode: 'EVT-ROBOT-8921',
-            qrPayload: 'https://eventora.campus.edu/verify/EVT-ROBOT-8921',
-            startsAt: '2026-11-20T10:00:00Z',
-            endsAt: '2026-11-20T17:00:00Z',
-            venueName: 'Sir MV Auditorium',
-          },
-        ];
-        setBookings(defaultBookings);
+        setBookings([]);
+        setIsOfflineData(false);
       }
     } catch {
       // Offline fallback: load from persisted offline cache
@@ -179,21 +164,7 @@ export const MyBookingsPage: React.FC<{ onNavigateToDiscovery?: () => void }> = 
         }
       }
 
-      setBookings([
-        {
-          id: 'mock-bk-1',
-          eventId: 'mock-evt-1',
-          eventTitle: 'AI & Robotics Annual Symposium',
-          status: 'CONFIRMED',
-          totalPaise: 0,
-          createdAt: new Date().toISOString(),
-          ticketCode: 'EVT-ROBOT-8921',
-          qrPayload: 'https://eventora.campus.edu/verify/EVT-ROBOT-8921',
-          startsAt: '2026-11-20T10:00:00Z',
-          endsAt: '2026-11-20T17:00:00Z',
-          venueName: 'Sir MV Auditorium',
-        },
-      ]);
+      setBookings([]);
     } finally {
       setIsLoading(false);
     }

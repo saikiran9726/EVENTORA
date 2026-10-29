@@ -1,7 +1,6 @@
 import React from 'react';
 import { QrCode, Sun, Moon, ArrowLeft, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { PROTOTYPE_BADGE_TEXT } from '@/prototype/data';
 import { ShellCommonProps } from './StudentShell';
 
 export const CheckinShell: React.FC<ShellCommonProps> = ({
@@ -12,14 +11,16 @@ export const CheckinShell: React.FC<ShellCommonProps> = ({
 }) => {
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text antialiased selection:bg-brand selection:text-white w-full overflow-x-hidden">
-      {/* Top Prototype Badge Banner */}
-      <div className="bg-brand text-white text-xs py-1.5 px-4 font-medium tracking-wide flex items-center justify-between z-50">
-        <div className="flex items-center gap-2 mx-auto">
-          <span className="w-2 h-2 rounded-full bg-warning animate-ping" />
-          <span className="font-semibold">{PROTOTYPE_BADGE_TEXT}</span>
-          <span className="hidden sm:inline text-white/80">| Scanner-First Gate Staff Shell</span>
+      {/* Optional Demo Mode Banner (tree-shaken when VITE_DEMO_MODE is not true) */}
+      {import.meta.env.VITE_DEMO_MODE === 'true' && (
+        <div className="bg-brand text-white text-xs py-1.5 px-4 font-medium tracking-wide flex items-center justify-between z-50">
+          <div className="flex items-center gap-2 mx-auto">
+            <span className="w-2 h-2 rounded-full bg-warning animate-ping" />
+            <span className="font-semibold">DEMO MODE</span>
+            <span className="hidden sm:inline text-white/80">| Scanner-First Gate Staff Shell</span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Dedicated Scanner-First Header */}
       <header className="sticky top-0 z-40 bg-surface/95 backdrop-blur-md border-b border-border h-14 pt-safe flex items-center justify-between px-4 w-full">
@@ -50,15 +51,17 @@ export const CheckinShell: React.FC<ShellCommonProps> = ({
             {isDarkMode ? <Sun className="w-4 h-4 text-warning" /> : <Moon className="w-4 h-4 text-brand" />}
           </button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onRouteChange('components')}
-            className="hidden sm:inline-flex text-xs py-1 px-2"
-          >
-            <Sparkles className="w-3.5 h-3.5 mr-1" />
-            <span>UI Gallery</span>
-          </Button>
+          {import.meta.env.DEV && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onRouteChange('components')}
+              className="hidden sm:inline-flex text-xs py-1 px-2"
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-1" />
+              <span>UI Gallery</span>
+            </Button>
+          )}
         </div>
       </header>
 

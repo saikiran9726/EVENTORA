@@ -61,9 +61,9 @@ export const AlertComposer: React.FC<AlertComposerProps> = ({
         return;
       }
     } catch {
-      // Prototype fallback
+      // Real empty state
     }
-    setRecipientCount(42);
+    setRecipientCount(0);
   }, [eventId]);
 
   // Fetch alert history
@@ -75,42 +75,9 @@ export const AlertComposer: React.FC<AlertComposerProps> = ({
         return;
       }
     } catch {
-      // Prototype fallback
+      // Real empty state
     }
-
-    // Prototype sample alerts
-    setAlerts([
-      {
-        id: 'alt_01',
-        eventId,
-        kind: 'venue',
-        severity: 'urgent',
-        message: 'DevClash venue relocated to Tech Tower Auditorium A due to rain.',
-        createdAt: new Date(Date.now() - 35 * 60000).toISOString(),
-        recipientCount: 42,
-        deliveryStats: {
-          queued: 0,
-          accepted: 12,
-          delivered: 30,
-          failed: 0,
-        },
-      },
-      {
-        id: 'alt_02',
-        eventId,
-        kind: 'time',
-        severity: 'important',
-        message: 'Opening address postponed by 15 minutes. Starting at 10:15 AM sharp.',
-        createdAt: new Date(Date.now() - 120 * 60000).toISOString(),
-        recipientCount: 42,
-        deliveryStats: {
-          queued: 2,
-          accepted: 40,
-          delivered: 0,
-          failed: 0,
-        },
-      },
-    ]);
+    setAlerts([]);
   }, [eventId]);
 
   useEffect(() => {
@@ -142,36 +109,15 @@ export const AlertComposer: React.FC<AlertComposerProps> = ({
       });
       setMessage('');
       fetchAlertHistory();
-      return;
-    } catch {
-      // Prototype fallback
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Broadcast Failed',
+        message: err.message || 'Could not dispatch broadcast alert.',
+      });
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // Local prototype addition
-    const newAlert: AlertRecord = {
-      id: `alt_${Date.now()}`,
-      eventId,
-      kind,
-      severity,
-      message: message.trim(),
-      createdAt: new Date().toISOString(),
-      recipientCount,
-      deliveryStats: {
-        queued: 0,
-        accepted: recipientCount,
-        delivered: 0,
-        failed: 0,
-      },
-    };
-
-    setAlerts((prev) => [newAlert, ...prev]);
-    setMessage('');
-    toast({
-      type: 'info',
-      title: severity === 'urgent' ? '⚡ Urgent Alert Broadcasted (Direct Tx)' : 'Alert Broadcasted',
-      message: `Dispatched to ${recipientCount} attendees. Delivery status set to ACCEPTED (awaiting webhook for DELIVERED).`,
-    });
-    setIsSubmitting(false);
   };
 
   const getKindIcon = (k: AlertRecord['kind']) => {

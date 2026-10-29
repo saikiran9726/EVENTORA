@@ -42,74 +42,28 @@ export interface MyVolunteerShift {
 export const VolunteerHubPage: React.FC = () => {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'browse' | 'myshifts'>('myshifts');
-  const [totalHours, setTotalHours] = useState(12.5);
+  const [totalHours, setTotalHours] = useState(0);
   const [isApplying, setIsApplying] = useState<string | null>(null);
   const [isCheckedIn, setIsCheckedIn] = useState<Record<string, boolean>>({});
 
-  const [openShifts] = useState<OpenShiftItem[]>([
-    {
-      id: 'shift-demo-1',
-      roleId: 'role-demo-1',
-      roleTitle: 'Stage & Track Usher',
-      requirements: 'Welcome guests, check digital badges, direct to seating blocks.',
-      startsAt: new Date(Date.now() + 86400000).toISOString(),
-      endsAt: new Date(Date.now() + 86400000 + 4 * 3600000).toISOString(),
-      capacity: 6,
-      assigned: 4,
-      venueName: 'Sir MV Auditorium Hall A',
-      eventTitle: 'Smart Campus AI & Robotics Symposium 2026',
-    },
-    {
-      id: 'shift-demo-2',
-      roleId: 'role-demo-2',
-      roleTitle: 'Turnstile Scanner Assistant',
-      requirements: 'Assist entrance scanner staff with optical device alignment and attendee flow.',
-      startsAt: new Date(Date.now() + 172800000).toISOString(),
-      endsAt: new Date(Date.now() + 172800000 + 3 * 3600000).toISOString(),
-      capacity: 4,
-      assigned: 1,
-      venueName: 'North Gate Entrance Hub',
-      eventTitle: 'Autonomous Robotics Workshop',
-    },
-  ]);
-
-  const [myShifts, setMyShifts] = useState<MyVolunteerShift[]>([
-    {
-      applicationId: 'app-demo-1',
-      shiftId: 'shift-demo-active',
-      status: 'ASSIGNED',
-      roleTitle: 'Lead Event Ambassador',
-      eventTitle: 'Smart Campus AI & Robotics Symposium 2026',
-      startsAt: new Date(Date.now() - 10 * 60000).toISOString(), // Started 10 min ago (inside window!)
-      endsAt: new Date(Date.now() + 3 * 3600000).toISOString(),
-      venueName: 'Main Entrance & Registration Desk',
-      appliedAt: '2026-10-20T10:00:00Z',
-    },
-    {
-      applicationId: 'app-demo-2',
-      shiftId: 'shift-demo-future',
-      status: 'APPROVED',
-      roleTitle: 'AV Equipment Coordinator',
-      eventTitle: 'Autonomous Drone Derby',
-      startsAt: new Date(Date.now() + 2 * 86400000).toISOString(), // In 2 days (outside window)
-      endsAt: new Date(Date.now() + 2 * 86400000 + 4 * 3600000).toISOString(),
-      venueName: 'Outdoor Arena Ground B',
-      appliedAt: '2026-10-21T08:30:00Z',
-    },
-  ]);
+  const [openShifts, setOpenShifts] = useState<OpenShiftItem[]>([]);
+  const [myShifts, setMyShifts] = useState<MyVolunteerShift[]>([]);
 
   useEffect(() => {
     async function loadVolunteeringData() {
       try {
         const data = await apiClient<any>('/api/v1/me/volunteering');
         if (data?.volunteering) {
-          setTotalHours(data.volunteering.totalHours ?? 12.5);
-          if (Array.isArray(data.volunteering.applications) && data.volunteering.applications.length > 0) {
+          setTotalHours(data.volunteering.totalHours ?? 0);
+          if (Array.isArray(data.volunteering.applications)) {
             setMyShifts(data.volunteering.applications);
+          }
+          if (Array.isArray(data.volunteering.openShifts)) {
+            setOpenShifts(data.volunteering.openShifts);
           }
         }
       } catch {
-        // Retain prototype data
+        // Real empty state on error / offline
       }
     }
     loadVolunteeringData();
@@ -118,11 +72,9 @@ export const VolunteerHubPage: React.FC = () => {
   const handleApply = async (shift: OpenShiftItem) => {
     setIsApplying(shift.id);
     try {
-      if (!shift.id.startsWith('shift-demo')) {
-        await apiClient(`/api/v1/shifts/${shift.id}/applications`, {
-          method: 'POST',
-        });
-      }
+      await apiClient(`/api/v1/shifts/${shift.id}/applications`, {
+        method: 'POST',
+      });
 
       toast({
         type: 'success',
@@ -159,11 +111,9 @@ export const VolunteerHubPage: React.FC = () => {
 
   const handleCheckIn = async (app: MyVolunteerShift) => {
     try {
-      if (!app.applicationId.startsWith('app-demo')) {
-        await apiClient(`/api/v1/applications/${app.applicationId}/check-in`, {
-          method: 'POST',
-        });
-      }
+      await apiClient(`/api/v1/applications/${app.applicationId}/check-in`, {
+        method: 'POST',
+      });
 
       toast({
         type: 'success',
@@ -355,54 +305,60 @@ export const VolunteerHubPage: React.FC = () => {
       {/* Tab 2: Browse Opportunities */}
       {activeTab === 'browse' && (
         <div className="space-y-4">
-          {openShifts.map((shift) => {
-            const seatsLeft = Math.max(0, shift.capacity - shift.assigned);
-            return (
-              <Card key={shift.id} className="p-4 sm:p-5 border border-border space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-sm font-bold text-text">{shift.roleTitle}</h2>
-                    <p className="text-xs text-brand font-medium mt-0.5">{shift.eventTitle}</p>
+          {openShifts.length === 0 ? (
+            <Card className="p-8 text-center text-xs text-text-muted">
+              No open volunteer opportunities at this time. Check back later!
+            </Card>
+          ) : (
+            openShifts.map((shift) => {
+              const seatsLeft = Math.max(0, shift.capacity - shift.assigned);
+              return (
+                <Card key={shift.id} className="p-4 sm:p-5 border border-border space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-sm font-bold text-text">{shift.roleTitle}</h2>
+                      <p className="text-xs text-brand font-medium mt-0.5">{shift.eventTitle}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={seatsLeft > 0 ? 'success' : 'neutral'} size="sm">
+                        {seatsLeft > 0 ? `${seatsLeft} seats available` : 'Full'}
+                      </Badge>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={seatsLeft === 0 || isApplying === shift.id}
+                        onClick={() => handleApply(shift)}
+                        className="text-xs flex items-center gap-1"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>{isApplying === shift.id ? 'Applying...' : 'Apply'}</span>
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={seatsLeft > 0 ? 'success' : 'neutral'} size="sm">
-                      {seatsLeft > 0 ? `${seatsLeft} seats available` : 'Full'}
-                    </Badge>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={seatsLeft === 0 || isApplying === shift.id}
-                      onClick={() => handleApply(shift)}
-                      className="text-xs flex items-center gap-1"
-                    >
-                      <Send className="w-3 h-3" />
-                      <span>{isApplying === shift.id ? 'Applying...' : 'Apply'}</span>
-                    </Button>
-                  </div>
-                </div>
 
-                <p className="text-xs text-text-muted leading-relaxed">{shift.requirements}</p>
+                  <p className="text-xs text-text-muted leading-relaxed">{shift.requirements}</p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-text-muted pt-2 border-t border-border/60">
-                  <div className="flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-brand" />
-                    <span>{new Date(shift.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-text-muted pt-2 border-t border-border/60">
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-brand" />
+                      <span>{new Date(shift.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-brand" />
+                      <span>
+                        {new Date(shift.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} –{' '}
+                        {new Date(shift.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 sm:col-span-2">
+                      <MapPin className="w-3.5 h-3.5 text-brand" />
+                      <span>{shift.venueName}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-brand" />
-                    <span>
-                      {new Date(shift.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} –{' '}
-                      {new Date(shift.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 sm:col-span-2">
-                    <MapPin className="w-3.5 h-3.5 text-brand" />
-                    <span>{shift.venueName}</span>
-                  </div>
-                </div>
-              </Card>
-            );
-          })}
+                </Card>
+              );
+            })
+          )}
         </div>
       )}
     </div>

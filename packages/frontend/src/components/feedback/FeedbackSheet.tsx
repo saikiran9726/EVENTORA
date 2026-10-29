@@ -82,24 +82,6 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
     setErrorMessage(null);
 
     try {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId);
-
-      // Graceful fallback for prototype mode / mock events
-      if (!isUuid || eventId.startsWith('mock-')) {
-        toast({
-          type: 'success',
-          title: isEdit ? 'Feedback Updated' : 'Thank You for Your Feedback!',
-          message: isEdit
-            ? 'Your review was updated successfully.'
-            : 'Your response helps organizers enhance upcoming campus events.',
-        });
-        if (onSuccess) {
-          onSuccess({ rating, comment, submittedAt: new Date().toISOString() });
-        }
-        onClose();
-        return;
-      }
-
       const data = await apiClient.post<any>(`/api/v1/events/${eventId}/feedback`, {
         rating,
         comment: comment.trim(),

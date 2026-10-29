@@ -24,7 +24,6 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { useToast } from '@/components/ui/Toast';
-import { PROTOTYPE_ORGANIZER_STATS, PROTOTYPE_ATTENDEES } from '@/prototype/data';
 import { formatPaise } from '@/lib/utils';
 import { ExportDialog } from '@/components/analytics/ExportDialog';
 import { AlertComposer } from '@/components/organizer/AlertComposer';
@@ -124,12 +123,9 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
   const [sortField, setSortField] = useState<'studentName' | 'rollNumber' | 'checkInStatus'>('studentName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const [selectedEventId, setSelectedEventId] = useState('mock-evt-1');
-  const [selectedEventTitle, setSelectedEventTitle] = useState('Smart Campus AI & Robotics Symposium');
-  const [organizerEvents, setOrganizerEvents] = useState<Array<{ id: string; title: string }>>([
-    { id: 'mock-evt-1', title: 'Smart Campus AI & Robotics Symposium' },
-    { id: 'mock-evt-2', title: 'Annual Autonomous Drone Derby' },
-  ]);
+  const [selectedEventId, setSelectedEventId] = useState('');
+  const [selectedEventTitle, setSelectedEventTitle] = useState('');
+  const [organizerEvents, setOrganizerEvents] = useState<Array<{ id: string; title: string }>>([]);
 
   // Volunteers & Operations State (Phase 8 FR-VOL, FR-OPS)
   const [applicants, setApplicants] = useState<VolunteerApplicant[]>([
@@ -275,41 +271,22 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
 
   // Ledger state
   const [salesSummary, setSalesSummary] = useState<SalesSummary>({
-    grossPaise: PROTOTYPE_ORGANIZER_STATS.simulatedGrossSalesPaise,
-    refundsPaise: 15000,
-    netPaise: PROTOTYPE_ORGANIZER_STATS.simulatedGrossSalesPaise - 15000,
-    salesCount: 42,
-    refundsCount: 1,
+    grossPaise: 0,
+    refundsPaise: 0,
+    netPaise: 0,
+    salesCount: 0,
+    refundsCount: 0,
   });
-  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([
-    {
-      id: 'led-1',
-      bookingId: 'bkg-8f92a10c',
-      paymentId: 'pay-sim-101',
-      entryType: 'SALE',
-      amountPaise: 15000,
-      isSimulated: true,
-      createdAt: '2026-10-21T18:30:00Z',
-    },
-    {
-      id: 'led-2',
-      bookingId: 'bkg-5b43e71d',
-      paymentId: 'pay-sim-102',
-      entryType: 'SALE',
-      amountPaise: 25000,
-      isSimulated: true,
-      createdAt: '2026-10-21T19:00:00Z',
-    },
-    {
-      id: 'led-3',
-      bookingId: 'bkg-8f92a10c',
-      paymentId: 'pay-sim-101',
-      entryType: 'REFUND',
-      amountPaise: 15000,
-      isSimulated: true,
-      createdAt: '2026-10-21T20:15:00Z',
-    },
-  ]);
+  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
+  const [attendees, setAttendees] = useState<Array<{
+    ticketId: string;
+    studentName: string;
+    rollNumber: string;
+    ticketType: string;
+    checkInStatus: 'CHECKED_IN' | 'VALID' | 'REVOKED';
+    checkInTime: string;
+    checkedInAt: string | null;
+  }>>([]);
 
   // Fetch real events for organizer
   useEffect(() => {
@@ -325,13 +302,49 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
           setOrganizerEvents(mapped);
           setSelectedEventId(mapped[0].id);
           setSelectedEventTitle(mapped[0].title);
+        } else {
+          setOrganizerEvents([]);
+          setSelectedEventId('');
+          setSelectedEventTitle('');
         }
       } catch {
-        // Retain fallback prototype events
+        setOrganizerEvents([]);
+        setSelectedEventId('');
+        setSelectedEventTitle('');
       }
     }
     loadEvents();
   }, []);
+
+  // Fetch attendance / attendees for selected event
+  useEffect(() => {
+    if (!selectedEventId) {
+      setAttendees([]);
+      return;
+    }
+    async function loadAttendance() {
+      try {
+        const data = await apiClient.get<any>(`/api/v1/events/${selectedEventId}/attendance`);
+        if (data?.recentScans) {
+          const mapped = data.recentScans.map((s: any) => ({
+            ticketId: s.ticket_id || s.id,
+            studentName: s.staff_name || 'Attendee',
+            rollNumber: s.ticket_id ? String(s.ticket_id).slice(0, 8) : 'N/A',
+            ticketType: 'Standard Pass',
+            checkInStatus: (s.outcome === 'VALID' ? 'CHECKED_IN' : 'VALID') as 'CHECKED_IN' | 'VALID' | 'REVOKED',
+            checkInTime: s.at ? new Date(s.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
+            checkedInAt: s.at,
+          }));
+          setAttendees(mapped);
+        } else {
+          setAttendees([]);
+        }
+      } catch {
+        setAttendees([]);
+      }
+    }
+    loadAttendance();
+  }, [selectedEventId]);
 
   // Fetch real ledger from backend if authenticated
   useEffect(() => {
@@ -390,18 +403,6 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
 
   const handleModerateFeedback = async (feedbackId: string, status: 'visible' | 'flagged' | 'hidden') => {
     try {
-      if (feedbackId.startsWith('fb-mock-') || feedbackId.startsWith('fb-demo-')) {
-        toast({
-          type: 'success',
-          title: 'Review Moderated',
-          message: `Feedback status set to ${status}.`,
-        });
-        setFeedbackList((prev) =>
-          prev.map((f) => (f.id === feedbackId ? { ...f, moderationStatus: status } : f))
-        );
-        return;
-      }
-
       await apiClient.post(`/api/v1/feedback/${feedbackId}/moderate`, { status });
 
       toast({
@@ -507,7 +508,7 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
   };
 
   const sortedAttendees = useMemo(() => {
-    return [...PROTOTYPE_ATTENDEES]
+    return [...attendees]
       .filter(
         (att) =>
           att.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -520,22 +521,24 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
         const comp = valA.localeCompare(valB);
         return sortDirection === 'asc' ? comp : -comp;
       });
-  }, [searchTerm, sortField, sortDirection]);
+  }, [attendees, searchTerm, sortField, sortDirection]);
 
   return (
     <div className="space-y-6">
-      {/* Test Mode Notification */}
-      <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 flex items-center justify-between text-xs">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="w-4 h-4 text-amber-500" />
-          <span className="font-semibold text-amber-500">
-            TEST MODE LEDGER – All financial figures are simulated integer paise.
-          </span>
+      {/* Optional Test Mode Notification (tree-shaken when VITE_DEMO_MODE is false) */}
+      {import.meta.env.VITE_DEMO_MODE === 'true' && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-amber-500" />
+            <span className="font-semibold text-amber-500">
+              TEST MODE LEDGER – All financial figures are simulated integer paise.
+            </span>
+          </div>
+          <Badge variant="warning" size="sm">
+            is_simulated = true
+          </Badge>
         </div>
-        <Badge variant="warning" size="sm">
-          is_simulated = true
-        </Badge>
-      </div>
+      )}
 
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -662,10 +665,10 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
             <Users className="w-4 h-4 text-brand" />
           </div>
           <div className="text-2xl font-bold text-text">
-            {activeTab === 'insights' ? analytics.kpis.registrations : PROTOTYPE_ORGANIZER_STATS.activeRegistrations}
+            {activeTab === 'insights' ? analytics.kpis.registrations : (analytics.kpis?.registrations || salesSummary.salesCount || 0)}
           </div>
           <p className="text-[11px] text-text-muted mt-1">
-            {activeTab === 'insights' ? `${analytics.kpis.confirmed} confirmed seats` : 'Across 4 published club events'}
+            {activeTab === 'insights' ? `${analytics.kpis.confirmed} confirmed seats` : `${salesSummary.salesCount} total bookings`}
           </p>
         </Card>
 
@@ -799,58 +802,72 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedAttendees.map((att) => (
-                    <TableRow key={att.ticketId}>
-                      <TableCell className="font-mono text-xs font-medium text-brand">
-                        {att.ticketId}
-                      </TableCell>
-                      <TableCell className="font-medium">{att.studentName}</TableCell>
-                      <TableCell className="text-text-muted font-mono text-xs">
-                        {att.rollNumber}
-                      </TableCell>
-                      <TableCell className="text-xs">{att.ticketType}</TableCell>
-                      <TableCell>
-                        {att.checkInStatus === 'CHECKED_IN' ? (
-                          <Badge variant="success" size="sm">
-                            Checked In
-                          </Badge>
-                        ) : (
-                          <Badge variant="neutral" size="sm">
-                            Valid
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-xs text-text-muted">
-                        {att.checkInTime}
+                  {sortedAttendees.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-text-muted text-xs">
+                        No registered attendees found.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    sortedAttendees.map((att) => (
+                      <TableRow key={att.ticketId}>
+                        <TableCell className="font-mono text-xs font-medium text-brand">
+                          {att.ticketId}
+                        </TableCell>
+                        <TableCell className="font-medium">{att.studentName}</TableCell>
+                        <TableCell className="text-text-muted font-mono text-xs">
+                          {att.rollNumber}
+                        </TableCell>
+                        <TableCell className="text-xs">{att.ticketType}</TableCell>
+                        <TableCell>
+                          {att.checkInStatus === 'CHECKED_IN' ? (
+                            <Badge variant="success" size="sm">
+                              Checked In
+                            </Badge>
+                          ) : (
+                            <Badge variant="neutral" size="sm">
+                              Valid
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs text-text-muted">
+                          {att.checkInTime}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </div>
 
             {/* Mobile Responsive Cards (<640px) */}
             <div className="sm:hidden space-y-3">
-              {sortedAttendees.map((att) => (
-                <div
-                  key={att.ticketId}
-                  className="p-3 bg-surface-2 border border-border rounded-md text-xs space-y-1.5"
-                >
-                  <div className="flex justify-between items-center">
-                    <span className="font-mono text-xs font-bold text-brand">{att.ticketId}</span>
-                    {att.checkInStatus === 'CHECKED_IN' ? (
-                      <Badge variant="success" size="sm">Checked In</Badge>
-                    ) : (
-                      <Badge variant="neutral" size="sm">Valid</Badge>
-                    )}
-                  </div>
-                  <p className="font-semibold text-text text-sm">{att.studentName}</p>
-                  <div className="flex justify-between text-text-muted pt-1 border-t border-border/50">
-                    <span>{att.rollNumber}</span>
-                    <span>{att.checkInTime}</span>
-                  </div>
+              {sortedAttendees.length === 0 ? (
+                <div className="text-center py-6 text-xs text-text-muted border border-dashed border-border rounded-lg">
+                  No registered attendees found.
                 </div>
-              ))}
+              ) : (
+                sortedAttendees.map((att) => (
+                  <div
+                    key={att.ticketId}
+                    className="p-3 bg-surface-2 border border-border rounded-md text-xs space-y-1.5"
+                  >
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono text-xs font-bold text-brand">{att.ticketId}</span>
+                      {att.checkInStatus === 'CHECKED_IN' ? (
+                        <Badge variant="success" size="sm">Checked In</Badge>
+                      ) : (
+                        <Badge variant="neutral" size="sm">Valid</Badge>
+                      )}
+                    </div>
+                    <p className="font-semibold text-text text-sm">{att.studentName}</p>
+                    <div className="flex justify-between text-text-muted pt-1 border-t border-border/50">
+                      <span>{att.rollNumber}</span>
+                      <span>{att.checkInTime}</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
@@ -863,23 +880,28 @@ export const OrganizerDashboardPage: React.FC<OrganizerDashboardPageProps> = ({
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 bg-surface-2 border border-border rounded-lg">
             <div>
               <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">Analyzing Event:</span>
-              <h2 className="text-sm font-bold text-text mt-0.5">{selectedEventTitle}</h2>
+              <h2 className="text-sm font-bold text-text mt-0.5">{selectedEventTitle || 'No Event Selected'}</h2>
             </div>
-            <div className="flex items-center gap-2">
-              <label htmlFor="insight-event-selector" className="text-xs text-text-muted">Switch Event:</label>
-              <select
-                id="insight-event-selector"
-                value={selectedEventId}
-                onChange={(e) => {
-                  setSelectedEventId(e.target.value);
-                  setSelectedEventTitle(e.target.options[e.target.selectedIndex].text);
-                }}
-                className="text-xs p-1.5 rounded border border-border bg-surface text-text"
-              >
-                <option value="mock-evt-1">Smart Campus AI & Robotics Symposium</option>
-                <option value="mock-evt-2">Annual Autonomous Drone Derby</option>
-              </select>
-            </div>
+            {organizerEvents.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label htmlFor="insight-event-selector" className="text-xs text-text-muted">Switch Event:</label>
+                <select
+                  id="insight-event-selector"
+                  value={selectedEventId}
+                  onChange={(e) => {
+                    setSelectedEventId(e.target.value);
+                    setSelectedEventTitle(e.target.options[e.target.selectedIndex].text);
+                  }}
+                  className="text-xs p-1.5 rounded border border-border bg-surface text-text"
+                >
+                  {organizerEvents.map((evt) => (
+                    <option key={evt.id} value={evt.id}>
+                      {evt.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Funnel & Distribution Row */}

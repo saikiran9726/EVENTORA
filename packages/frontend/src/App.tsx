@@ -422,11 +422,15 @@ const AppContent: React.FC = () => {
         <Route
           path="/components"
           element={
-            <ShellWrapper shell="student" activeRoute="components" isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}>
-              <RouteView fallbackTitle="UI Gallery Error">
-                <ComponentGalleryPage />
-              </RouteView>
-            </ShellWrapper>
+            import.meta.env.DEV ? (
+              <ShellWrapper shell="student" activeRoute="components" isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}>
+                <RouteView fallbackTitle="UI Gallery Error">
+                  <ComponentGalleryPage />
+                </RouteView>
+              </ShellWrapper>
+            ) : (
+              <Navigate to="/" replace />
+            )
           }
         />
 

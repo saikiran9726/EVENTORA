@@ -71,54 +71,13 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         return;
       }
     } catch {
-      // Fallback to sample data for prototype/dev
+      // Network/auth error -> empty state
+      setNotifications([]);
+      setUnreadCount(0);
+      if (onUnreadCountChange) onUnreadCountChange(0);
+    } finally {
+      setLoading(false);
     }
-
-    // Default prototype notifications if network/unauthenticated
-    const mockNotifications: UserNotification[] = [
-      {
-        id: 'notif_urgent_01',
-        userId: 'u_student_1',
-        type: 'event_alert',
-        eventId: 'ev_hackathon_2026',
-        title: 'URGENT: Hackathon Venue Relocated',
-        body: 'Due to severe weather warning, DevClash venue is moved to Tech Tower Auditorium A.',
-        severity: 'urgent',
-        payload: { kind: 'venue' },
-        readAt: null,
-        createdAt: new Date(Date.now() - 15 * 60000).toISOString(),
-      },
-      {
-        id: 'notif_imp_02',
-        userId: 'u_student_1',
-        type: 'event_alert',
-        eventId: 'ev_symposium_2026',
-        title: 'Keynote Schedule Adjusted',
-        body: 'Keynote by Dr. Rao now starts promptly at 10:30 AM.',
-        severity: 'important',
-        payload: { kind: 'time' },
-        readAt: null,
-        createdAt: new Date(Date.now() - 2 * 3600000).toISOString(),
-      },
-      {
-        id: 'notif_info_03',
-        userId: 'u_student_1',
-        type: 'ticket_issued',
-        eventId: 'ev_hackathon_2026',
-        title: 'QR Admission Pass Issued',
-        body: 'Your admission QR pass for Campus Hackathon 2026 is confirmed and ready in your wallet.',
-        severity: 'info',
-        payload: {},
-        readAt: new Date(Date.now() - 24 * 3600000).toISOString(),
-        createdAt: new Date(Date.now() - 26 * 3600000).toISOString(),
-      },
-    ];
-
-    setNotifications(mockNotifications);
-    const unread = mockNotifications.filter((n) => !n.readAt).length;
-    setUnreadCount(unread);
-    if (onUnreadCountChange) onUnreadCountChange(unread);
-    setLoading(false);
   }, [onUnreadCountChange]);
 
   // Fetch preferences

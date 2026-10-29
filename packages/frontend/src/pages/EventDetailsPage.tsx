@@ -9,6 +9,8 @@ import {
   Image as ImageIcon,
   Star,
   Info,
+  Calendar,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -18,7 +20,6 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { useToast } from '@/components/ui/Toast';
-import { PROTOTYPE_EVENTS } from '@/prototype/data';
 import { formatINR } from '@/lib/utils';
 import { TicketSelector } from '@/components/booking/TicketSelector';
 import { VenueCard } from '@/components/venue/VenueCard';
@@ -58,7 +59,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
     propOnProceedToCheckout || ((bookingId: string) => navigate(`/checkout/${bookingId}`));
   const { toast } = useToast();
   const { user } = useAuth();
-  const prototypeEvent = PROTOTYPE_EVENTS.find((e) => e.id === eventId) || PROTOTYPE_EVENTS[0];
+  const [isLoading, setIsLoading] = useState(true);
   const [loadedEvent, setLoadedEvent] = useState<any>(null);
   const [ticketTiers, setTicketTiers] = useState<any[]>([]);
   const [selectedTierId, setSelectedTierId] = useState<string>('');
@@ -92,44 +93,37 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
   }, [user?.displayName, attendeeName]);
   const [imageError, setImageError] = useState(false);
   const [ratingsData, setRatingsData] = useState<PublicRatingData>({
-    feedbackCount: 38,
-    ratingAvg: 4.6,
-    hasEnoughResponses: true,
-    displayRating: '4.6 ★',
-    responseRatePct: 42,
-    formattedSummary: '4.6 ★ (38 of 90 attended · 42% responded)',
+    feedbackCount: 0,
+    ratingAvg: 0,
+    hasEnoughResponses: false,
+    displayRating: 'No ratings yet',
+    responseRatePct: 0,
+    formattedSummary: 'No feedback submitted yet',
   });
 
-  // Effective event merges backend API data over prototype baseline
+  // Effective event from backend API data
   const event = loadedEvent ? {
     id: loadedEvent.id,
     title: loadedEvent.title,
     description: loadedEvent.description,
-    category: loadedEvent.category || prototypeEvent.category,
-    department: loadedEvent.department || prototypeEvent.department,
-    venue: loadedEvent.venue?.name || loadedEvent.venueName || prototypeEvent.venue,
-    venueName: loadedEvent.venue?.name || loadedEvent.venueName || prototypeEvent.venue,
+    category: loadedEvent.category || 'Tech',
+    department: loadedEvent.department || 'General',
+    venue: loadedEvent.venue?.name || loadedEvent.venueName || 'Campus Venue',
+    venueName: loadedEvent.venue?.name || loadedEvent.venueName || 'Campus Venue',
     venueBuilding: loadedEvent.venue?.building || loadedEvent.venueBuilding || 'Main Campus',
-    dateStr: loadedEvent.startsAt ? new Date(loadedEvent.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : prototypeEvent.dateStr,
-    timeStr: loadedEvent.startsAt ? `${new Date(loadedEvent.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${new Date(loadedEvent.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : prototypeEvent.timeStr,
-    capacity: loadedEvent.capacity || prototypeEvent.capacity,
-    registeredCount: loadedEvent.registeredCount ?? prototypeEvent.registeredCount,
+    dateStr: loadedEvent.startsAt ? new Date(loadedEvent.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : 'TBD',
+    timeStr: loadedEvent.startsAt && loadedEvent.endsAt ? `${new Date(loadedEvent.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${new Date(loadedEvent.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'TBD',
+    capacity: loadedEvent.capacity || 0,
+    registeredCount: loadedEvent.registeredCount ?? 0,
     isPaid: ticketTiers.some((t: any) => (t.price_paise || t.pricePaise || 0) > 0),
     pricePaise: ticketTiers.find((t: any) => (t.price_paise || t.pricePaise || 0) > 0)?.price_paise || 0,
-    imageUrl: loadedEvent.imageUrl || prototypeEvent.imageUrl,
-    tags: Array.isArray(loadedEvent.tags) && loadedEvent.tags.length > 0 ? (loadedEvent.tags as string[]) : prototypeEvent.tags,
-    organizer: loadedEvent.organizer?.displayName || loadedEvent.organizerName || prototypeEvent.organizer,
-    organizerName: loadedEvent.organizer?.displayName || loadedEvent.organizerName || prototypeEvent.organizer,
+    imageUrl: loadedEvent.imageUrl || '',
+    tags: Array.isArray(loadedEvent.tags) ? (loadedEvent.tags as string[]) : [],
+    organizer: loadedEvent.organizer?.displayName || loadedEvent.organizerName || 'Campus Society',
+    organizerName: loadedEvent.organizer?.displayName || loadedEvent.organizerName || 'Campus Society',
     faqs: loadedEvent.faqs && loadedEvent.faqs.length > 0 ? loadedEvent.faqs : [],
     announcements: loadedEvent.announcements || [],
-  } : {
-    ...prototypeEvent,
-    venueName: prototypeEvent.venue,
-    venueBuilding: 'Main Campus',
-    organizerName: prototypeEvent.organizer,
-    faqs: [] as any[],
-    announcements: [] as any[],
-  };
+  } : null;
 
   useEffect(() => {
     let isMounted = true;
@@ -166,6 +160,8 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
         }
       } catch {
         // Fallback
+      } finally {
+        if (isMounted) setIsLoading(false);
       }
     }
 
@@ -187,10 +183,11 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
     loadRatings();
   }, [eventId]);
 
-  const isSoldOut = event.registeredCount >= event.capacity;
+  const isSoldOut = event ? event.registeredCount >= event.capacity : false;
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!event) return;
     if (!attendeeName.trim() || !attendeeRoll.trim()) {
       toast({
         type: 'error',
@@ -278,24 +275,11 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
           onProceedToCheckout(res.booking.id);
         }
       } else {
-        // Prototype fallback simulation
-        setIsRegisterOpen(false);
-        if (event.isPaid) {
-          toast({
-            type: 'success',
-            title: 'Seat Hold Created (Test Mode)',
-            message: `Proceeding to test simulator checkout for ${formatINR(event.pricePaise)}.`,
-          });
-          if (onProceedToCheckout) {
-            onProceedToCheckout(`bkg_demo_${Date.now()}`);
-          }
-        } else {
-          toast({
-            type: 'success',
-            title: 'Registration Confirmed!',
-            message: 'Your digital QR ticket has been generated and added to My Events.',
-          });
-        }
+        toast({
+          type: 'error',
+          title: 'Booking Error',
+          message: 'Could not complete registration. Please try again.',
+        });
       }
     } catch (err: any) {
       toast({
@@ -310,7 +294,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
 
   const RegistrationFormContent = (
     <form onSubmit={handleRegisterSubmit} className="space-y-4">
-      {event.isPaid && (
+      {event?.isPaid && (
         <div className="p-3 bg-warning/10 border border-warning/20 rounded-md text-xs text-warning font-medium">
           TEST MODE – simulated money. Server calculates exact totals from stored integer paise; no real money moves.
         </div>
@@ -346,7 +330,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
         })) : [
           {
             value: 'regular',
-            label: `Student Standard Pass (${event.isPaid ? formatINR(event.pricePaise) : 'Free'})`,
+            label: `Student Standard Pass (${event?.isPaid ? formatINR(event.pricePaise) : 'Free'})`,
           },
         ]}
         value={selectedTierId || selectedTicketType}
@@ -400,11 +384,33 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
           Cancel
         </Button>
         <Button type="submit" variant="primary" size="md" isLoading={isSubmitting}>
-          {isSoldOut ? 'Join Waitlist' : event.isPaid ? 'Proceed to Test Pay' : 'Confirm Registration'}
+          {isSoldOut ? 'Join Waitlist' : event?.isPaid ? 'Proceed to Test Pay' : 'Confirm Registration'}
         </Button>
       </div>
     </form>
   );
+
+  if (isLoading) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-16 text-center text-text-muted flex items-center justify-center gap-2">
+        <Loader2 className="w-5 h-5 animate-spin text-brand" />
+        <span>Loading event details...</span>
+      </div>
+    );
+  }
+
+  if (!event) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-16 text-center">
+        <Card className="p-8 border-dashed border-border space-y-4 max-w-md mx-auto">
+          <Calendar className="w-10 h-10 text-text-muted mx-auto" />
+          <h2 className="text-xl font-bold text-text">Event Not Found</h2>
+          <p className="text-xs sm:text-sm text-text-muted">The requested event could not be found or has been removed.</p>
+          <Button variant="primary" size="sm" onClick={onBack}>Back to Event Discovery</Button>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-28 md:pb-6">

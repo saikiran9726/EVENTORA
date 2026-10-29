@@ -1,5 +1,76 @@
 # Eventora Overhaul Changelog
 
+## Phase P26 — Remove Every Mock / Prototype Artifact, Tree-Shake Demo Mode & ESLint Import Bans
+
+**Date:** 2026-10-29  
+**Author:** Principal Full-Stack Engineer  
+**Status:** Complete & Verified  
+
+---
+
+### 1. ESLint Policy & Static Import Guard
+- **Restricted Imports Rule (`eslint.config.js`):**
+  - Configured `@typescript-eslint` rule `no-restricted-imports` with patterns matching `**/mock/**`, `**/prototype/**`, `@/mock/**`, `@/prototype/**`, `../mock/**`, `../prototype/**` across `packages/frontend/src/**/*.{ts,tsx}`.
+  - Exempts test and story suites (`**/*.test.{ts,tsx}`, `**/*.spec.{ts,tsx}`, `**/*.stories.{ts,tsx}`).
+  - Strictly prevents new or legacy frontend code from referencing mock or prototype artifacts outside testing harnesses.
+
+---
+
+### 2. Elimination of Hardcoded Mock Artifacts & Fallbacks
+- **Empty API Results $\Rightarrow$ Real Empty States:**
+  - `DiscoveryPage.tsx`: Completely removed `PROTOTYPE_EVENTS` import and merging. Added dedicated empty state displaying `Compass` icon, "No events found", and filter reset button.
+  - `EventDetailsPage.tsx`: Removed `PROTOTYPE_EVENTS` import and `prototypeEvent` fallback. Rendered clean loading spinner and `Event Not Found` card. Neutralized fake star ratings (`feedbackCount: 0, ratingAvg: 0`).
+  - `TicketSelector.tsx`: Removed fake fallback tier (`default-free-pass`). Added explicit empty state: "No ticket tiers are currently available for this event."
+  - `OrganizerDashboardPage.tsx`: Removed `PROTOTYPE_ORGANIZER_STATS` and `PROTOTYPE_ATTENDEES`. Initialized `organizerEvents: []`, `salesSummary`, and `ledgerEntries` to real empty/zero. Replaced mock attendee roster with live data from `/api/v1/events/:id/attendance` and empty table states. Replaced mock proposal IDs with dynamic event options. Removed mock feedback moderation bypass.
+  - `VolunteerHubPage.tsx`: Initialized `openShifts: []`, `myShifts: []`, `totalHours: 0`. Removed `shift-demo-` and `app-demo-` bypasses; added real empty states to volunteer tabs.
+  - `TeamsPage.tsx`: Removed `team-mock-1` / `NeuralHack Squad` injection and fake members. Now renders empty state when user has no teams.
+  - `NotificationCenter.tsx`: Removed `mockNotifications` (`notif_urgent_01`, `notif_imp_02`, `notif_info_03`). API failure or empty results now yield an empty notification center.
+  - `AlertComposer.tsx`: Removed hardcoded sample alerts (`alt_01`, `alt_02`) and fake 42 attendee recipient count fallback. API errors trigger proper error toasts without fake local addition.
+  - `PassportPage.tsx`: Removed `DEFAULT_PROTOTYPE_ACHIEVEMENTS` and initialized clean empty states for achievements and certificates. Removed `Aarav Patel` and symposium fallback from certificate downloads.
+  - `PublicPassportPage.tsx`: Removed hardcoded `aarav-patel` fallback; non-existent student slugs cleanly render 404 Passport Not Found state.
+  - `PublicVerifyPage.tsx`: Removed hardcoded `7H9K-2M4N-8PQR` fake success verification branch.
+  - `CalendarPage.tsx`: Catch block initializes empty events array (`setEvents([])`) rather than fake calendar entries.
+  - `MyBookingsPage.tsx`: Removed fake `mock-bk-1` / `AI & Robotics Annual Symposium` default fallback in catch/else blocks.
+  - `ReviewQueuePage.tsx`: Removed fake `mock-prop-1` / `mock-prop-2` in catch block and removed `selectedProposal.id.startsWith('mock-')` bypass.
+  - `FeedbackSheet.tsx`: Removed `mock-` and non-UUID bypasses that simulated success toasts without reaching backend endpoints.
+  - `ExportDialog.tsx`: Removed `mock-` event export bypass that simulated download links without calling `/api/v1/organizer/events/:id/exports`.
+  - `AdminPortalPage.tsx`: Removed fake local state updates on failure in club verification; all errors bubble to standard error envelopes.
+
+---
+
+### 3. Build-Time Demo Mode Tree-Shaking & Component Gallery Gating
+- **Shell Demo Banners Gated by `VITE_DEMO_MODE`:**
+  - In `AppShell.tsx`, `StudentShell.tsx`, `AdminShell.tsx`, `OrganizerShell.tsx`, `ReviewerShell.tsx`, and `CheckinShell.tsx`:
+    - Removed `PROTOTYPE_BADGE_TEXT` and `MOCK_BANNER_TEXT` imports.
+    - Wrapped demo/prototype banners in `{import.meta.env.VITE_DEMO_MODE === 'true' && (...)}`.
+    - Evaluates statically to `false` in production builds where `VITE_DEMO_MODE` is unset, triggering complete tree-shaking and elimination by Vite/esbuild/Rollup.
+- **Component Gallery & Dev Route Gating:**
+  - In `App.tsx`: `/components` route is guarded with `import.meta.env.DEV ? <ComponentGalleryPage /> : <Navigate to="/" replace />`.
+  - All navigation links to `/components` in sidebar shells are guarded by `import.meta.env.DEV`.
+
+---
+
+### 4. Bundle Grep & Acceptance Verification
+- **Production Bundle Grep Audit:**
+  - Production build (`pnpm --filter @eventora/frontend build`) generates clean JavaScript bundles in `packages/frontend/dist/assets/`.
+  - Automated grep inspection of all `.js` files in `dist/assets` confirmed 0 matches for:
+    - `PROTOTYPE_EVENTS`
+    - `MOCK_BANNER_TEXT`
+    - `aarav-patel`
+    - `evt-demo`
+    - `bkg_demo_`
+    - `team-mock-1`
+    - `mock/data`
+    - `prototype/data`
+- **Quality Gate Tests:**
+  - `tests/unit/phase-p26-no-mock-artifacts.test.ts`: 6 tests verifying ESLint rules, static source cleanliness, mock ID absence, bundle tree-shaking, `/components` DEV route guard, and shell `VITE_DEMO_MODE` gating.
+  - `tests/e2e/phase-p26-empty-states.spec.ts`: E2E tests validating empty states across discovery, 404 for unknown student slugs on `/p/:slug`, and absence of prototype badges.
+- **Monorepo Quality Gates:**
+  - `pnpm typecheck`: 0 errors across `@eventora/shared`, `@eventora/backend`, `@eventora/frontend`.
+  - `pnpm lint`: 0 errors.
+  - Database schema: Additive and intact at Migration 27.
+
+
 ## Phase P25 — Offline Check-in Redesign, WebCrypto HMAC & Dexie IndexedDB
 
 **Date:** 2026-10-29  

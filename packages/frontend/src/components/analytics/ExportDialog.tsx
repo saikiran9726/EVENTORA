@@ -30,17 +30,6 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     setErrorMessage(null);
 
     try {
-      // Prototype fallback for mock mode
-      if (eventId.startsWith('mock-')) {
-        toast({
-          type: 'success',
-          title: 'Export Download Started',
-          message: `Your sanitized ${format.toUpperCase()} file is downloading. Link expires in 15 minutes.`,
-        });
-        onClose();
-        return;
-      }
-
       const data = await apiClient.post<any>(`/api/v1/organizer/events/${eventId}/exports`, {
         kind,
         format,

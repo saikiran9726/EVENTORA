@@ -37,10 +37,10 @@ interface AdminUserItem {
 interface ReadinessData {
   status: string;
   checks?: {
-    postgres?: { status: string; latencyMs: number };
-    migration?: { status: string; version: number };
-    redis?: { status: string; adapter: string };
-    worker?: { status: string; lastHeartbeatSecondsAgo: number; thresholdSeconds: number };
+    postgres?: { status: string; latencyMs?: number; error?: string };
+    migration?: { status: string; version?: number; error?: string };
+    redis?: { status: string; adapter?: string; error?: string };
+    worker?: { status: string; lastHeartbeatSecondsAgo?: number; thresholdSeconds?: number; error?: string };
   };
   timestamp?: string;
 }
@@ -96,29 +96,7 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
   const [eventFilter, setEventFilter] = useState<string>('all');
 
   // State: Club Organizers
-  const [clubsList, setClubsList] = useState<any[]>([
-    {
-      id: 'fcb90271-d75a-4138-996a-b3e4e1ebafbb',
-      displayName: 'Robotics & Automation Society (RAS)',
-      department: 'Computer Science',
-      status: 'VERIFIED',
-      charterRef: 'RAS-CH-2026',
-    },
-    {
-      id: 'org-design-club',
-      displayName: 'Campus UI/UX Design Guild',
-      department: 'Humanities & Design',
-      status: 'PENDING',
-      charterRef: 'DSG-CH-2026',
-    },
-    {
-      id: 'org-sports-board',
-      displayName: 'Inter-College Sports Board',
-      department: 'Physical Education',
-      status: 'VERIFIED',
-      charterRef: 'SB-CH-2026',
-    },
-  ]);
+  const [clubsList, setClubsList] = useState<any[]>([]);
 
   // Load Platform Health
   const fetchHealth = async () => {
@@ -128,12 +106,11 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
       setReadiness(data);
     } catch {
       setReadiness({
-        status: 'ready',
+        status: 'not_ready',
         checks: {
-          postgres: { status: 'ok', latencyMs: 65 },
-          migration: { status: 'ok', version: 11 },
-          redis: { status: 'ok', adapter: 'in-memory' },
-          worker: { status: 'ok', lastHeartbeatSecondsAgo: 2, thresholdSeconds: 30 },
+          postgres: { status: 'error', error: 'Service unreachable' },
+          migration: { status: 'error', error: 'Service unreachable' },
+          redis: { status: 'error', error: 'Service unreachable' },
         },
       });
     } finally {
@@ -146,67 +123,9 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
     setIsUsersLoading(true);
     try {
       const data = await apiClient.get<{ items: AdminUserItem[] }>('/api/v1/admin/users?limit=50');
-      if (data?.items && data.items.length > 0) {
-        setUsersList(data.items);
-      } else {
-        // Fallback seed accounts
-        setUsersList([
-          {
-            id: 'u-admin-1',
-            email: 'admin.platform@campus.edu',
-            displayName: 'System Admin',
-            globalRole: 'admin',
-            status: 'active',
-            createdAt: '2026-10-20T00:00:00Z',
-            emailVerifiedAt: '2026-10-20T00:00:00Z',
-            collegeName: 'Sir MV Institute of Technology',
-          },
-          {
-            id: 'u-reviewer-1',
-            email: 'reviewer.faculty@campus.edu',
-            displayName: 'Faculty Reviewer',
-            globalRole: 'reviewer',
-            status: 'active',
-            createdAt: '2026-10-20T00:00:00Z',
-            emailVerifiedAt: '2026-10-20T00:00:00Z',
-            collegeName: 'Sir MV Institute of Technology',
-          },
-          {
-            id: 'u-student-1',
-            email: 'student1@campus.edu',
-            displayName: 'Student One',
-            globalRole: 'student',
-            status: 'active',
-            createdAt: '2026-10-20T00:00:00Z',
-            emailVerifiedAt: '2026-10-20T00:00:00Z',
-            collegeName: 'Sir MV Institute of Technology',
-          },
-        ]);
-      }
+      setUsersList(data?.items || []);
     } catch {
-      // Prototype users
-      setUsersList([
-        {
-          id: 'u-admin-1',
-          email: 'admin.platform@campus.edu',
-          displayName: 'System Admin',
-          globalRole: 'admin',
-          status: 'active',
-          createdAt: '2026-10-20T00:00:00Z',
-          emailVerifiedAt: '2026-10-20T00:00:00Z',
-          collegeName: 'Sir MV Institute of Technology',
-        },
-        {
-          id: 'u-reviewer-1',
-          email: 'reviewer.faculty@campus.edu',
-          displayName: 'Faculty Reviewer',
-          globalRole: 'reviewer',
-          status: 'active',
-          createdAt: '2026-10-20T00:00:00Z',
-          emailVerifiedAt: '2026-10-20T00:00:00Z',
-          collegeName: 'Sir MV Institute of Technology',
-        },
-      ]);
+      setUsersList([]);
     } finally {
       setIsUsersLoading(false);
     }
@@ -302,17 +221,16 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
         title: 'Club Charter Updated',
         message: `Charter status set to ${nextStatus}.`,
       });
-    } catch {
-      // Local prototype state
+      setClubsList((prev) =>
+        prev.map((c) => (c.id === clubId ? { ...c, status: nextStatus } : c))
+      );
+    } catch (err: any) {
       toast({
-        type: 'info',
-        title: 'Charter Status Updated',
-        message: `Organizer charter status updated to ${nextStatus}.`,
+        type: 'error',
+        title: 'Verification Failed',
+        message: err.message || `Failed to update charter status to ${nextStatus}.`,
       });
     }
-    setClubsList((prev) =>
-      prev.map((c) => (c.id === clubId ? { ...c, status: nextStatus } : c))
-    );
   };
 
   const filteredEvents = eventsList.filter((e) => {
@@ -530,7 +448,14 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {usersList.map((user) => (
+                  {usersList.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-text-muted">
+                        No platform users found.
+                      </td>
+                    </tr>
+                  ) : (
+                    usersList.map((user) => (
                     <tr key={user.id} className="hover:bg-surface-2/50 transition-colors">
                       <td className="p-3 font-medium text-text">
                         <div>
@@ -585,7 +510,8 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                  ))
+                )}
                 </tbody>
               </table>
             </div>
@@ -608,36 +534,42 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {clubsList.map((club) => (
-              <Card key={club.id} className="p-4 space-y-3 border border-border flex flex-col justify-between">
-                <div className="space-y-1.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-bold text-text text-sm">{club.displayName}</h3>
-                    <Badge variant={club.status === 'VERIFIED' ? 'success' : 'warning'} size="sm">
-                      {club.status}
-                    </Badge>
+          {clubsList.length === 0 ? (
+            <Card className="p-8 text-center text-xs text-text-muted">
+              No student club charters registered or awaiting verification.
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {clubsList.map((club) => (
+                <Card key={club.id} className="p-4 space-y-3 border border-border flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-bold text-text text-sm">{club.displayName}</h3>
+                      <Badge variant={club.status === 'VERIFIED' ? 'success' : 'warning'} size="sm">
+                        {club.status}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-text-muted">Department: {club.department}</p>
+                    <p className="text-[11px] text-text-muted font-mono">Charter Ref: {club.charterRef}</p>
                   </div>
-                  <p className="text-xs text-text-muted">Department: {club.department}</p>
-                  <p className="text-[11px] text-text-muted font-mono">Charter Ref: {club.charterRef}</p>
-                </div>
 
-                <div className="pt-3 border-t border-border flex items-center justify-between">
-                  <span className="text-[11px] text-text-muted">
-                    {club.status === 'VERIFIED' ? 'Verified Club Society' : 'Pending Administrative Review'}
-                  </span>
-                  <Button
-                    variant={club.status === 'VERIFIED' ? 'outline' : 'primary'}
-                    size="sm"
-                    onClick={() => handleToggleClubVerification(club.id, club.status)}
-                    className="text-xs"
-                  >
-                    {club.status === 'VERIFIED' ? 'Revoke Charter' : 'Verify Charter'}
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
+                  <div className="pt-3 border-t border-border flex items-center justify-between">
+                    <span className="text-[11px] text-text-muted">
+                      {club.status === 'VERIFIED' ? 'Verified Club Society' : 'Pending Administrative Review'}
+                    </span>
+                    <Button
+                      variant={club.status === 'VERIFIED' ? 'outline' : 'primary'}
+                      size="sm"
+                      onClick={() => handleToggleClubVerification(club.id, club.status)}
+                      className="text-xs"
+                    >
+                      {club.status === 'VERIFIED' ? 'Revoke Charter' : 'Verify Charter'}
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, Calendar, MapPin, Users, ArrowRight, Image as ImageIcon, Loader2, ShieldCheck, School } from 'lucide-react';
+import { Search, Filter, Calendar, MapPin, Users, ArrowRight, Image as ImageIcon, Loader2, ShieldCheck, School, Compass } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Select } from '@/components/ui/Select';
-import { PROTOTYPE_EVENTS } from '@/prototype/data';
 import { formatINR } from '@/lib/utils';
 import { apiClient } from '@/lib/api-client';
 
@@ -114,14 +113,14 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent: pro
     };
   }, [debouncedSearch, selectedCategory, selectedFormat]);
 
-  // Fallback to prototype data if backend returned 0 items and search is empty
+  // Live backend events filtered by user criteria
   const eventsToDisplay = useMemo(() => {
-    // Filter prototype events
-    const protoFiltered = PROTOTYPE_EVENTS.filter((evt) => {
+    return apiEvents.filter((evt) => {
       const matchesSearch =
+        !searchQuery ||
         evt.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        evt.organizer.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        evt.venue.toLowerCase().includes(searchQuery.toLowerCase());
+        (evt.organizerName?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
+        (evt.venueName?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
 
       const matchesCat =
         selectedCategory === 'All' ||
@@ -134,32 +133,7 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent: pro
         (selectedFormat === 'paid' && evt.isPaid);
 
       return matchesSearch && matchesCat && matchesFormat;
-    }).map((e) => ({
-      id: e.id,
-      slug: e.id,
-      title: e.title,
-      description: e.description,
-      category: e.category,
-      department: 'Computer Science',
-      format: e.isPaid ? 'hybrid' : 'in_person',
-      capacity: e.capacity,
-      startsAt: new Date().toISOString(),
-      endsAt: new Date(Date.now() + 7200000).toISOString(),
-      dateStr: e.dateStr,
-      timeStr: e.timeStr,
-      venueName: e.venue,
-      organizerName: e.organizer,
-      isPaid: e.isPaid,
-      pricePaise: e.pricePaise,
-      registeredCount: e.registeredCount,
-    }));
-
-    if (apiEvents.length > 0) {
-      const existingTitles = new Set(apiEvents.map((a) => a.title.toLowerCase()));
-      return [...protoFiltered.filter((p) => !existingTitles.has(p.title.toLowerCase())), ...apiEvents];
-    }
-
-    return protoFiltered;
+    });
   }, [apiEvents, searchQuery, selectedCategory, selectedFormat]);
 
   return (
@@ -262,9 +236,38 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent: pro
         ))}
       </div>
 
-      {/* Event Cards Grid (12-col grid: 1 col on mobile, 2 col on tablet, 3 col on desktop) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-        {eventsToDisplay.map((evt) => {
+      {/* Event Cards Grid or Real Empty State */}
+      {eventsToDisplay.length === 0 ? (
+        <Card className="p-12 text-center border-dashed border-border flex flex-col items-center justify-center space-y-3">
+          <div className="w-12 h-12 rounded-full bg-surface-2 flex items-center justify-center text-text-muted">
+            <Compass className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-text text-base">No events found</h3>
+            <p className="text-xs sm:text-sm text-text-muted mt-1 max-w-sm">
+              {searchQuery || selectedCategory !== 'All' || selectedFormat !== 'all' || selectedCollege !== 'All Colleges'
+                ? 'No campus events match your current filter criteria. Try adjusting your search query or filters.'
+                : 'There are no published events scheduled at this time. Check back soon!'}
+            </p>
+          </div>
+          {(searchQuery || selectedCategory !== 'All' || selectedFormat !== 'all' || selectedCollege !== 'All Colleges') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setSearchQuery('');
+                setSelectedCategory('All');
+                setSelectedFormat('all');
+                setSelectedCollege('All Colleges');
+              }}
+            >
+              Reset Filters
+            </Button>
+          )}
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {eventsToDisplay.map((evt) => {
           const registered = evt.registeredCount || 0;
           const isSoldOut = registered >= evt.capacity;
           const capacityPercent = Math.min(100, Math.round((registered / evt.capacity) * 100));
@@ -384,7 +387,8 @@ export const DiscoveryPage: React.FC<DiscoveryPageProps> = ({ onSelectEvent: pro
             </Card>
           );
         })}
-      </div>
+        </div>
+      )}
 
       {/* Mobile Filter Bottom Sheet (<640px) */}
       <BottomSheet

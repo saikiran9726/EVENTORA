@@ -59,42 +59,6 @@ export interface PassportSettings {
   updatedAt: string;
 }
 
-const DEFAULT_PROTOTYPE_ACHIEVEMENTS: StudentAchievement[] = [
-  {
-    id: 'ach-1',
-    type: 'CERTIFICATE',
-    sourceEventId: 'evt-ai-summit',
-    sourceRefId: 'cert-7h9k2m4n',
-    eventTitle: 'Smart Campus AI & Robotics Symposium 2026',
-    eventDate: '2026-11-20T10:00:00Z',
-    verificationStatus: 'VERIFIED',
-    visibility: 'public',
-    createdAt: '2026-11-20T16:00:00Z',
-  },
-  {
-    id: 'ach-2',
-    type: 'ATTENDANCE',
-    sourceEventId: 'evt-hackathon',
-    sourceRefId: 'scan-882190',
-    eventTitle: 'Inter-College Autonomous Hackathon 2026',
-    eventDate: '2026-10-15T09:00:00Z',
-    verificationStatus: 'VERIFIED',
-    visibility: 'public',
-    createdAt: '2026-10-15T09:12:00Z',
-  },
-  {
-    id: 'ach-3',
-    type: 'VOLUNTEER',
-    sourceEventId: 'evt-summit-vol',
-    sourceRefId: 'shift-vol-441',
-    eventTitle: 'National Tech Summit 2026',
-    eventDate: '2026-09-10T08:00:00Z',
-    verificationStatus: 'VERIFIED',
-    visibility: 'public',
-    createdAt: '2026-09-10T17:30:00Z',
-  },
-];
-
 export const PassportPage: React.FC<{
   onNavigateToVerify?: (code: string) => void;
   onNavigateToPublicPassport?: (slug: string) => void;
@@ -104,23 +68,12 @@ export const PassportPage: React.FC<{
   const navigateToVerify = onNavigateToVerify || ((code: string) => navigate(`/verify/${encodeURIComponent(code)}`));
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'timeline' | 'passes' | 'certificates' | 'settings'>('timeline');
-  const [achievements, setAchievements] = useState<StudentAchievement[]>(DEFAULT_PROTOTYPE_ACHIEVEMENTS);
+  const [achievements, setAchievements] = useState<StudentAchievement[]>([]);
   const [activeTickets, setActiveTickets] = useState<any[]>([]);
-  const [certificates, setCertificates] = useState<UserCertificate[]>([
-    {
-      id: 'cert-7h9k2m4n',
-      verification_code: '7H9K-2M4N-8PQR',
-      issued_at: '2026-11-20T16:00:00Z',
-      revoked_at: null,
-      revoke_reason: null,
-      event_id: 'evt-ai-summit',
-      event_title: 'Smart Campus AI & Robotics Symposium 2026',
-      event_date: '2026-11-20T10:00:00Z',
-    },
-  ]);
+  const [certificates, setCertificates] = useState<UserCertificate[]>([]);
   const [settings, setSettings] = useState<PassportSettings>(() => {
     const isPub = typeof localStorage !== 'undefined' ? localStorage.getItem('eventora_passport_public') === 'true' : false;
-    const slug = typeof localStorage !== 'undefined' ? localStorage.getItem('eventora_passport_slug') || 'aarav-patel' : 'aarav-patel';
+    const slug = typeof localStorage !== 'undefined' ? localStorage.getItem('eventora_passport_slug') || '' : '';
     return {
       userId: 'u_student',
       isPublic: isPub,
@@ -148,18 +101,26 @@ export const PassportPage: React.FC<{
 
       if (passData) {
         if (passData.settings) setSettings(passData.settings);
-        if (passData.achievements && passData.achievements.length > 0) setAchievements(passData.achievements);
+        setAchievements(passData.achievements || []);
+      } else {
+        setAchievements([]);
       }
 
-      if (certData && Array.isArray(certData.certificates) && certData.certificates.length > 0) {
+      if (certData && Array.isArray(certData.certificates)) {
         setCertificates(certData.certificates);
+      } else {
+        setCertificates([]);
       }
 
       if (ticketsData && Array.isArray(ticketsData.tickets)) {
         setActiveTickets(ticketsData.tickets);
+      } else {
+        setActiveTickets([]);
       }
     } catch {
-      // Prototype fallback
+      setAchievements([]);
+      setCertificates([]);
+      setActiveTickets([]);
     } finally {
       setIsLoading(false);
     }
@@ -243,15 +204,17 @@ export const PassportPage: React.FC<{
     }
 
     const found = certificates.find((c) => c.id === certId);
-    setSelectedCert({
-      id: certId,
-      eventTitle: found?.event_title || 'Smart Campus AI & Robotics Symposium 2026',
-      attendeeName: 'Aarav Patel',
-      verificationCode: found?.verification_code || '7H9K-2M4N-8PQR',
-      issuedAt: found?.issued_at || new Date().toISOString(),
-      verifyUrl: `https://eventora.campus.edu/verify/${found?.verification_code || '7H9K-2M4N-8PQR'}`,
-      hashHex: '8f4325a76e9c1d0f8a92bc654e321a987b654321cba9876543210fedcba98765',
-    });
+    if (found) {
+      setSelectedCert({
+        id: certId,
+        eventTitle: found.event_title || 'Campus Event Certificate',
+        attendeeName: 'Student Attendee',
+        verificationCode: found.verification_code || certId,
+        issuedAt: found.issued_at || new Date().toISOString(),
+        verifyUrl: `https://eventora.campus.edu/verify/${found.verification_code || certId}`,
+        hashHex: '',
+      });
+    }
   };
 
   const getAchievementIcon = (type: StudentAchievement['type']) => {

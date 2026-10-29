@@ -86,20 +86,10 @@ export const TicketSelector: React.FC<TicketSelectorProps> = ({
     };
   }, [fetchAvailability]);
 
-  // Fallback defaults if API returns empty
-  const activeTiers: TicketTypeInfo[] = ticketTypes.length > 0 ? ticketTypes : [
-    {
-      id: 'default-free-pass',
-      name: 'General Admission (Free)',
-      pricePaise: 0,
-      capacity: 50,
-      sold: 10,
-      held: 0,
-      available: 40,
-    },
-  ];
+  // Active ticket tiers from API
+  const activeTiers: TicketTypeInfo[] = ticketTypes;
 
-  const selectedTier = activeTiers.find((t) => t.id === selectedTicketId) || activeTiers[0];
+  const selectedTier = activeTiers.find((t) => t.id === selectedTicketId) || activeTiers[0] || null;
   const isTierSoldOut = selectedTier ? selectedTier.available <= 0 : false;
 
   const handleBooking = async (ignoreConflict = false) => {
@@ -135,15 +125,11 @@ export const TicketSelector: React.FC<TicketSelectorProps> = ({
     } catch (err: any) {
       if (err instanceof ApiError) {
         if (err.status === 401) {
-          // Fallback simulated booking in prototype mode
           toast({
-            type: 'success',
-            title: 'Ticket Confirmed!',
-            message: `Your pass for "${eventTitle}" is confirmed. Added to My Tickets.`,
+            type: 'error',
+            title: 'Authentication Required',
+            message: 'Please sign in to register for this event.',
           });
-          if (onBookingSuccess) {
-            onBookingSuccess({ id: `proto-bk-${Date.now()}`, eventTitle });
-          }
         } else if (err.status === 409 && err.code === 'SCHEDULE_CONFLICT' && !ignoreConflict) {
           setConflictWarning(err.details?.conflicts || [{ title: 'Another registered event' }]);
         } else if (err.status === 409 && err.code === 'SOLD_OUT') {
@@ -214,86 +200,94 @@ export const TicketSelector: React.FC<TicketSelectorProps> = ({
       </div>
 
       {/* Tier Options */}
-      <div className="space-y-3 mb-5">
-        {activeTiers.map((tier) => {
-          const isSelected = tier.id === (selectedTicketId || activeTiers[0].id);
-          const isSoldOut = tier.available <= 0;
+      {activeTiers.length === 0 ? (
+        <div className="py-6 text-center text-sm text-text-muted">
+          No ticket tiers are currently available for this event.
+        </div>
+      ) : (
+        <div className="space-y-3 mb-5">
+          {activeTiers.map((tier) => {
+            const isSelected = tier.id === (selectedTicketId || activeTiers[0]?.id);
+            const isSoldOut = tier.available <= 0;
 
-          return (
-            <div
-              key={tier.id}
-              onClick={() => setSelectedTicketId(tier.id)}
-              className={`p-3.5 rounded-lg border cursor-pointer transition-all ${
-                isSelected
-                  ? 'border-brand-600 bg-brand-50/10 dark:bg-brand-950/20 ring-1 ring-brand-600'
-                  : 'border-border hover:border-brand-300 bg-surface'
-              }`}
-            >
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-text text-sm">{tier.name}</span>
-                    {tier.pricePaise === 0 ? (
-                      <Badge variant="success" size="sm">Free</Badge>
-                    ) : (
-                      <Badge variant="neutral" size="sm">
-                        {formatINR(tier.pricePaise)}
-                      </Badge>
-                    )}
+            return (
+              <div
+                key={tier.id}
+                onClick={() => setSelectedTicketId(tier.id)}
+                className={`p-3.5 rounded-lg border cursor-pointer transition-all ${
+                  isSelected
+                    ? 'border-brand-600 bg-brand-50/10 dark:bg-brand-950/20 ring-1 ring-brand-600'
+                    : 'border-border hover:border-brand-300 bg-surface'
+                }`}
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-text text-sm">{tier.name}</span>
+                      {tier.pricePaise === 0 ? (
+                        <Badge variant="success" size="sm">Free</Badge>
+                      ) : (
+                        <Badge variant="neutral" size="sm">
+                          {formatINR(tier.pricePaise)}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted mt-1">
+                      {isSoldOut ? (
+                        <span className="text-destructive font-medium">Sold Out</span>
+                      ) : (
+                        <span className="text-success font-medium">{tier.available} seats remaining</span>
+                      )}
+                    </p>
                   </div>
-                  <p className="text-xs text-muted mt-1">
-                    {isSoldOut ? (
-                      <span className="text-destructive font-medium">Sold Out</span>
-                    ) : (
-                      <span className="text-success font-medium">{tier.available} seats remaining</span>
-                    )}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="text-base font-semibold text-text">
-                    {tier.pricePaise === 0 ? '₹0' : formatINR(tier.pricePaise)}
-                  </span>
+                  <div className="text-right">
+                    <span className="text-base font-semibold text-text">
+                      {tier.pricePaise === 0 ? '₹0' : formatINR(tier.pricePaise)}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Bottom Action Bar */}
-      <div className="pt-2">
-        {isTierSoldOut ? (
-          <Button
-            variant="secondary"
-            className="w-full flex items-center justify-center gap-2"
-            onClick={() => setIsWaitlistModalOpen(true)}
-            disabled={isSubmitting}
-          >
-            <Clock className="w-4 h-4 text-warning" />
-            Join Waitlist
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            className="w-full flex items-center justify-center gap-2"
-            onClick={() => {
-              if (selectedTier?.pricePaise > 0 && onOpenCheckoutModal) {
-                onOpenCheckoutModal();
-              } else {
-                handleBooking(false);
-              }
-            }}
-            disabled={isSubmitting}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            {isSubmitting
-              ? 'Securing Seat...'
-              : selectedTier?.pricePaise === 0
-              ? 'Register (Free)'
-              : `Proceed to Test Checkout – ${formatINR(selectedTier?.pricePaise || 0)}`}
-          </Button>
-        )}
-      </div>
+      {activeTiers.length > 0 && (
+        <div className="pt-2">
+          {isTierSoldOut ? (
+            <Button
+              variant="secondary"
+              className="w-full flex items-center justify-center gap-2"
+              onClick={() => setIsWaitlistModalOpen(true)}
+              disabled={isSubmitting}
+            >
+              <Clock className="w-4 h-4 text-warning" />
+              Join Waitlist
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              className="w-full flex items-center justify-center gap-2"
+              onClick={() => {
+                if (selectedTier && selectedTier.pricePaise > 0 && onOpenCheckoutModal) {
+                  onOpenCheckoutModal();
+                } else {
+                  handleBooking(false);
+                }
+              }}
+              disabled={isSubmitting}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              {isSubmitting
+                ? 'Securing Seat...'
+                : selectedTier?.pricePaise === 0
+                ? 'Register (Free)'
+                : `Proceed to Test Checkout – ${formatINR(selectedTier?.pricePaise || 0)}`}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Schedule Conflict Modal */}
       {conflictWarning && (
