@@ -127,6 +127,11 @@ jobs:
       - name: Seed Test Database
         run: pnpm --filter @eventora/backend db:seed
 
+      - name: Build Frontend Bundle
+        run: |
+          pnpm --filter @eventora/shared build
+          pnpm --filter @eventora/frontend build
+
       - name: Execute Vitest Test Suites
         run: pnpm test
 
