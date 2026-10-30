@@ -1,8 +1,10 @@
 name: Production Deploy & Automated Rollback
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI Pipeline"]
     branches: [master]
+    types: [completed]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -20,6 +22,13 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy-production:
     name: Deploy to Production (Manual Approval Gate)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'master' &&
+        github.event.workflow_run.event == 'push'
+      )
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -28,6 +37,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -43,10 +54,21 @@ jobs:
       - name: Frozen Dependency Install
         run: pnpm install --frozen-lockfile
 
-      # Step 1: Database Additive Migrations (Expand Phase)
+      # Step 1a: Validate Database Secret Configuration
+      - name: Validate Database Secret Configuration
+        env:
+          DB_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "${DB_URL}" ]; then
+            echo "::error::DATABASE_URL secret is empty or not configured in the production environment."
+            exit 1
+          fi
+          echo "DATABASE_URL secret is present."
+
+      # Step 1b: Database Additive Migrations (Expand Phase)
       - name: Apply Additive Schema Migrations
         env:
-          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: pnpm --filter @eventora/backend db:migrate
 
       # Step 2: Deploy Backend & Worker to Render
@@ -90,12 +112,12 @@ jobs:
           
           echo "Live smoke verification PASSED."
 
-      # Step 5: Automated Rollback on Smoke Failure
-      - name: Automated Rollback on Failure
+      # Step 5: Incident Reporting & Manual Rollback Alert on Failure
+      - name: Record Failure & Print Operator Rollback Instructions
         if: failure()
         env:
-          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          echo "CRITICAL: Post-deploy verification failed! Executing automated rollback..."
+          echo "::error::Deployment smoke verification failed! Automated down-migration is disabled for safety."
           chmod +x scripts/rollback.sh
-          ./scripts/rollback.sh "${{ github.sha }}" 27 || true
+          ./scripts/rollback.sh "${{ github.event.workflow_run.head_sha || github.sha }}"

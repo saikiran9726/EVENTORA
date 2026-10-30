@@ -4,10 +4,16 @@ import * as schema from './schema.js';
 
 const { Pool } = pg;
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Fail-fast in production if DATABASE_URL is not set (never fall back to localhost in production)
+if (isProduction && (!process.env.DATABASE_URL || process.env.DATABASE_URL.trim() === '')) {
+  console.error('[Database Config Error] DATABASE_URL is not set');
+  process.exit(1);
+}
+
 export const DATABASE_URL =
   process.env.DATABASE_URL || 'postgresql://postgres@127.0.0.1:5433/eventora_db';
-
-const isProduction = process.env.NODE_ENV === 'production';
 const requiresSsl =
   isProduction ||
   DATABASE_URL.includes('supabase.co') ||
