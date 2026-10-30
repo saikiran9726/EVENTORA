@@ -124,6 +124,9 @@ jobs:
       - name: Run Additive Database Migrations
         run: pnpm --filter @eventora/backend db:migrate
 
+      - name: Seed Test Database
+        run: pnpm --filter @eventora/backend db:seed
+
       - name: Execute Vitest Test Suites
         run: pnpm test
 

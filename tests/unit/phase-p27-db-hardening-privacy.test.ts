@@ -117,11 +117,68 @@ describe('Phase P27: Database Hardening, Search GIN, Privacy & Reconciliation Qu
     });
 
     it('EXPLAIN verifies GIN search vector query plan on events', async () => {
-      const explainRes = await pool.query(
-        `EXPLAIN SELECT id FROM events WHERE search_vector @@ to_tsquery('english', 'hackathon | robotics');`
+      // Ensure organizer profile exists for foreign key constraint
+      const orgRes = await pool.query(`SELECT id FROM organizer_profiles LIMIT 1;`);
+      let orgId = orgRes.rows[0]?.id;
+      let createdOrgId: string | null = null;
+      if (!orgId) {
+        const newOrg = await pool.query(
+          `INSERT INTO organizer_profiles (college_id, display_name, status, created_by)
+           VALUES ($1, 'P27 GIN Test Organizer', 'verified', $2)
+           RETURNING id;`,
+          [collegeId, testUserId]
+        );
+        orgId = newOrg.rows[0].id;
+        createdOrgId = orgId;
+      }
+
+      // Insert enough realistic event rows so the PostgreSQL query planner cost model
+      // favors the GIN index scan over a sequential scan independently of other tests.
+      const insertRes = await pool.query(
+        `INSERT INTO events (
+           organizer_id, college_id, title, slug, description, category, department, format,
+           starts_at, ends_at, capacity, visibility, status, contact_email, created_by
+         )
+         SELECT
+           $1, $2,
+           'Campus Tech Event ' || i,
+           'p27-gin-slug-' || i || '-' || floor(random() * 10000000)::text,
+           CASE WHEN i <= 2 THEN 'Annual Hackathon and Robotics contest' ELSE 'General academic lecture session ' || i END,
+           'Workshop',
+           'Computer Science',
+           'in_person',
+           NOW() + (i || ' minutes')::interval,
+           NOW() + ((i + 120) || ' minutes')::interval,
+           100,
+           'public',
+           'published',
+           'organizer@campus.edu',
+           $3
+         FROM generate_series(1, 5000) AS i
+         RETURNING id;`,
+        [orgId, collegeId, testUserId]
       );
-      const plan = explainRes.rows.map((r: { 'QUERY PLAN': string }) => r['QUERY PLAN']).join('\n');
-      expect(plan).toContain('idx_events_search_gin');
+      const insertedEventIds: string[] = insertRes.rows.map((r: { id: string }) => r.id);
+
+      try {
+        await pool.query("SELECT gin_clean_pending_list('idx_events_search_gin');");
+        await pool.query('ANALYZE events;');
+
+        const explainRes = await pool.query(
+          `EXPLAIN SELECT id FROM events WHERE search_vector @@ to_tsquery('english', 'hackathon | robotics');`
+        );
+        const plan = explainRes.rows.map((r: { 'QUERY PLAN': string }) => r['QUERY PLAN']).join('\n');
+        expect(plan).toContain('idx_events_search_gin');
+      } finally {
+        if (insertedEventIds.length > 0) {
+          await pool.query(`DELETE FROM events WHERE id = ANY($1::uuid[]);`, [insertedEventIds]);
+          await pool.query("SELECT gin_clean_pending_list('idx_events_search_gin');");
+          await pool.query('ANALYZE events;');
+        }
+        if (createdOrgId) {
+          await pool.query(`DELETE FROM organizer_profiles WHERE id = $1;`, [createdOrgId]);
+        }
+      }
     });
 
     it('EXPLAIN verifies partial index on pending bookings expiration', async () => {
